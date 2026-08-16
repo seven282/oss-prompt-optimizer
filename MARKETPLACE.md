@@ -62,12 +62,7 @@ https://github.com/awesome-dsh-plugin/awesome-dsh-plugin
 - [x] 一键安装验证：`dsh plugin --profile web add oss-prompt-optimizer`
       （npm 直装验证通过，profile 已装载 `oss-prompt-optimizer 1.0.2`）
 
-### 5. 安全收尾
-- [ ] 撤销 npm Granular Token：npm 网页 → 个人头像 → Settings → Access Tokens，删除全部 token
-- [ ] 重置 npm 密码（在 npm 网页 → Settings → Password 修改）
-- [ ] 后续再发布：按 npm 官方发布流程完成身份验证（交互式登录）
-
-### 6. 长期维护（可选）
+### 5. 长期维护（可选）
 - [ ] 版本迭代时同步 `npm publish` 与 GitHub 推送，保持 `repository` 字段一致
 - [ ] 可选：向 awesome-dsh-plugin 提交 `data/screenshots.json` 条目，市场详情页展示截图
 
