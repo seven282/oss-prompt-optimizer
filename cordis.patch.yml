@@ -2,7 +2,7 @@
 # Apply order: dsh-base layer -> dsh-web-app layer -> this bundle -> user patch.
 - insert:
     - id: prompt-optimizer
-      name: 'deepseek-harness-prompt-optimizer'
+      name: 'oss-prompt-optimizer'
       # No config: every tunable has a schema default (temperature 0.2,
       # maxTokens 1200, maxRetries 1, maxInputChars 4000, timeoutMs 60000).
       # The model route comes from the harness default model (agentDefaultModel)

@@ -4,7 +4,7 @@
 https://github.com/awesome-dsh-plugin/awesome-dsh-plugin
 
 ## 前提（已就绪 ✅）
-- npm 包：`deepseek-harness-prompt-optimizer@1.0.1`（含 `repository` 指向本仓库，市场会校验防冒名）
+- npm 包：`oss-prompt-optimizer@1.0.1`（含 `repository` 指向本仓库，市场会校验防冒名）
 - GitHub 仓库：https://github.com/seven282/deepseek-harness-prompt-optimizer
 
 ## 提交步骤
@@ -18,8 +18,8 @@ https://github.com/awesome-dsh-plugin/awesome-dsh-plugin
 
 4. 提 PR，说明：
    - 这是你的插件（作者 seven282）
-   - npm 包名与版本：`deepseek-harness-prompt-optimizer@1.0.1`
-   - 安装命令：`dsh plugin --profile web add deepseek-harness-prompt-optimizer`
+   - npm 包名与版本：`oss-prompt-optimizer@1.0.1`
+   - 安装命令：`dsh plugin --profile web add oss-prompt-optimizer`
 5. 合并后 **通常一天内** 自动收录（站点 + 市场内可见）
 
 ## 收录后验证
@@ -59,7 +59,7 @@ https://github.com/awesome-dsh-plugin/awesome-dsh-plugin
 - [ ] 站点收录：https://awesome-dsh-plugin.com/p/seven282/deepseek-harness-prompt-optimizer/
       （通常合并后约 1 天生效）
 - [ ] 市场内可见：重启 `dsh web` → 设置 → 插件市场 → 搜索 `prompt-optimizer`
-- [ ] 一键安装验证：`dsh plugin --profile web add deepseek-harness-prompt-optimizer`
+- [ ] 一键安装验证：`dsh plugin --profile web add oss-prompt-optimizer`
       （npm 直装，免 allowBuilds）
 
 ### 5. 安全收尾

@@ -64,11 +64,11 @@ DeepSeek Harness 插件：将用户原始指令自动优化为专业、结构化
 
 ## 安装
 
-已发布到 npm（`deepseek-harness-prompt-optimizer`），三种方式任选：
+已发布到 npm（`oss-prompt-optimizer`），三种方式任选：
 
 **方式一：npm 直装（推荐，免构建授权）**
 ```sh
-dsh plugin --profile web add deepseek-harness-prompt-optimizer
+dsh plugin --profile web add oss-prompt-optimizer
 ```
 
 **方式二：从 GitHub 安装（源码构建，需授权 prepare）**
@@ -77,7 +77,7 @@ dsh plugin --profile web add github:seven282/deepseek-harness-prompt-optimizer
 # 首次会因 pnpm ≥10 拒绝运行 prepare 而失败；把 pnpm 提示的包键加进该 profile 的
 # pnpm-workspace.yaml 后重试：
 #   allowBuilds:
-#     deepseek-harness-prompt-optimizer: true
+#     oss-prompt-optimizer: true
 # 建议锁定 commit：github:seven282/deepseek-harness-prompt-optimizer#<sha>
 ```
 
@@ -91,7 +91,7 @@ dsh plugin --profile web add <项目路径>
 
 **卸载（可逆）**
 ```sh
-dsh plugin --profile web remove deepseek-harness-prompt-optimizer
+dsh plugin --profile web remove oss-prompt-optimizer
 ```
 
 安装/卸载后需**重启 harness**（`dsh web`）使 bundle 层生效。

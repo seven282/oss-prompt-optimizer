@@ -10,7 +10,7 @@
 // UI/UX: 28px hit area with a 16px stroke icon; theme-token colors; hover and
 // active feedback; :focus-visible ring; disabled state; aria-label + tooltip.
 window.__ModuleLoader__.load({
-  id: 'deepseek-harness-prompt-optimizer',
+  id: 'oss-prompt-optimizer',
   factory: (require) => {
     var module = { exports: {} }
     var exports = module.exports

@@ -2,8 +2,10 @@
 
 ## [1.0.1] - 2026-08-16
 
+- **改名：npm 包 `deepseek-harness-prompt-optimizer` → `oss-prompt-optimizer`**
+  （旧名弃用；避免与 DeepSeek 官方及 OpenPrompt 系列项目关联，改用自创开源品牌名 OSS）
 - Add `repository` field to `package.json`（指向 GitHub 仓库，满足插件市场防冒名校验）
-- Publish to npm：`deepseek-harness-prompt-optimizer@1.0.1`
+- Publish to npm：`oss-prompt-optimizer@1.0.1`
 
 ## [1.0.0] - 2026-08-16
 
