@@ -17,7 +17,7 @@ https://github.com/awesome-dsh-plugin/awesome-dsh-plugin
    ```
 
 4. 提 PR，说明：
-   - 这是你的插件（作者 seven282）
+   - 这是你的插件（本人提交，fork 自上游仓库）
    - npm 包名与版本：`oss-prompt-optimizer@1.0.2`
    - 安装命令：`dsh plugin --profile web add oss-prompt-optimizer`
 5. 合并后 **通常一天内** 自动收录（站点 + 市场内可见）
@@ -63,9 +63,9 @@ https://github.com/awesome-dsh-plugin/awesome-dsh-plugin
       （npm 直装验证通过，profile 已装载 `oss-prompt-optimizer 1.0.2`）
 
 ### 5. 安全收尾
-- [ ] 撤销 npm Granular Token：https://www.npmjs.com/settings/seven282/tokens
-- [ ] 重置 npm 密码（聊天中曾出现明文）
-- [ ] 后续再发布：重新生成 bypass token，或交互式 OTP 流程
+- [ ] 撤销 npm Granular Token：npm 网页 → 个人头像 → Settings → Access Tokens，删除全部 token
+- [ ] 重置 npm 密码（在 npm 网页 → Settings → Password 修改）
+- [ ] 后续再发布：按 npm 官方发布流程完成身份验证（交互式登录）
 
 ### 6. 长期维护（可选）
 - [ ] 版本迭代时同步 `npm publish` 与 GitHub 推送，保持 `repository` 字段一致
