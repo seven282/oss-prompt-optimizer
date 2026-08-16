@@ -48,11 +48,12 @@ https://github.com/awesome-dsh-plugin/awesome-dsh-plugin
 - [x] 逐笔 `git add` + 有意义的提交信息，避免凑数提交
 - 每笔提交都应有实际内容；达标后 `git rev-list --count origin/main` = 12 ≥ 10
 
-### 3. PR #1033 状态
-- [x] 打开 https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/1033
-- [x] 检查 CI 三项：`dsh.bundle` 校验 / 仓库年龄+提交数 / awesome-lint+站点构建
-- [x] PR 已合并（merged: true，2026-08-17）
-- [ ] 若 awesome-lint 红：按报错修（多为格式/双语一致性/日期）——合并时无报错，无需处理
+### 3. PR 状态
+- [x] PR #1033（首次收录）已合并（merged: true，2026-08-17）
+- [x] **PR #1049**（仓库改名 follow-up，`seven282__oss-prompt-optimizer.yml`）已创建：
+      https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/1049
+      （open / mergeable，CI：dsh.bundle ✓ / 仓库年龄 ✓ / awesome-lint+站点构建运行中）
+- [ ] PR #1049 合并后站点 URL 生效：https://awesome-dsh-plugin.com/p/seven282/oss-prompt-optimizer/
 
 ### 4. 合并后验证
 - [ ] 站点收录：https://awesome-dsh-plugin.com/p/seven282/oss-prompt-optimizer/
