@@ -64,22 +64,37 @@ DeepSeek Harness 插件：将用户原始指令自动优化为专业、结构化
 
 ## 安装
 
-```sh
-# 从项目目录（无空格路径）安装到目标 profile
-dsh plugin --profile web add <prompt-optimizer 项目路径>
+已发布到 npm（`deepseek-harness-prompt-optimizer`），三种方式任选：
 
-# 卸载（可逆）
-dsh plugin --profile web remove prompt-optimizer
+**方式一：npm 直装（推荐，免构建授权）**
+```sh
+dsh plugin --profile web add deepseek-harness-prompt-optimizer
 ```
 
-安装后需**重启 harness**（`dsh web`）使新 bundle 生效。卸载同理。
+**方式二：从 GitHub 安装（源码构建，需授权 prepare）**
+```sh
+dsh plugin --profile web add github:seven282/deepseek-harness-prompt-optimizer
+# 首次会因 pnpm ≥10 拒绝运行 prepare 而失败；把 pnpm 提示的包键加进该 profile 的
+# pnpm-workspace.yaml 后重试：
+#   allowBuilds:
+#     deepseek-harness-prompt-optimizer: true
+# 建议锁定 commit：github:seven282/deepseek-harness-prompt-optimizer#<sha>
+```
 
-> 注意：Windows 下 `dsh plugin` 会把含空格的路径拆散。若项目路径含空格，
-> 先建一个无空格 junction 再安装：
-> ```sh
-> New-Item -ItemType Junction -Path "C:\dsh-po" -Target "E:\<你的项目路径>"
-> dsh plugin --profile web add C:\dsh-po
-> ```
+**方式三：从本地目录安装（开发用）**
+```sh
+dsh plugin --profile web add <项目路径>
+# Windows 下含空格路径会被拆散，先用 junction：
+#   New-Item -ItemType Junction -Path "C:\dsh-po" -Target "E:\<你的项目路径>"
+#   dsh plugin --profile web add C:\dsh-po
+```
+
+**卸载（可逆）**
+```sh
+dsh plugin --profile web remove deepseek-harness-prompt-optimizer
+```
+
+安装/卸载后需**重启 harness**（`dsh web`）使 bundle 层生效。
 
 ## 配置
 
