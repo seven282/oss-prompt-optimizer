@@ -1,0 +1,23 @@
+# Dependencies & package-manager caches
+node_modules/
+.pnpm-store/
+.pnpm-cache/
+
+# Build output — built from source by `pnpm run build` / the `prepare` script
+lib/
+
+# Harness-internal scratch: drafts, plan docs, config dumps, session metadata.
+# Contains environment references and session IDs; keep out of public repos.
+.sisyphus/
+
+# Environment & secrets (never commit real values)
+.env
+.env.*
+!.env.example
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

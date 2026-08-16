@@ -1,0 +1,9 @@
+# prompt-optimizer bundle patch: insert the plugin row over the profile root.
+# Apply order: dsh-base layer -> dsh-web-app layer -> this bundle -> user patch.
+- insert:
+    - id: prompt-optimizer
+      name: 'prompt-optimizer'
+      # No config: every tunable has a schema default (temperature 0.2,
+      # maxTokens 1200, maxRetries 1, maxInputChars 4000, timeoutMs 60000).
+      # The model route comes from the harness default model (agentDefaultModel)
+      # unless provider/model are configured here together.
