@@ -50,14 +50,14 @@ https://github.com/awesome-dsh-plugin/awesome-dsh-plugin
 
 ### 3. PR 状态
 - [x] PR #1033（首次收录）已合并（merged: true，2026-08-17）
-- [x] **PR #1049**（仓库改名 follow-up，`seven282__oss-prompt-optimizer.yml`）已创建：
-      https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/1049
-      （open / mergeable，CI：dsh.bundle ✓ / 仓库年龄 ✓ / awesome-lint+站点构建运行中）
-- [ ] PR #1049 合并后站点 URL 生效：https://awesome-dsh-plugin.com/p/seven282/oss-prompt-optimizer/
+- [x] **PR #1049**（仓库改名 follow-up，`seven282__oss-prompt-optimizer.yml`）已合并
+      （merged: true，2026-08-16 13:00 UTC）
+- [ ] 站点 URL 生效：https://awesome-dsh-plugin.com/p/seven282/oss-prompt-optimizer/
+      （合并后约 1 天刷新，待观察）
 
 ### 4. 合并后验证
 - [ ] 站点收录：https://awesome-dsh-plugin.com/p/seven282/oss-prompt-optimizer/
-      （仓库已改名，旧 URL 自动重定向；市场条目待随新 PR 更新文件名后生效，约合并后 1 天）
+      （PR #1049 已合并；站点约 1 天后刷新生效）
 - [ ] 市场内可见：重启 `dsh web` → 设置 → 插件市场 → 搜索 `prompt-optimizer`
 - [x] 一键安装验证：`dsh plugin --profile web add oss-prompt-optimizer`
       （npm 直装验证通过，profile 已装载 `oss-prompt-optimizer 1.0.2`）
