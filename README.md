@@ -73,12 +73,12 @@ dsh plugin --profile web add oss-prompt-optimizer
 
 **方式二：从 GitHub 安装（源码构建，需授权 prepare）**
 ```sh
-dsh plugin --profile web add github:seven282/deepseek-harness-prompt-optimizer
+dsh plugin --profile web add github:seven282/oss-prompt-optimizer
 # 首次会因 pnpm ≥10 拒绝运行 prepare 而失败；把 pnpm 提示的包键加进该 profile 的
 # pnpm-workspace.yaml 后重试：
 #   allowBuilds:
 #     oss-prompt-optimizer: true
-# 建议锁定 commit：github:seven282/deepseek-harness-prompt-optimizer#<sha>
+# 建议锁定 commit：github:seven282/oss-prompt-optimizer#<sha>
 ```
 
 **方式三：从本地目录安装（开发用）**

@@ -4,8 +4,8 @@
 https://github.com/awesome-dsh-plugin/awesome-dsh-plugin
 
 ## 前提（已就绪 ✅）
-- npm 包：`oss-prompt-optimizer@1.0.1`（含 `repository` 指向本仓库，市场会校验防冒名）
-- GitHub 仓库：https://github.com/seven282/deepseek-harness-prompt-optimizer
+- npm 包：`oss-prompt-optimizer@1.0.2`（含 `repository` 指向本仓库，市场会校验防冒名）
+- GitHub 仓库：https://github.com/seven282/oss-prompt-optimizer
 
 ## 提交步骤
 1. fork https://github.com/awesome-dsh-plugin/awesome-dsh-plugin
@@ -13,17 +13,17 @@ https://github.com/awesome-dsh-plugin/awesome-dsh-plugin
 3. 新增一行（分类建议 `tools`）：
 
    ```markdown
-   | [deepseek-harness-prompt-optimizer](https://github.com/seven282/deepseek-harness-prompt-optimizer) | 将原始指令优化为 Role / Task / Context / Format 四段专业提示词：输入框 ✨ 一键优化与撤销、`prompt_optimize` 工具、自动优化钩子、可配置元提示词 | tools | ⭐0 |
+   | [oss-prompt-optimizer](https://github.com/seven282/oss-prompt-optimizer) | 将原始指令优化为 Role / Task / Context / Format 四段专业提示词：输入框 ✨ 一键优化与撤销、`prompt_optimize` 工具、自动优化钩子、可配置元提示词 | tools | ⭐0 |
    ```
 
 4. 提 PR，说明：
    - 这是你的插件（作者 seven282）
-   - npm 包名与版本：`oss-prompt-optimizer@1.0.1`
+   - npm 包名与版本：`oss-prompt-optimizer@1.0.2`
    - 安装命令：`dsh plugin --profile web add oss-prompt-optimizer`
 5. 合并后 **通常一天内** 自动收录（站点 + 市场内可见）
 
 ## 收录后验证
-- 网页：https://awesome-dsh-plugin.com/p/seven282/deepseek-harness-prompt-optimizer/
+- 网页：https://awesome-dsh-plugin.com/p/seven282/oss-prompt-optimizer/
 - 市场内：重启 harness → 设置 → 插件市场 → 搜索 `prompt-optimizer`
 
 > 提示：该仓库只收**可信来源**；market 内安装默认走 npm tarball（秒级），
@@ -55,11 +55,11 @@ https://github.com/awesome-dsh-plugin/awesome-dsh-plugin
 - [ ] 若 awesome-lint 红：按报错修（多为格式/双语一致性/日期）——合并时无报错，无需处理
 
 ### 4. 合并后验证
-- [ ] 站点收录：https://awesome-dsh-plugin.com/p/seven282/deepseek-harness-prompt-optimizer/
-      （通常合并后约 1 天生效，待观察）
+- [ ] 站点收录：https://awesome-dsh-plugin.com/p/seven282/oss-prompt-optimizer/
+      （仓库已改名，旧 URL 自动重定向；市场条目待随新 PR 更新文件名后生效，约合并后 1 天）
 - [ ] 市场内可见：重启 `dsh web` → 设置 → 插件市场 → 搜索 `prompt-optimizer`
 - [x] 一键安装验证：`dsh plugin --profile web add oss-prompt-optimizer`
-      （npm 直装验证通过，profile 已装载 `oss-prompt-optimizer 1.0.1`）
+      （npm 直装验证通过，profile 已装载 `oss-prompt-optimizer 1.0.2`）
 
 ### 5. 安全收尾
 - [ ] 撤销 npm Granular Token：https://www.npmjs.com/settings/seven282/tokens

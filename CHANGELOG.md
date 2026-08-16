@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.0.2] - 2026-08-17
+
+- **GitHub 仓库改名**：`seven282/deepseek-harness-prompt-optimizer` → `seven282/oss-prompt-optimizer`
+  （旧 URL 由 GitHub 自动重定向；npm `repository` 字段、README/MARKETPLACE 引用同步更新）
+- Publish to npm：`oss-prompt-optimizer@1.0.2`
+
 ## [1.0.1] - 2026-08-16
 
 - **改名：npm 包 `deepseek-harness-prompt-optimizer` → `oss-prompt-optimizer`**
