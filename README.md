@@ -147,3 +147,7 @@ pnpm run build        # tsc -p tsconfig.build.json → lib/
 - 命令命名：本插件注册 `/optimize` 与 `/auto-optimize`（短命令，遵循生态惯例）。
   若未来与其他插件冲突，改名需同步 `client.js` 调用、README 与钩子前缀默认值
   （`/optimize `），建议一次性原子变更。
+
+## License
+
+[MIT](LICENSE) — 自由使用、修改与分发（含商业用途），详见 `LICENSE` 文件。
