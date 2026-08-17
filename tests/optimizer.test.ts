@@ -32,6 +32,7 @@ const DEFAULT_CONFIG: Config = {
   maxInputTokens: 3000,
   timeoutMs: 1000,
   outputLanguage: 'auto',
+  outputStyle: 'sections',
   autoOptimize: false,
   autoOptimizePrefix: '/optimize ',
   minSectionChars: 10,
@@ -164,6 +165,45 @@ describe('PromptOptimizerService.optimize', () => {
     expect(result.sections).toHaveLength(4)
     expect(result.sections?.map((s) => s.name)).toEqual(['Role', 'Task', 'Context', 'Format'])
     expect(result.sections?.[0].content).toContain('产品经理')
+  })
+
+  it('accepts plain-style output when outputStyle is plain', async () => {
+    const PLAIN = '你是产品经理。把需求整理为 PRD，面向中小企业，预算有限，输出 Markdown 文档，不超过 500 字。'
+    const state = makeCtx([textStream(PLAIN)])
+    const service = makeService(state, { ...DEFAULT_CONFIG, outputStyle: 'plain' })
+    const result = await service.optimize('帮我写一份 PRD')
+    expect(result.optimized).toBe(true)
+    expect(result.prompt).toBe(PLAIN)
+    expect(result.sections).toBeUndefined()
+    const system = state.streamCalls[0].system ?? ''
+    expect(system).toContain('连贯正文')
+    expect(system).not.toContain('## Role')
+  })
+
+  it('retries a too-short plain output, then falls back', async () => {
+    const state = makeCtx([textStream('太短'), textStream('太短')])
+    const service = makeService(state, { ...DEFAULT_CONFIG, outputStyle: 'plain', minSectionChars: 10 })
+    const result = await service.optimize('原始指令原文')
+    expect(result.optimized).toBe(false)
+    expect(result.prompt).toBe('原始指令原文')
+    expect(result.error).toMatch(/fewer than 10/)
+    expect(result.retries).toBe(1)
+    expect(state.streamCalls).toHaveLength(2)
+  })
+
+  it('does not skip plain-mode inputs even with skipIfAlreadyOptimized', async () => {
+    const state = makeCtx([textStream('plain 输出正文足够长')])
+    const service = makeService(state, { ...DEFAULT_CONFIG, outputStyle: 'plain', skipIfAlreadyOptimized: true })
+    const result = await service.optimize('一段普通文本')
+    expect(state.streamCalls).toHaveLength(1)
+    expect(result.optimized).toBe(true)
+  })
+
+  it('reports the output token estimate on success', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    const service = makeService(state)
+    const result = await service.optimize('帮我写一份 PRD')
+    expect(result.outputTokens).toBeGreaterThan(0)
   })
 
   it('resolves the route from agentDefaultModel when config has none', async () => {

@@ -24,6 +24,7 @@ const DEFAULT_CONFIG: Config = {
   maxInputTokens: 3000,
   timeoutMs: 1000,
   outputLanguage: 'auto',
+  outputStyle: 'sections',
   autoOptimize: false,
   autoOptimizePrefix: '/optimize ',
   minSectionChars: 0,
@@ -77,7 +78,7 @@ describe('registerOptimizeCommand', () => {
     const { commands } = makeService(() => textStream(FOUR_SECTIONS))
     expect(commands.map((c) => c.name)).toEqual(['optimize', 'auto-optimize'])
     const optimize = commands.find((c) => c.name === 'optimize')!
-    expect(optimize.description).toContain('## Role')
+    expect(optimize.description).toContain('professional')
     expect(optimize.input?.hint).toBeTruthy()
   })
 

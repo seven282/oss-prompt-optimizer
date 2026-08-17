@@ -4,19 +4,25 @@ import { buildOptimizePrompt, META_PROMPT } from '../src/meta.js'
 const INPUT = '帮我写一份周报'
 
 describe('META_PROMPT', () => {
-  it('requires the four English section headings', () => {
-    expect(META_PROMPT).toContain('## Role')
-    expect(META_PROMPT).toContain('## Task')
-    expect(META_PROMPT).toContain('## Context')
-    expect(META_PROMPT).toContain('## Format')
+  it('requires the four English section headings in the rendered prompt', () => {
+    const prompt = buildOptimizePrompt(INPUT)
+    expect(prompt).toContain('## Role')
+    expect(prompt).toContain('## Task')
+    expect(prompt).toContain('## Context')
+    expect(prompt).toContain('## Format')
   })
 
   it('forbids wrapping the output in code fences', () => {
     expect(META_PROMPT).toContain('不要用 Markdown 代码块')
   })
 
-  it('demands a self-check of the four sections', () => {
-    expect(META_PROMPT).toContain('输出前自查')
+  it('demands a self-check of the output', () => {
+    expect(buildOptimizePrompt(INPUT)).toContain('输出前自查')
+  })
+
+  it('asks for terse output in every style', () => {
+    expect(buildOptimizePrompt(INPUT)).toContain('尽量精简')
+    expect(buildOptimizePrompt(INPUT, 'auto', undefined, undefined, 'plain')).toContain('尽量精简')
   })
 
   it('keeps the instruction-is-data injection guardrail', () => {
@@ -78,5 +84,33 @@ describe('buildOptimizePrompt', () => {
 
   it('omits the examples block when empty', () => {
     expect(buildOptimizePrompt(INPUT, 'auto', undefined, [])).not.toContain('{{示例}}')
+  })
+
+  it('substitutes the structure and self-check placeholders', () => {
+    const prompt = buildOptimizePrompt(INPUT)
+    expect(prompt).not.toContain('{{输出结构}}')
+    expect(prompt).not.toContain('{{自查}}')
+  })
+
+  it('renders the plain style without section headings', () => {
+    const prompt = buildOptimizePrompt(INPUT, 'auto', undefined, undefined, 'plain')
+    expect(prompt).not.toContain('## Role')
+    expect(prompt).not.toContain('## Task')
+    expect(prompt).not.toContain('## Context')
+    expect(prompt).not.toContain('## Format')
+    expect(prompt).toContain('连贯正文')
+    expect(prompt).toContain('输出前自查')
+  })
+
+  it('omits few-shot examples in the plain style', () => {
+    const prompt = buildOptimizePrompt(
+      INPUT,
+      'auto',
+      undefined,
+      [{ input: '写一首诗', output: '## Role\n诗人\n\n## Task\n写诗\n\n## Context\n背景\n\n## Format\n四行' }],
+      'plain',
+    )
+    expect(prompt).not.toContain('示例 1')
+    expect(prompt).not.toContain('{{示例}}')
   })
 })

@@ -15,6 +15,7 @@ describe('Config schema', () => {
       maxInputChars: 4000,
       timeoutMs: 60000,
       outputLanguage: 'auto',
+      outputStyle: 'sections',
       autoOptimize: false,
       autoOptimizePrefix: '/optimize ',
       minSectionChars: 10,
@@ -36,6 +37,7 @@ describe('Config schema', () => {
       temperature: 0.5,
       maxRetries: 3,
       outputLanguage: '英文',
+      outputStyle: 'plain',
       autoOptimize: true,
       autoOptimizePrefix: '/优化 ',
       extraInstructions: '必须面向产品经理',
@@ -54,6 +56,7 @@ describe('Config schema', () => {
       temperature: 0.5,
       maxRetries: 3,
       outputLanguage: '英文',
+      outputStyle: 'plain',
       autoOptimize: true,
       autoOptimizePrefix: '/优化 ',
       extraInstructions: '必须面向产品经理',
@@ -83,6 +86,7 @@ describe('Config schema', () => {
     expect(() => validate({ maxTokenRetryFactor: 0.5 })).toThrow()
     expect(() => validate({ retryTemperatureStep: 3 })).toThrow()
     expect(() => validate({ examples: [{ input: 'a' }] })).toThrow()
+    expect(() => validate({ outputStyle: 'foo' })).toThrow()
   })
 
   it('passes unknown keys through the schema (the constructor rejects them loudly)', () => {

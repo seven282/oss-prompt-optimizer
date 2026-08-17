@@ -18,6 +18,7 @@ const BASE_CONFIG: Config = {
   maxInputTokens: 3000,
   timeoutMs: 1000,
   outputLanguage: 'auto',
+  outputStyle: 'sections',
   autoOptimize: true,
   autoOptimizePrefix: '/optimize ',
   minSectionChars: 10,

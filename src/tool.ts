@@ -6,7 +6,7 @@ import type { OptimizeResult, PromptOptimizerService } from './optimizer.js'
 
 /** Tool-facing description for `prompt_optimize`. */
 export const PROMPT_OPTIMIZE_DESCRIPTION =
-  'Optimize a raw instruction into a professional structured prompt with four sections (## Role, ## Task, ## Context, ## Format). Returns the optimized prompt text.'
+  'Optimize a raw instruction into a professional, ready-to-execute prompt. Returns the optimized prompt text.'
 
 /** Render the canonical value to model-facing text (pure, replay-safe). */
 export function renderOptimizeResult(value: OptimizeResult): ContentBlock[] {
@@ -60,6 +60,7 @@ export function registerPromptOptimizeTool(
             optimized: { type: 'boolean', required: true },
             error: { type: 'string' },
             retries: { type: 'integer', required: true },
+            outputTokens: { type: 'integer' },
             sections: {
               type: 'array',
               items: {
@@ -77,6 +78,7 @@ export function registerPromptOptimizeTool(
         presentationMeta: (_args, value) => ({
           optimized: value.optimized,
           retries: value.retries,
+          ...(value.outputTokens !== undefined ? { outputTokens: value.outputTokens } : {}),
           ...(value.sections !== undefined ? { sections: value.sections } : {}),
         }),
       },
@@ -100,6 +102,6 @@ export function registerPromptOptimizeTool(
   ctx.systemPrompt.section({
     name: 'tool:prompt_optimize',
     order: 112,
-    text: 'Use the prompt_optimize tool to turn a raw instruction into a professional four-section prompt (## Role / ## Task / ## Context / ## Format). Pass the raw instruction as `instruction`; temperature and maxTokens are optional per-call overrides.',
+    text: 'Use the prompt_optimize tool to turn a raw instruction into a professional optimized prompt. Pass the raw instruction as `instruction`; temperature and maxTokens are optional per-call overrides.',
   })
 }

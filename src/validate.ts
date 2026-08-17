@@ -36,6 +36,19 @@ export function hasValidSections(text: string, minChars: number): boolean {
   })
 }
 
+/**
+ * Whether the whole text contains at least `minChars` non-whitespace
+ * characters (the plain-style content floor).
+ */
+export function hasSubstantialContent(text: string, minChars: number): boolean {
+  return text.replace(/\s/g, '').length >= minChars
+}
+
+/** Stable failure message when a plain-style prompt is empty or too short. */
+export function thinOutputMessage(minChars: number): string {
+  return `optimized prompt has fewer than ${minChars} meaningful characters`
+}
+
 /** Reject empty / non-string input loudly (the tool argument contract). */
 export function assertInput(input: unknown): asserts input is string {
   if (typeof input !== 'string' || input.trim().length === 0) {

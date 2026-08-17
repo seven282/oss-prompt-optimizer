@@ -13,10 +13,12 @@ import {
   assertInput,
   estimateTokens,
   hasAllSections,
+  hasSubstantialContent,
   hasValidSections,
   INCOMPLETE_SECTIONS_MESSAGE,
   REQUIRED_SECTIONS,
   sectionBody,
+  thinOutputMessage,
   thinSectionsMessage,
   truncateByTokens,
   truncateInput,
@@ -45,6 +47,7 @@ const CONFIG_KEYS = new Set([
   'maxInputTokens',
   'timeoutMs',
   'outputLanguage',
+  'outputStyle',
   'autoOptimize',
   'autoOptimizePrefix',
   'extraInstructions',
@@ -88,8 +91,10 @@ export interface OptimizeResult {
   error?: string
   /** Attempts consumed before success or giving up (0-based). */
   retries: number
-  /** Per-section breakdown of a successful optimized prompt. */
+  /** Per-section breakdown of a successful optimized prompt (sections style only). */
   sections?: { name: string; content: string }[]
+  /** Estimated token count of the optimized prompt (successful results only). */
+  outputTokens?: number
 }
 
 /** Resolved model route for one optimization call. */
@@ -164,8 +169,18 @@ export class PromptOptimizerService extends Service {
    */
   async optimize(rawInput: string, options: OptimizeOptions = {}): Promise<OptimizeResult> {
     assertInput(rawInput)
-    if (this.config.skipIfAlreadyOptimized && hasAllSections(rawInput)) {
-      return { prompt: rawInput, optimized: true, retries: 0, sections: this.sectionsOf(rawInput) }
+    if (
+      this.config.skipIfAlreadyOptimized &&
+      this.config.outputStyle === 'sections' &&
+      hasAllSections(rawInput)
+    ) {
+      return {
+        prompt: rawInput,
+        optimized: true,
+        retries: 0,
+        sections: this.sectionsOf(rawInput),
+        outputTokens: this.estimateInputTokens(rawInput),
+      }
     }
     let input = truncateInput(rawInput, this.config.maxInputChars)
     input = truncateByTokens(input, this.config.maxInputTokens, (text) => this.estimateInputTokens(text))
@@ -186,16 +201,26 @@ export class PromptOptimizerService extends Service {
           effectiveMaxTokens,
           outputLanguage,
         )
-        const valid = this.config.minSectionChars > 0
-          ? hasValidSections(prompt, this.config.minSectionChars)
-          : hasAllSections(prompt)
+        const valid = this.config.outputStyle === 'plain'
+          ? hasSubstantialContent(prompt, this.config.minSectionChars)
+          : this.config.minSectionChars > 0
+            ? hasValidSections(prompt, this.config.minSectionChars)
+            : hasAllSections(prompt)
         if (valid) {
-          return { prompt, optimized: true, retries: attempt, sections: this.sectionsOf(prompt) }
+          return {
+            prompt,
+            optimized: true,
+            retries: attempt,
+            outputTokens: this.estimateInputTokens(prompt),
+            ...(this.config.outputStyle === 'sections' ? { sections: this.sectionsOf(prompt) } : {}),
+          }
         }
         lastError = new Error(
-          this.config.minSectionChars > 0
-            ? `${INCOMPLETE_SECTIONS_MESSAGE}; ${thinSectionsMessage(this.config.minSectionChars)}`
-            : INCOMPLETE_SECTIONS_MESSAGE,
+          this.config.outputStyle === 'plain'
+            ? thinOutputMessage(this.config.minSectionChars)
+            : this.config.minSectionChars > 0
+              ? `${INCOMPLETE_SECTIONS_MESSAGE}; ${thinSectionsMessage(this.config.minSectionChars)}`
+              : INCOMPLETE_SECTIONS_MESSAGE,
         )
       } catch (error) {
         if (
@@ -235,6 +260,7 @@ export class PromptOptimizerService extends Service {
       outputLanguage,
       this.config.extraInstructions,
       this.config.examples,
+      this.config.outputStyle,
     )
     const messages = [
       createUserMessage({

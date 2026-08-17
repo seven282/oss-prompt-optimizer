@@ -3,10 +3,12 @@ import {
   assertInput,
   estimateTokens,
   hasAllSections,
+  hasSubstantialContent,
   hasValidSections,
   INCOMPLETE_SECTIONS_MESSAGE,
   REQUIRED_SECTIONS,
   sectionBody,
+  thinOutputMessage,
   truncateByTokens,
   truncateInput,
 } from '../src/validate.js'
@@ -76,6 +78,30 @@ describe('hasValidSections', () => {
     const emptyHeads = '## Role\n\n## Task\n\n## Context\n\n## Format\n'
     expect(hasValidSections(emptyHeads, 0)).toBe(true)
     expect(hasValidSections(emptyHeads, 1)).toBe(false)
+  })
+})
+
+describe('hasSubstantialContent', () => {
+  it('accepts text at or above the threshold', () => {
+    expect(hasSubstantialContent('你是一名产品经理', 8)).toBe(true)
+    expect(hasSubstantialContent('你是一名产品经理', 9)).toBe(false)
+  })
+
+  it('ignores whitespace when counting', () => {
+    expect(hasSubstantialContent(' 你 是 一 名 产 品 经 理 \n', 8)).toBe(true)
+  })
+
+  it('rejects empty and whitespace-only text above a zero threshold', () => {
+    expect(hasSubstantialContent('', 1)).toBe(false)
+    expect(hasSubstantialContent('   \n  ', 1)).toBe(false)
+  })
+
+  it('passes any text when the threshold is zero', () => {
+    expect(hasSubstantialContent('', 0)).toBe(true)
+  })
+
+  it('exposes a stable too-short message', () => {
+    expect(thinOutputMessage(10)).toMatch(/fewer than 10/)
   })
 })
 

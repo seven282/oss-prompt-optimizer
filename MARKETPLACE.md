@@ -13,7 +13,7 @@ https://github.com/awesome-dsh-plugin/awesome-dsh-plugin
 3. 新增一行（分类建议 `tools`）：
 
    ```markdown
-   | [oss-prompt-optimizer](https://github.com/seven282/oss-prompt-optimizer) | 将原始指令优化为 Role / Task / Context / Format 四段专业提示词：输入框 ✨ 一键优化与撤销、`prompt_optimize` 工具、自动优化钩子、可配置元提示词 | tools | ⭐0 |
+   | [oss-prompt-optimizer](https://github.com/seven282/oss-prompt-optimizer) | 将原始指令优化为专业提示词（默认 Role / Task / Context / Format 四段，可配置为无标题纯文本）：输入框 ✨ 一键优化与撤销、`prompt_optimize` 工具、自动优化钩子、可配置元提示词 | tools | ⭐0 |
    ```
 
 4. 提 PR，说明：

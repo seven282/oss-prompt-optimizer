@@ -28,6 +28,12 @@ export interface Config {
    * instruction's language; any other non-empty value pins the language.
    */
   outputLanguage: string
+  /**
+   * Output style for the optimized prompt. `'sections'` (default) emits the
+   * four section headings (## Role / ## Task / ## Context / ## Format);
+   * `'plain'` emits a heading-free continuous prompt (fewer tokens).
+   */
+  outputStyle: 'sections' | 'plain'
   /** Whether the auto-optimize hook is enabled (see `autoOptimizePrefix`). */
   autoOptimize: boolean
   /** Prefix that marks a user message for automatic optimization. */
@@ -79,6 +85,7 @@ export const Config: z<Config> = z.object({
   maxInputTokens: z.number().step(1).min(0).max(200000).default(3000),
   timeoutMs: z.number().step(1).min(1).max(MAX_TIMER_DELAY_MS).default(60000),
   outputLanguage: z.string().default('auto'),
+  outputStyle: z.union(['sections', 'plain']).default('sections'),
   autoOptimize: z.boolean().default(false),
   autoOptimizePrefix: z.string().default('/optimize '),
   extraInstructions: z.string(),

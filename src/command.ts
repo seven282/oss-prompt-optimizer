@@ -15,7 +15,7 @@ import type { PromptOptimizerService } from './optimizer.js'
 export function registerOptimizeCommand(ctx: Context, service: PromptOptimizerService): void {
   ctx.commands.register({
     name: 'optimize',
-    description: 'Optimize a raw instruction into a professional four-section prompt (## Role / ## Task / ## Context / ## Format)',
+    description: 'Optimize a raw instruction into a professional optimized prompt',
     input: { hint: '请输入要优化的原始指令，例如：帮我写一份周报' },
     handler: async (invocation): Promise<CommandResult> => {
       const text = invocation.rawInput.trim()

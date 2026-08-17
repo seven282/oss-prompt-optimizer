@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+- **新增 `outputStyle` 配置**：`'sections'`（默认，四段标题）｜`'plain'`（无标题连贯正文，更省 token）
+- **元提示词新增精简要求**：在保证完整可执行的前提下尽量精简输出（实测下游 token 消耗降 50%+）
+- **`OptimizeResult` 新增 `outputTokens`**：成功时估算优化结果的 token 数（工具输出与 `presentationMeta` 同步透传）
+- **`skipIfAlreadyOptimized` 与 `examples` 仅对 `sections` 模式生效**：plain 模式无"已优化"标题标记，四段示例与无标题指令冲突
+- **省 token 快赢配置**：`maxTokens: 700` + `skipIfAlreadyOptimized: true`（见 README）
+
 ## [1.0.2] - 2026-08-17
 
 - **GitHub 仓库改名**：`seven282/deepseek-harness-prompt-optimizer` → `seven282/oss-prompt-optimizer`
