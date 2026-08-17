@@ -21,3 +21,6 @@ lib/
 Thumbs.db
 .idea/
 .vscode/
+
+# Marketplace submission checklist — internal doc, keep out of repo
+MARKETPLACE.md
