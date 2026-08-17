@@ -4,21 +4,27 @@
 https://github.com/awesome-dsh-plugin/awesome-dsh-plugin
 
 ## 前提（已就绪 ✅）
-- npm 包：`oss-prompt-optimizer@1.0.2`（含 `repository` 指向本仓库，市场会校验防冒名）
+- npm 包：`oss-prompt-optimizer@1.0.3`（含 `repository` 指向本仓库，市场会校验防冒名）
 - GitHub 仓库：https://github.com/seven282/oss-prompt-optimizer
 
 ## 提交步骤
 1. fork https://github.com/awesome-dsh-plugin/awesome-dsh-plugin
-2. 编辑根目录的插件列表（README.md 或 plugins 清单，按该仓库现有表格格式）
-3. 新增一行（分类建议 `tools`）：
+2. 按该仓库规范，在 `data/plugins/` 下新增/修改 `seven282__oss-prompt-optimizer.yml`
+   （**不是** README 表格——条目数据存于 YAML 数据文件，README 由脚本生成）：
+3. YAML 内容（字段：`url` / `name` / `category` / `description.en` / `description.zh`）：
 
-   ```markdown
-   | [oss-prompt-optimizer](https://github.com/seven282/oss-prompt-optimizer) | 将原始指令优化为专业提示词（默认 Role / Task / Context / Format 四段，可配置为无标题纯文本）：输入框 ✨ 一键优化与撤销、`prompt_optimize` 工具、自动优化钩子、可配置元提示词 | tools | ⭐0 |
+   ```yaml
+   url: https://github.com/seven282/oss-prompt-optimizer
+   name: seven282/oss-prompt-optimizer
+   category: tools
+   description:
+     en: Optimize a raw instruction into a professional prompt through the harness llm service — four-section (Role / Task / Context / Format) by default, or a headerless plain-text style (outputStyle: 'plain') that cuts token usage. Composer ✨ one-click optimize & undo, prompt_optimize tool, auto-optimize hook, configurable meta-prompt.
+     zh: 将原始指令经 harness llm 服务优化为专业提示词——默认 Role / Task / Context / Format 四段，可配置为无标题纯文本（outputStyle: 'plain'，更省 token）；提供输入框 ✨ 一键优化与撤销、prompt_optimize 工具、自动优化钩子与可配置元提示词。
    ```
 
 4. 提 PR，说明：
    - 这是你的插件（本人提交，fork 自上游仓库）
-   - npm 包名与版本：`oss-prompt-optimizer@1.0.2`
+   - npm 包名与版本：`oss-prompt-optimizer@1.0.3`
    - 安装命令：`dsh plugin --profile web add oss-prompt-optimizer`
 5. 合并后 **通常一天内** 自动收录（站点 + 市场内可见）
 
