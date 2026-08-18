@@ -26,6 +26,8 @@ DeepSeek Harness 插件：提示词优化，将用户原始指令自动优化为
   `TIMEOUT` / `NO_MODEL_ROUTE` 等），工具失败渲染带 `[错误码]` 前缀。
 - 输出恒含四段；空输入报错；超长输入截断护栏；取消信号透传。
 ![项目截图](./1.png)
+![项目截图](./2.png)
+
 ## 输入框 ✨ 图标
 
 插件自带浏览器客户端（`lib/client.js`，经 `dsh.client` 声明被 harness 加载）：
