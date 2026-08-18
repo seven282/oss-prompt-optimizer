@@ -19,6 +19,7 @@ By default the result is a heading-free plain-text prompt (`outputStyle: 'plain'
 - **Safety rails** — output always carries the four sections; empty input errors out; oversized input is truncated; cancellation signals are forwarded.
 
 ![Screenshot](./1.png)
+![Screenshot](./2.png)
 
 ## Installation
 
