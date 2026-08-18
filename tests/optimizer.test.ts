@@ -41,6 +41,7 @@ const DEFAULT_CONFIG: Config = {
   autoOptimizePrefix: '/optimize ',
   minSectionChars: 10,
   maxTokenRetryFactor: 1.5,
+  maxTokensCap: 8000,
   retryTemperatureStep: 0.3,
   skipIfAlreadyOptimized: false,
   selfRefine: false,
@@ -342,7 +343,7 @@ describe('PromptOptimizerService.optimize', () => {
     await expect(service.optimize('x')).rejects.toThrow(/maxTokens/)
   })
 
-  it('expands maxTokens and retries once on a max-tokens finish', async () => {
+  it('expands maxTokens and retries without consuming the retry budget', async () => {
     const state = makeCtx([
       textStream('', { type: 'finish', reason: { kind: 'max-tokens' } }),
       textStream(FOUR_SECTIONS),
@@ -350,10 +351,41 @@ describe('PromptOptimizerService.optimize', () => {
     const service = makeService(state)
     const result = await service.optimize('x')
     expect(result.optimized).toBe(true)
-    expect(result.retries).toBe(1)
+    expect(result.retries).toBe(0)
     expect(state.streamCalls).toHaveLength(2)
     expect(state.streamCalls[0].maxTokens).toBe(1200)
     expect(state.streamCalls[1].maxTokens).toBe(1800)
+  })
+
+  it('expands repeatedly up to maxTokensCap', async () => {
+    const state = makeCtx([
+      textStream('', { type: 'finish', reason: { kind: 'max-tokens' } }),
+      textStream('', { type: 'finish', reason: { kind: 'max-tokens' } }),
+      textStream(FOUR_SECTIONS),
+    ])
+    const service = makeService(state)
+    const result = await service.optimize('x')
+    expect(result.optimized).toBe(true)
+    expect(result.retries).toBe(0)
+    expect(state.streamCalls.map((c) => c.maxTokens)).toEqual([1200, 1800, 2700])
+  })
+
+  it('stops expanding at maxTokensCap and surfaces MAX_TOKENS', async () => {
+    const state = makeCtx([
+      textStream('', { type: 'finish', reason: { kind: 'max-tokens' } }),
+      textStream('', { type: 'finish', reason: { kind: 'max-tokens' } }),
+      textStream('', { type: 'finish', reason: { kind: 'max-tokens' } }),
+    ])
+    const service = makeService(state, { ...DEFAULT_CONFIG, maxTokensCap: 2000 })
+    await expect(service.optimize('x')).rejects.toThrow(/maxTokens/)
+    expect(state.streamCalls.map((c) => c.maxTokens)).toEqual([1200, 1800, 2000])
+  })
+
+  it('does not expand when maxTokensCap is at or below maxTokens', async () => {
+    const state = makeCtx([textStream('', { type: 'finish', reason: { kind: 'max-tokens' } })])
+    const service = makeService(state, { ...DEFAULT_CONFIG, maxTokensCap: 1000 })
+    await expect(service.optimize('x')).rejects.toThrow(/maxTokens/)
+    expect(state.streamCalls).toHaveLength(1)
   })
 
   it('bumps temperature on retry', async () => {

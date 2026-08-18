@@ -21,15 +21,16 @@ describe('Config schema', () => {
       autoOptimizePrefix: '/optimize ',
       minSectionChars: 10,
       maxTokenRetryFactor: 1.5,
+      maxTokensCap: 8000,
       retryTemperatureStep: 0.3,
-      skipIfAlreadyOptimized: false,
+      skipIfAlreadyOptimized: true,
       selfRefine: false,
       templateId: 'default',
       autoOptimizeAll: false,
       hookIncludeOriginal: false,
       contextAware: true,
       contextMaxMessages: 6,
-      contextMaxTokens: 1500,
+      contextMaxTokens: 800,
       maxInputTokens: 3000,
     })
     expect(value.provider).toBeUndefined()
@@ -105,6 +106,9 @@ describe('Config schema', () => {
     expect(() => validate({ provider: 42 })).toThrow()
     expect(() => validate({ minSectionChars: -1 })).toThrow()
     expect(() => validate({ maxTokenRetryFactor: 0.5 })).toThrow()
+    expect(() => validate({ maxTokensCap: 0 })).toThrow()
+    expect(() => validate({ maxTokensCap: 200000 })).toThrow()
+    expect(() => validate({ maxTokensCap: 1.5 })).toThrow()
     expect(() => validate({ retryTemperatureStep: 3 })).toThrow()
     expect(() => validate({ examples: [{ input: 'a' }] })).toThrow()
     expect(() => validate({ outputStyle: 'foo' })).toThrow()

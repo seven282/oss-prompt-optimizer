@@ -75,16 +75,26 @@ export interface Config {
   minSectionChars: number
   /**
    * Multiplier applied to the effective `maxTokens` when a call finishes with
-   * `max-tokens` (a truncated output), consumed from the retry budget.
-   * `1` disables the expansion.
+   * `max-tokens` (a truncated output). Expansion does NOT consume the retry
+   * budget and stops at `maxTokensCap`. `1` disables the expansion.
    */
   maxTokenRetryFactor: number
+  /**
+   * Hard cap for auto-expanded `maxTokens` (`max-tokens` truncation grows by
+   * `maxTokenRetryFactor` up to this value). `<= maxTokens` disables
+   * expansion. Default 8000 keeps runaway output bounded.
+   */
+  maxTokensCap: number
   /**
    * Temperature increment applied per retry attempt (bounded by 2), giving
    * retries more diversity. `0` disables the bump.
    */
   retryTemperatureStep: number
-  /** When true, an input that already carries the four headings passes through unchanged. */
+  /**
+   * When true, an input that already carries the four headings passes through
+   * unchanged (no model call — the token-saving default; re-optimizing an
+   * already-optimized prompt costs nothing).
+   */
   skipIfAlreadyOptimized: boolean
   /**
    * When true, a successful optimization runs one optional refinement round:
@@ -109,7 +119,8 @@ export interface Config {
   contextMaxMessages: number
   /**
    * Token budget for the gathered context; `<= 0` disables the token guard.
-   * The context is truncated to the longest prefix within budget.
+   * The context is truncated to the longest prefix within budget. The lean
+   * default keeps context background-sized (most short discussions fit).
    */
   contextMaxTokens: number
   /**
@@ -154,14 +165,15 @@ export const Config: z<Config> = z.object({
   })),
   minSectionChars: z.number().step(1).min(0).max(10000).default(10),
   maxTokenRetryFactor: z.number().min(1).max(3).default(1.5),
+  maxTokensCap: z.number().step(1).min(1).max(128000).default(8000),
   retryTemperatureStep: z.number().min(0).max(2).default(0.3),
-  skipIfAlreadyOptimized: z.boolean().default(false),
+  skipIfAlreadyOptimized: z.boolean().default(true),
   selfRefine: z.boolean().default(false),
   autoOptimizeAll: z.boolean().default(false),
   hookIncludeOriginal: z.boolean().default(false),
   contextAware: z.boolean().default(true),
   contextMaxMessages: z.number().step(1).min(0).max(100).default(6),
-  contextMaxTokens: z.number().step(1).min(0).max(200000).default(1500),
+  contextMaxTokens: z.number().step(1).min(0).max(200000).default(800),
   templateId: z.string().default('default'),
   metaPromptTemplate: z.object({
     optimizeZh: z.string(),

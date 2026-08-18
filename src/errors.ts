@@ -54,7 +54,7 @@ export const OPTIMIZE_ERROR_TEXT: Record<OptimizeErrorCode, string> = {
   [OptimizeErrorCode.EMPTY_INPUT]: 'prompt-optimize: 指令不能为空',
   [OptimizeErrorCode.NO_MODEL_ROUTE]: 'prompt-optimize: 未配置模型路由，请配置 provider/model 或挂载 agentDefaultModel 服务',
   [OptimizeErrorCode.TIMEOUT]: 'prompt-optimize: 优化超时，请稍后重试或调大 timeoutMs',
-  [OptimizeErrorCode.MAX_TOKENS]: 'prompt-optimize: 输出超出长度上限，建议调大 maxTokens',
+  [OptimizeErrorCode.MAX_TOKENS]: 'prompt-optimize: 输出超出长度上限（已按 maxTokenRetryFactor 自动扩容至 maxTokensCap 仍不够），请调大 maxTokens 或 maxTokensCap',
   [OptimizeErrorCode.MISSING_SECTIONS]: 'prompt-optimize: 模型输出缺少必需段落（## Role / ## Task / ## Context / ## Format）',
   [OptimizeErrorCode.THIN_SECTIONS]: 'prompt-optimize: 模型输出的段落内容过短',
   [OptimizeErrorCode.THIN_OUTPUT]: 'prompt-optimize: 模型输出的内容过短',

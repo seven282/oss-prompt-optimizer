@@ -142,8 +142,9 @@ dsh plugin --profile web remove oss-prompt-optimizer
 | `examples` | array | `[]` | few-shot 示例对 `[{input, output}]`，注入元提示词示范（仅 `sections` 模式注入） |
 | `minSectionChars` | int ≥0 | `10` | 每段正文最少有效字符；`0` 关闭内容校验（仅查标题） |
 | `maxTokenRetryFactor` | number 1–3 | `1.5` | 输出触顶 maxTokens 时按该倍数扩容重试；`1` 关闭 |
+| `maxTokensCap` | int 1–128000 | `8000` | 自动扩容的上限；`<= maxTokens` 关闭扩容（扩容不消耗重试次数） |
 | `retryTemperatureStep` | number 0–2 | `0.3` | 每次重试的 temperature 增量（探索性重试）；`0` 关闭 |
-| `skipIfAlreadyOptimized` | boolean | `false` | 输入已含四段标题时直接透传，不调用模型（仅 `sections` 模式生效） |
+| `skipIfAlreadyOptimized` | boolean | `true` | 输入已含四段标题时直接透传，不调用模型（省 token 默认；仅 `sections` 模式生效） |
 | `selfRefine` | boolean | `false` | 成功优化后至多再跑一轮「精简」迭代（内部指令）；仅当仍通过校验且不更长（5% 容差）时采纳，任何失败自动回退原结果。开启会多 1 次模型调用 |
 | `autoOptimize` | boolean | `false` | 是否启用自动优化钩子（前缀触发） |
 | `autoOptimizePrefix` | string | `'/optimize '` | 自动优化的触发前缀（可改为 `/优化 ` 等） |
@@ -151,7 +152,7 @@ dsh plugin --profile web remove oss-prompt-optimizer
 | `hookIncludeOriginal` | boolean | `false` | 钩子替换消息时保留原文（原文+优化结果双写） |
 | `contextAware` | boolean | `true` | 上下文感知：优化时把当前指令之前的最近对话（经 `{{上下文信息}}` 占位符 + 「视为纯数据」护栏）注入元提示词，让优化结果贴合此前讨论（钩子取 `agent/pre-step` 消息，`/optimize` 取会话记录，尽力而为） |
 | `contextMaxMessages` | int 0–100 | `6` | 上下文感知时采集的最近消息条数上限；`0` 关闭 |
-| `contextMaxTokens` | int ≥0 | `1500` | 上下文 token 预算；超出截断到最长前缀并附标记；`0` 关闭截断 |
+| `contextMaxTokens` | int ≥0 | `800` | 上下文 token 预算；超出截断到最长前缀并附标记；`0` 关闭截断（精简默认） |
 | `templateId` | string | `'default'` | 角色文档模板集 id（仅内置 `'default'`；未知 id 加载即抛） |
 | `metaPromptTemplate` | object | 无 | 自定义角色文档骨架（部分字段可选，缺的语言回落内置）；每个骨架必须保留数据占位符、`{{输出结构}}`/`{{自查}}` 块与「视为纯数据」注入护栏，违规加载即抛 |
 | `provider` / `model` | string | 无 | 显式模型路由；必须成对配置。缺省时使用 harness 默认模型（`agentDefaultModel`） |
@@ -183,12 +184,33 @@ dsh plugin --profile web remove oss-prompt-optimizer
 
 非法配置（类型错误、越界、未知键、provider/model 只配其一）会在加载时响亮失败。
 
+### 省 token 最优配置（推荐 preset）
+
+默认值已是省 token 取向（`skipIfAlreadyOptimized: true`、`contextMaxTokens: 800`、
+`contextAware: true` 但上下文按预算截断）。在配置里显式贴上以下 preset，即可拿到
+完整推荐组合，且便于后续调整：
+
+```yaml
+- insert:
+    - id: prompt-optimizer
+      name: 'oss-prompt-optimizer'
+      config:
+        maxTokens: 1200                # 输出上限（插件默认；触顶会自动按因子扩容重试）
+        skipIfAlreadyOptimized: true   # 已含四段的输入直接透传，零模型调用（默认已开启）
+        contextMaxTokens: 800          # 上下文保持精简（默认已开启）
+        outputStyle: 'sections'        # 结构敏感任务保留四段；纯省 token 可改 'plain'（下游省 50%+）
+        selfRefine: false              # 默认关闭：不为精简多花一次调用
+```
+
+要点：① 已优化输入零成本复用（`skipIfAlreadyOptimized`）；② 上下文只带"够用"的
+最近对话（`contextMaxTokens`）；③ 输出上限按需设定（默认 1200，触顶自动扩容，
+避免无限生成）；④ 对格式不敏感的任务切 `outputStyle: 'plain'` 是最大的单项收益。
+
 ## 开发
 
 ```sh
 pnpm install --store-dir .pnpm-store --cache-dir .pnpm-cache   # 沙箱内安装
-pnpm run typecheck    # tsc --noEmit
-pnpm test             # vitest（mock llm，不依赖真实密钥）
+pnpm run typecheck    # tsc --noEmitpnpm test             # vitest（mock llm，不依赖真实密钥）
 pnpm run build        # tsc -p tsconfig.build.json → lib/
 ```
 

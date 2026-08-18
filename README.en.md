@@ -124,8 +124,9 @@ Set plugin options in `cordis.patch.yml` (every value below also has a schema de
 | `examples` | array | `[]` | Few-shot pairs `[{input, output}]` injected into the meta-prompt (`sections` style only) |
 | `minSectionChars` | int ≥0 | `10` | Minimum meaningful characters per section body; `0` disables the content check |
 | `maxTokenRetryFactor` | number 1–3 | `1.5` | Retry-budget multiplier when the output hits `maxTokens`; `1` disables |
+| `maxTokensCap` | int 1–128000 | `8000` | Hard cap for auto-expanded `maxTokens`; `<= maxTokens` disables expansion (expansion does not consume the retry budget) |
 | `retryTemperatureStep` | number 0–2 | `0.3` | Temperature increment per retry (explorative retries); `0` disables |
-| `skipIfAlreadyOptimized` | boolean | `false` | Pass inputs that already carry the four headings through without calling the model (`sections` style only) |
+| `skipIfAlreadyOptimized` | boolean | `true` | Pass inputs that already carry the four headings through without calling the model (token-saving default; `sections` style only) |
 | `selfRefine` | boolean | `false` | After a successful optimization, run at most one extra "tighten" round (internal instruction); adopt it only if it still validates and is not longer (5% tolerance). Any failure keeps the original. Costs one extra model call when enabled |
 | `autoOptimize` | boolean | `false` | Enable the auto-optimize hook (prefix-triggered) |
 | `autoOptimizePrefix` | string | `'/optimize '` | Trigger prefix for auto-optimization |
@@ -133,7 +134,7 @@ Set plugin options in `cordis.patch.yml` (every value below also has a schema de
 | `hookIncludeOriginal` | boolean | `false` | Keep the original instruction alongside the optimized prompt in the replacement message |
 | `contextAware` | boolean | `true` | Context awareness: inject the recent conversation before the current instruction into the meta-prompt (via the `{{上下文信息}}` placeholder + pure-data guardrail) so the result fits prior discussion. The hook reads `agent/pre-step` messages, `/optimize` reads the session log — best effort |
 | `contextMaxMessages` | int 0–100 | `6` | Max recent messages gathered as context when `contextAware` is on; `0` disables |
-| `contextMaxTokens` | int ≥0 | `1500` | Token budget for the gathered context; over-budget input is truncated to the longest prefix with a marker; `0` disables truncation |
+| `contextMaxTokens` | int ≥0 | `800` | Token budget for the gathered context; over-budget input is truncated to the longest prefix with a marker; `0` disables truncation (lean default) |
 | `templateId` | string | `'default'` | Template-set id for the role documents (only `'default'` is built-in; unknown ids fail the load) |
 | `metaPromptTemplate` | object | none | Custom role-document skeletons (partial; missing languages fall back to the built-ins). Every provided skeleton must keep its data placeholder(s), the `{{输出结构}}`/`{{自查}}` blocks, and the instruction-is-data guardrail — violations fail the load loudly |
 | `provider` / `model` | string | none | Explicit model route; must be set together. Defaults to the harness default model (`agentDefaultModel`) |
@@ -165,6 +166,29 @@ Example:
 ```
 
 Invalid configuration (wrong type, out of range, unknown key, or only one of `provider`/`model`) fails loudly at load time.
+
+### Token-saving preset (recommended)
+
+The defaults are already token-lean (`skipIfAlreadyOptimized: true`, `contextMaxTokens: 800`,
+`contextAware: true` with budget-truncated context). Pinning the full recommended combo
+explicitly makes it visible and easy to tune:
+
+```yaml
+- insert:
+    - id: prompt-optimizer
+      name: 'oss-prompt-optimizer'
+      config:
+        maxTokens: 1200                # output cap (plugin default; truncation auto-expands by factor on retry)
+        skipIfAlreadyOptimized: true   # already-optimized inputs pass through with zero model calls (default on)
+        contextMaxTokens: 800          # keep context lean (default on)
+        outputStyle: 'sections'        # keep structure for sensitive tasks; 'plain' for max savings (50%+ downstream)
+        selfRefine: false              # off by default: no extra tighten call
+```
+
+Key points: ① already-optimized inputs cost nothing (`skipIfAlreadyOptimized`); ② context
+carries only the "enough" recent conversation (`contextMaxTokens`); ③ the output cap is
+set as needed (default 1200, auto-expanded on truncation) to avoid unbounded generation;
+④ for format-insensitive tasks switching `outputStyle: 'plain'` is the single biggest win.
 
 **Runtime commands** (type them in the input box):
 

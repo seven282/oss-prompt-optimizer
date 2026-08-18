@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.1.4] - 2026-08-18
+
+- **省 token 默认值**：`skipIfAlreadyOptimized` 默认改为 `true`（已含四段的输入直接
+  透传、零模型调用——重复优化已优化过的提示词不再花钱）；`contextMaxTokens` 默认
+  从 1500 降到 800（上下文保持精简，多数短对话仍完整容纳，超预算截断）
+- **输出触顶自动扩容（`maxTokensCap`）**：`max-tokens` 截断时按 `maxTokenRetryFactor`
+  自动连续扩容到 `maxTokensCap`（默认 8000）——**扩容不再消耗 `maxRetries` 重试预算**
+  （此前只扩一次且吃掉重试次数，第二次触顶即报错）；达到上限仍不够才提示调大
+  `maxTokens` 或 `maxTokensCap`（错误文案同步更新）
+- **文档**：README / README.en 新增「省 token 最优配置（推荐 preset）」小节
+  （`maxTokens: 1200` + 各默认值 + 可选 `outputStyle: 'plain'` 的完整组合与要点说明）
+
 ## [1.1.3] - 2026-08-18
 
 > **版本说明**：npm 上仅发布过 1.0.1 / 1.0.2 / 1.0.3，本包跳过 1.1.0–1.1.2（仅存在于

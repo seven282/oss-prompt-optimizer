@@ -58,6 +58,7 @@ const CONFIG_KEYS = new Set([
   'examples',
   'minSectionChars',
   'maxTokenRetryFactor',
+  'maxTokensCap',
   'retryTemperatureStep',
   'skipIfAlreadyOptimized',
   'selfRefine',
@@ -368,7 +369,13 @@ export class PromptOptimizerService extends Service {
     const outputLanguage = options.outputLanguage ?? this.config.outputLanguage
     let lastError: Error | undefined
     let lastDiagnosis: string | undefined
-    for (let attempt = 0; attempt <= this.config.maxRetries; attempt++) {
+    let attempt = 0
+    // The validation retry budget (`maxRetries`) and the max-tokens
+    // auto-expansion are independent: a truncated output grows
+    // `effectiveMaxTokens` by the factor up to `maxTokensCap` WITHOUT
+    // consuming the retry budget (`continue` skips the budget step below),
+    // while a validation failure advances `attempt` and stops at `maxRetries`.
+    for (;;) {
       options.signal?.throwIfAborted()
       const temperature = Math.min(2, baseTemperature + this.config.retryTemperatureStep * attempt)
       try {
@@ -424,14 +431,14 @@ export class PromptOptimizerService extends Service {
           failureCode,
         })
       } catch (error) {
-        if (
-          error instanceof MaxTokensError &&
-          this.config.maxTokenRetryFactor > 1 &&
-          attempt < this.config.maxRetries
-        ) {
-          const next = Math.ceil(effectiveMaxTokens * this.config.maxTokenRetryFactor)
+        if (error instanceof MaxTokensError && this.config.maxTokenRetryFactor > 1) {
+          // Auto-expansion is decoupled from the validation retry budget:
+          // grow the effective maxTokens by the factor up to maxTokensCap.
+          // Reaching the cap (or factor === 1) stops the expansion and the
+          // MaxTokensError surfaces as OptimizeErrorCode.MAX_TOKENS.
+          const next = Math.min(this.config.maxTokensCap, Math.ceil(effectiveMaxTokens * this.config.maxTokenRetryFactor))
           if (next > effectiveMaxTokens) {
-            effectiveMaxTokens = Math.min(128000, next)
+            effectiveMaxTokens = next
             lastError = error
             continue
           }
@@ -446,6 +453,9 @@ export class PromptOptimizerService extends Service {
         }
         throw error
       }
+      // Only a validation failure reaches here: consume the retry budget.
+      attempt++
+      if (attempt > this.config.maxRetries) break
     }
     return {
       prompt: fallbackPrompt,

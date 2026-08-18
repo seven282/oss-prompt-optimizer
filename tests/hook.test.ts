@@ -24,6 +24,7 @@ const BASE_CONFIG: Config = {
   autoOptimizePrefix: '/optimize ',
   minSectionChars: 10,
   maxTokenRetryFactor: 1.5,
+  maxTokensCap: 8000,
   retryTemperatureStep: 0.3,
   skipIfAlreadyOptimized: false,
   selfRefine: false,

@@ -32,6 +32,7 @@ const DEFAULT_CONFIG: Config = {
   autoOptimizePrefix: '/optimize ',
   minSectionChars: 0,
   maxTokenRetryFactor: 1.5,
+  maxTokensCap: 8000,
   retryTemperatureStep: 0.3,
   skipIfAlreadyOptimized: false,
   selfRefine: false,
