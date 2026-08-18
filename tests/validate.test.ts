@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import {
   assertInput,
+  diagnoseSections,
   estimateTokens,
   hasAllSections,
+  hasPlainOutput,
+  hasSectionHeadings,
   hasSubstantialContent,
   hasValidSections,
   INCOMPLETE_SECTIONS_MESSAGE,
+  plainHeadingsMessage,
   REQUIRED_SECTIONS,
   sectionBody,
   thinOutputMessage,
@@ -105,6 +109,40 @@ describe('hasSubstantialContent', () => {
   })
 })
 
+describe('hasSectionHeadings', () => {
+  it('detects any of the four section headings', () => {
+    expect(hasSectionHeadings('## Role\n正文')).toBe(true)
+    expect(hasSectionHeadings('## Task：正文')).toBe(true)
+  })
+
+  it('rejects heading-free prose', () => {
+    expect(hasSectionHeadings('你是产品经理。把需求整理为 PRD。')).toBe(false)
+  })
+
+  it('does not match a section name without the heading marker', () => {
+    expect(hasSectionHeadings('Role 和 Task 是英文单词')).toBe(false)
+  })
+})
+
+describe('hasPlainOutput', () => {
+  it('accepts heading-free prose above the threshold', () => {
+    const body = '你是产品经理。把需求整理为 PRD，面向中小企业，预算有限，输出 Markdown 文档，不超过 500 字。'
+    expect(hasPlainOutput(body, 10)).toBe(true)
+  })
+
+  it('rejects output that still carries section headings', () => {
+    expect(hasPlainOutput('## Role\n你是产品经理。把需求整理为 PRD，面向中小企业，预算有限。', 10)).toBe(false)
+  })
+
+  it('rejects output that is too short', () => {
+    expect(hasPlainOutput('太短', 10)).toBe(false)
+  })
+
+  it('exposes a stable headings-forbidden message', () => {
+    expect(plainHeadingsMessage()).toMatch(/contains section headings/)
+  })
+})
+
 describe('assertInput', () => {
   it('accepts a non-empty string', () => {
     expect(() => assertInput('写一首诗')).not.toThrow()
@@ -173,5 +211,31 @@ describe('truncateByTokens', () => {
 
   it('does nothing when maxTokens is zero', () => {
     expect(truncateByTokens('你是一名产品经理', 0, estimate)).toBe('你是一名产品经理')
+  })
+})
+
+describe('diagnoseSections', () => {
+  it('reports missing sections in canonical order', () => {
+    const diagnosis = diagnoseSections(FOUR_SECTIONS.replace('## Format', '## 输出'), 10)
+    expect(diagnosis.missing).toEqual(['Format'])
+    expect(diagnosis.thin).toEqual([])
+  })
+
+  it('reports thin sections with their character counts', () => {
+    const prompt = '## Role\n好\n\n## Task\n分析需求并输出 PRD。\n\n## Context\n面向中小企业，预算有限。\n\n## Format\nMarkdown 文档，不超过 500 字。'
+    expect(diagnoseSections(prompt, 10)).toEqual({ missing: [], thin: [{ name: 'Role', chars: 1 }] })
+  })
+
+  it('accepts a fully valid prompt', () => {
+    expect(diagnoseSections(FOUR_SECTIONS, 5)).toEqual({ missing: [], thin: [] })
+  })
+
+  it('combines missing and thin findings', () => {
+    const prompt = '## Role\n\n## Task\n分析需求并输出 PRD。\n\n## Context\n面向中小企业，预算有限。'
+    expect(diagnoseSections(prompt, 10)).toEqual({ missing: ['Format'], thin: [{ name: 'Role', chars: 0 }] })
+  })
+
+  it('ignores thin sections when minChars is zero', () => {
+    expect(diagnoseSections('## Role\n\n## Task\n\n## Context\n\n## Format\n', 0)).toEqual({ missing: [], thin: [] })
   })
 })

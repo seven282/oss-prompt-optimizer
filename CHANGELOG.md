@@ -1,5 +1,38 @@
 # Changelog
 
+## [1.1.0] - Unreleased
+
+- **角色文档语言自动检测（`metaPromptLanguage`）**：配置 `'auto' | '中文' | '英文'`
+  （默认 `'auto'`）——`'auto'` 按指令非空白字符中汉字占比 ≥30% 自动选择中文/英文角色
+  文档（含假名的日文等语言归英文文档），`'中文'`/`'英文'` 固定；移除输入框中/EN
+  按钮，运行时 `/optimizer-language auto|中文|英文|status` 固定或恢复自动
+  （会话级，重启回落配置值）；检测结果单次调用内传递，`selfRefine` 沿用本轮语言
+- **迭代优化（`iterate`）**：`ctx.promptOptimizer.iterate(lastOptimized, instruction, options)`
+  基于上一次优化结果 + 新要求继续优化（`META_ITERATE` 中英双模板）；工具
+  `prompt_optimize` 新增 `lastOptimized` / `iterateInstruction` 参数；失败时保留上次结果并附错误码
+- **结构化错误码**：`OptimizeError` 携带稳定 `code`（`EMPTY_INPUT` / `NO_MODEL_ROUTE` /
+  `TIMEOUT` / `MAX_TOKENS` / `MISSING_SECTIONS` / `THIN_SECTIONS` / `THIN_OUTPUT` /
+  `TOOL_CALL` / `UNSUPPORTED_FINISH` / `NO_TEXT` / `UNKNOWN`）；`OptimizeResult.errorCode`
+  透传到工具输出与失败渲染（`[MISSING_SECTIONS]` 前缀）；`/optimize` 失败按错误码给出
+  针对性中文提示；`MaxTokensError` 改为继承 `OptimizeError`
+- **诊断驱动重试**：结构类失败（缺段 / 过薄 / 过短）时，把上次失败的具体诊断
+  （缺失段落名、过薄段落与字数）注入下一次重试的系统提示词，针对性修正，
+  提高重试命中率（纯内部行为，无新增配置、无额外模型调用）
+- **自适应精简（`selfRefine`）**：可选配置（默认 `false`），成功优化后至多再跑一轮
+  「精简」迭代（内部指令，不占公共模板），仅当仍通过校验且不更长（5% 容差）时采纳，
+  任何失败自动回退原结果——最多 1 次额外模型调用
+- **优化生命周期事件**：`prompt-optimizer/optimize:start` / `optimize:success` /
+  `optimize:failure`（cordis 事件总线，`optimize`/`iterate` 共用，`method` 字段区分；
+  载荷含 `input` / `result` / `durationMs`；fire-and-forget，监听器异常不影响管线）
+- **服务分层**：`optimizer.ts` 改为纯编排（615 → 523 行）；重试诊断文案 / selfRefine
+  指令 → `diagnose.ts`、finish 错误翻译 / 流式组装 / `MaxTokensError` → `llm.ts`、
+  系统提示词构建（`PromptBuildContext`）→ `prompt.ts`——纯逻辑模块无 harness 依赖、
+  可独立单测（+24 用例）；公共 API 面与端到端行为不变
+- **模板数据化（`templateId` / `metaPromptTemplate`）**：角色文档骨架（4 个）从代码
+  常量变为可配置资源——部分自定义（缺的语言回落内置）、占位符/结构块/注入护栏强校验，
+  违规加载即抛；tuning 块（输出结构/自查等格式规则）保持代码化，与后置校验保持一致
+- **开发文档**：新增 `AGENTS.md`（架构与约定）；README 增加 English 配置/命令章节
+
 ## [1.0.3] - 2026-08-17
 
 - **新增 `outputStyle` 配置**：`'sections'`（默认，四段标题）｜`'plain'`（无标题连贯正文，更省 token）

@@ -9,6 +9,19 @@ export interface PromptExample {
   output: string
 }
 
+/**
+ * Partial custom role-document skeletons. Missing languages fall back to the
+ * built-in templates (`templateId: 'default'`); every provided skeleton must
+ * keep its data placeholder(s), the `{{输出结构}}` / `{{自查}}` blocks, and
+ * the instruction-is-data guardrail line (see `validateTemplateSet`).
+ */
+export interface CustomTemplateSet {
+  optimizeZh?: string
+  optimizeEn?: string
+  iterateZh?: string
+  iterateEn?: string
+}
+
 /** Complete, validated plugin configuration. */
 export interface Config {
   /** Sampling temperature for the optimization call. */
@@ -29,11 +42,21 @@ export interface Config {
    */
   outputLanguage: string
   /**
-   * Output style for the optimized prompt. `'sections'` (default) emits the
-   * four section headings (## Role / ## Task / ## Context / ## Format);
-   * `'plain'` emits a heading-free continuous prompt (fewer tokens).
+   * Output style for the optimized prompt. `'plain'` (default) emits a
+   * heading-free continuous prompt (fewer tokens); `'sections'` emits the
+   * four section headings (## Role / ## Task / ## Context / ## Format).
    */
   outputStyle: 'sections' | 'plain'
+  /**
+   * Language of the optimizer's role document (the meta-prompt / system
+   * prompt). `'auto'` (default) follows each instruction's language (`'中文'`
+   * for CJK-dominant input, `'英文'` otherwise); `'中文'`/`'英文'` pins it.
+   * This only changes the instructions the optimizer itself follows — the
+   * output language of the optimized prompt is controlled by
+   * `outputLanguage` independently. Pin-able at runtime via the
+   * `/optimizer-language` command (auto | 中文 | 英文).
+   */
+  metaPromptLanguage: 'auto' | '中文' | '英文'
   /** Whether the auto-optimize hook is enabled (see `autoOptimizePrefix`). */
   autoOptimize: boolean
   /** Prefix that marks a user message for automatic optimization. */
@@ -63,10 +86,31 @@ export interface Config {
   retryTemperatureStep: number
   /** When true, an input that already carries the four headings passes through unchanged. */
   skipIfAlreadyOptimized: boolean
+  /**
+   * When true, a successful optimization runs one optional refinement round:
+   * the result is passed through the iteration pipeline with a terse-only
+   * instruction and adopted only if it still passes validation and is not
+   * longer (5% tolerance). Default `false` — costs one extra model call
+   * when enabled; any refinement failure keeps the original result.
+   */
+  selfRefine: boolean
   /** When true, the auto-optimize hook optimizes every user text message, not only prefixed ones. */
   autoOptimizeAll: boolean
   /** When true, the hook's replacement message keeps the original instruction text alongside the optimized prompt. */
   hookIncludeOriginal: boolean
+  /**
+   * Template set id for the optimizer role documents. `'default'` (the only
+   * built-in) uses the shipped skeletons; unknown ids fail the load loudly.
+   * Custom skeletons come from `metaPromptTemplate`.
+   */
+  templateId: string
+  /**
+   * Optional custom role-document skeletons (partial sets allowed: missing
+   * languages fall back to the built-in ones). Each skeleton must keep its
+   * data placeholder(s), the `{{输出结构}}` / `{{自查}}` blocks, and the
+   * instruction-is-data guardrail line — violations fail the load loudly.
+   */
+  metaPromptTemplate?: CustomTemplateSet
   /** Optional explicit provider route; provider and model must be set together. */
   provider?: string
   /** Optional explicit model id; provider and model must be set together. */
@@ -85,7 +129,8 @@ export const Config: z<Config> = z.object({
   maxInputTokens: z.number().step(1).min(0).max(200000).default(3000),
   timeoutMs: z.number().step(1).min(1).max(MAX_TIMER_DELAY_MS).default(60000),
   outputLanguage: z.string().default('auto'),
-  outputStyle: z.union(['sections', 'plain']).default('sections'),
+  outputStyle: z.union(['sections', 'plain']).default('plain'),
+  metaPromptLanguage: z.union(['auto', '中文', '英文']).default('auto'),
   autoOptimize: z.boolean().default(false),
   autoOptimizePrefix: z.string().default('/optimize '),
   extraInstructions: z.string(),
@@ -97,8 +142,16 @@ export const Config: z<Config> = z.object({
   maxTokenRetryFactor: z.number().min(1).max(3).default(1.5),
   retryTemperatureStep: z.number().min(0).max(2).default(0.3),
   skipIfAlreadyOptimized: z.boolean().default(false),
+  selfRefine: z.boolean().default(false),
   autoOptimizeAll: z.boolean().default(false),
   hookIncludeOriginal: z.boolean().default(false),
+  templateId: z.string().default('default'),
+  metaPromptTemplate: z.object({
+    optimizeZh: z.string(),
+    optimizeEn: z.string(),
+    iterateZh: z.string(),
+    iterateEn: z.string(),
+  }),
   provider: z.string(),
   model: z.string(),
 })

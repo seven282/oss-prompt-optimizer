@@ -15,13 +15,16 @@ describe('Config schema', () => {
       maxInputChars: 4000,
       timeoutMs: 60000,
       outputLanguage: 'auto',
-      outputStyle: 'sections',
+      outputStyle: 'plain',
+      metaPromptLanguage: 'auto',
       autoOptimize: false,
       autoOptimizePrefix: '/optimize ',
       minSectionChars: 10,
       maxTokenRetryFactor: 1.5,
       retryTemperatureStep: 0.3,
       skipIfAlreadyOptimized: false,
+      selfRefine: false,
+      templateId: 'default',
       autoOptimizeAll: false,
       hookIncludeOriginal: false,
       maxInputTokens: 3000,
@@ -30,6 +33,7 @@ describe('Config schema', () => {
     expect(value.model).toBeUndefined()
     expect(value.extraInstructions).toBeUndefined()
     expect(value.examples).toEqual([])
+    expect(value.metaPromptTemplate).toEqual({})
   })
 
   it('accepts explicit values including new fields', () => {
@@ -38,6 +42,7 @@ describe('Config schema', () => {
       maxRetries: 3,
       outputLanguage: '英文',
       outputStyle: 'plain',
+      metaPromptLanguage: '英文',
       autoOptimize: true,
       autoOptimizePrefix: '/优化 ',
       extraInstructions: '必须面向产品经理',
@@ -46,9 +51,12 @@ describe('Config schema', () => {
       maxTokenRetryFactor: 2,
       retryTemperatureStep: 0.5,
       skipIfAlreadyOptimized: true,
+      selfRefine: true,
+      templateId: 'default',
       autoOptimizeAll: true,
       hookIncludeOriginal: true,
       maxInputTokens: 5000,
+      metaPromptTemplate: { optimizeZh: '定制模板' },
       provider: 'deepseek-official',
       model: 'deepseek-v4-flash',
     })
@@ -57,6 +65,7 @@ describe('Config schema', () => {
       maxRetries: 3,
       outputLanguage: '英文',
       outputStyle: 'plain',
+      metaPromptLanguage: '英文',
       autoOptimize: true,
       autoOptimizePrefix: '/优化 ',
       extraInstructions: '必须面向产品经理',
@@ -65,9 +74,12 @@ describe('Config schema', () => {
       maxTokenRetryFactor: 2,
       retryTemperatureStep: 0.5,
       skipIfAlreadyOptimized: true,
+      selfRefine: true,
+      templateId: 'default',
       autoOptimizeAll: true,
       hookIncludeOriginal: true,
       maxInputTokens: 5000,
+      metaPromptTemplate: { optimizeZh: '定制模板' },
       provider: 'deepseek-official',
       model: 'deepseek-v4-flash',
     })
@@ -87,6 +99,10 @@ describe('Config schema', () => {
     expect(() => validate({ retryTemperatureStep: 3 })).toThrow()
     expect(() => validate({ examples: [{ input: 'a' }] })).toThrow()
     expect(() => validate({ outputStyle: 'foo' })).toThrow()
+    expect(() => validate({ metaPromptLanguage: '日文' })).toThrow()
+    expect(() => validate({ templateId: 42 })).toThrow()
+    expect(() => validate({ metaPromptTemplate: 'foo' })).toThrow()
+    expect(() => validate({ metaPromptLanguage: 'auto' })).not.toThrow()
   })
 
   it('passes unknown keys through the schema (the constructor rejects them loudly)', () => {

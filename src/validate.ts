@@ -8,6 +8,13 @@ export function hasAllSections(text: string): boolean {
   )
 }
 
+/** Whether any of the four section headings appears in `text`. */
+export function hasSectionHeadings(text: string): boolean {
+  return REQUIRED_SECTIONS.some((section) =>
+    new RegExp(`^##\\s*${section}(?:\\s*[:：]|\\s*$)`, 'm').test(text),
+  )
+}
+
 /**
  * The body text of one section (everything between its heading and the next
  * heading or end), trimmed.
@@ -44,9 +51,23 @@ export function hasSubstantialContent(text: string, minChars: number): boolean {
   return text.replace(/\s/g, '').length >= minChars
 }
 
+/**
+ * Whether a plain-style output is acceptable: at least `minChars`
+ * non-whitespace characters AND no four-section headings (the plain style
+ * forbids headings; this is the enforcement backstop for the meta-prompt rule).
+ */
+export function hasPlainOutput(text: string, minChars: number): boolean {
+  return hasSubstantialContent(text, minChars) && !hasSectionHeadings(text)
+}
+
 /** Stable failure message when a plain-style prompt is empty or too short. */
 export function thinOutputMessage(minChars: number): string {
   return `optimized prompt has fewer than ${minChars} meaningful characters`
+}
+
+/** Stable failure message when a plain-style output carries section headings. */
+export function plainHeadingsMessage(): string {
+  return 'optimized prompt contains section headings (## Role / ## Task / ## Context / ## Format) in plain style'
 }
 
 /** Reject empty / non-string input loudly (the tool argument contract). */
@@ -109,4 +130,33 @@ export const INCOMPLETE_SECTIONS_MESSAGE =
 /** Stable failure message when a section body is empty or too short. */
 export function thinSectionsMessage(minChars: number): string {
   return `optimized prompt has a section with fewer than ${minChars} meaningful characters`
+}
+
+/** Structured diagnosis of a section-style output (missing / too-thin sections). */
+export interface SectionDiagnosis {
+  /** Required section names whose heading is absent, in canonical order. */
+  missing: string[]
+  /** Sections whose body has fewer than `minChars` meaningful characters. */
+  thin: { name: string; chars: number }[]
+}
+
+/**
+ * Diagnose a section-style output: which required sections are missing and
+ * which are present but too thin. Heading-only when `minChars <= 0` (thin is
+ * then always empty). Pure — used to build diagnosis-driven retry feedback.
+ */
+export function diagnoseSections(text: string, minChars: number): SectionDiagnosis {
+  const missing: string[] = []
+  const thin: { name: string; chars: number }[] = []
+  for (const section of REQUIRED_SECTIONS) {
+    if (!new RegExp(`^##\\s*${section}(?:\\s*[:：]|\\s*$)`, 'm').test(text)) {
+      missing.push(section)
+      continue
+    }
+    if (minChars > 0) {
+      const chars = sectionBody(text, section).replace(/\s/g, '').length
+      if (chars < minChars) thin.push({ name: section, chars })
+    }
+  }
+  return { missing, thin }
 }

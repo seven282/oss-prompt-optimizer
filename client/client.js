@@ -7,6 +7,9 @@
 //   offers a one-click ↺ restore, shows spinner/error states.
 // - aria-live announcements for success/failure/undo (screen readers).
 //
+// The role-document language is resolved automatically from the instruction
+// (`metaPromptLanguage: 'auto'`, the default) — no language button is shipped.
+//
 // UI/UX: 28px hit area with a 16px stroke icon; theme-token colors; hover and
 // active feedback; :focus-visible ring; disabled state; aria-label + tooltip.
 window.__ModuleLoader__.load({

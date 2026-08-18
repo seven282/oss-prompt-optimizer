@@ -1,6 +1,13 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { CommandResult } from '@deepseek-ai/dsh-commands'
+import { OptimizeError, OPTIMIZE_ERROR_TEXT } from './errors.js'
 import type { PromptOptimizerService } from './optimizer.js'
+
+/** Stable machine-readable token for the current role-document language mode. */
+export function metaLanguageToken(language: 'auto' | 'zh' | 'en'): string {
+  if (language === 'auto') return 'META_LANGUAGE:AUTO'
+  return language === 'en' ? 'META_LANGUAGE:EN' : 'META_LANGUAGE:ZH'
+}
 
 /**
  * Register the `/optimize` and `/auto-optimize` commands. The browser client
@@ -27,6 +34,9 @@ export function registerOptimizeCommand(ctx: Context, service: PromptOptimizerSe
         if (result.optimized) return { kind: 'success', text: result.prompt }
         return { kind: 'error', text: result.error ?? 'prompt-optimize: 优化失败' }
       } catch (error) {
+        if (error instanceof OptimizeError) {
+          return { kind: 'error', text: OPTIMIZE_ERROR_TEXT[error.code] }
+        }
         return { kind: 'error', text: `prompt-optimize: ${error instanceof Error ? error.message : String(error)}` }
       }
     },
@@ -60,6 +70,25 @@ export function registerOptimizeCommand(ctx: Context, service: PromptOptimizerSe
       }
       service.setAutoOptimizeAll(next)
       return { kind: 'success', text: next ? 'AUTO_OPTIMIZE:ON' : 'AUTO_OPTIMIZE:OFF' }
+    },
+  })
+
+  // Runtime switch for the role-document language mode (auto | 中文 | 英文).
+  // `auto` (the default) follows each instruction's language; 中文/英文 pin it.
+  ctx.commands.register({
+    name: 'optimizer-language',
+    description: 'Switch the optimizer role-document language mode (auto | 中文 | 英文 | status)',
+    input: { hint: 'auto | 中文 | 英文 | status' },
+    handler: async (invocation): Promise<CommandResult> => {
+      const arg = invocation.rawInput.trim()
+      if (arg === 'status') {
+        return { kind: 'success', text: metaLanguageToken(service.getMetaPromptLanguage()) }
+      }
+      if (arg === 'auto' || arg === '中文' || arg === '英文') {
+        service.setMetaPromptLanguage(arg === 'auto' ? 'auto' : arg === '英文' ? 'en' : 'zh')
+        return { kind: 'success', text: metaLanguageToken(service.getMetaPromptLanguage()) }
+      }
+      return { kind: 'error', text: 'prompt-optimize: 用法 /optimizer-language auto | 中文 | 英文 | status' }
     },
   })
 }

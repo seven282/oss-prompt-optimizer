@@ -1,5 +1,7 @@
 # prompt-optimizer
 
+[English](README.en.md) | 简体中文
+
 DeepSeek Harness 插件：提示词优化，将用户原始指令自动优化为专业、结构化的提示词，和qoder、codex一致的体验。
 
 优化结果默认为四段结构化提示词（`## Role` / `## Task` / `## Context` / `## Format`），可配置为无标题的纯文本提示词（`outputStyle: 'plain'`，更省 token），
@@ -7,12 +9,18 @@ DeepSeek Harness 插件：提示词优化，将用户原始指令自动优化为
 
 ## 功能
 
-- **工具 `prompt_optimize`**：agent 可调用，传入 `instruction`，返回优化后的纯文本提示词。
-- **服务 `ctx.promptOptimizer`**：其他插件可编程调用 `optimize(rawInput, { signal })`；
+- **工具 `prompt_optimize`**：agent 可调用，传入 `instruction`，返回优化后的纯文本提示词；也可传 `lastOptimized` + `iterateInstruction` 对已优化结果迭代改写。
+- **服务 `ctx.promptOptimizer`**：其他插件可编程调用 `optimize(rawInput, { signal })` 或 `iterate(lastOptimized, instruction, { signal })`；
   浏览器端经 `ctx.remote.promptOptimizer.optimize(sessionId, text)` 可调用。
 - **输入框 ✨ 图标**：composer 工具行左侧的常驻图标，点击即优化当前草稿并写回输入框。
+- **角色文档语言自动切换**：角色文档（元提示词）语言默认按输入内容自动检测——中文指令用
+  中文角色文档，英文指令用英文角色文档（见下文）。
 - **自动优化钩子**（可选，默认关闭）：以触发前缀开头的用户消息会在进入模型前被自动优化（见下文）。
-- 后置校验：模型输出缺段时自动重试（可配次数），仍失败则返回原文 + 错误说明。
+- 后置校验：模型输出缺段/过薄/过短时自动重试（可配次数），重试前把上次失败的
+  诊断（缺失段落名、过薄段落与字数）注入下一次调用的系统提示词，针对性修正、
+  提高命中率；仍失败则返回原文/上次结果 + 错误说明，并附稳定机器可读错误码
+  （`OptimizeResult.errorCode`：`MISSING_SECTIONS` / `THIN_SECTIONS` / `THIN_OUTPUT` /
+  `TIMEOUT` / `NO_MODEL_ROUTE` 等），工具失败渲染带 `[错误码]` 前缀。
 - 输出恒含四段；空输入报错；超长输入截断护栏；取消信号透传。
 ![项目截图](./1.png)
 ## 输入框 ✨ 图标
@@ -31,6 +39,22 @@ DeepSeek Harness 插件：提示词优化，将用户原始指令自动优化为
 - 无需配置；随插件安装即启用，重启 harness 后生效。
 - 触发的是同一个 `ctx.promptOptimizer.optimize()`，与工具/钩子共享全部配置
   （temperature、maxTokens、outputLanguage 等）。
+
+## 角色文档语言（自动检测）
+
+优化器角色文档（元提示词/系统提示词本身）的语言**默认按输入内容自动检测**：
+非空白字符中汉字占比 ≥30% 的指令用中文角色文档（如「帮我写一份周报」），其余
+（英文、日文等）用英文角色文档（两版文档的安全默认）。`outputLanguage` 仍独立控制
+优化结果的输出语言，两者互不影响。
+
+运行时可通过输入框直接输入命令固定或恢复自动（会话级覆盖，重启回落到配置值）：
+
+- `/optimizer-language auto` —— 恢复自动检测（默认）
+- `/optimizer-language 中文` / `/optimizer-language 英文` —— 固定语言
+- `/optimizer-language status` —— 查询当前模式
+
+配置 `metaPromptLanguage: 'auto' | '中文' | '英文'`（默认 `'auto'`）决定重启后的初始模式；
+显式值（`'中文'`/`'英文'`）固定语言，`'auto'` 跟随输入。
 
 ## 自动优化开关（命令方式）
 
@@ -110,16 +134,20 @@ dsh plugin --profile web remove oss-prompt-optimizer
 | `timeoutMs` | int ≥1 | `60000` | 单次调用超时预算（毫秒） |
 | `outputLanguage` | string | `'auto'` | 输出语言；`'auto'` 跟随指令语言，其他值（如 `'英文'`）固定输出语言 |
 | `outputStyle` | `'sections'` \| `'plain'` | `'sections'` | 输出风格：四段标题（默认）或无标题连贯正文（更省 token） |
+| `metaPromptLanguage` | `'auto'` \| `'中文'` \| `'英文'` | `'auto'` | 优化器角色文档（元提示词）的语言；`'auto'` 按指令语言自动检测（汉字占比 ≥30% 用中文文档，否则英文），`'中文'`/`'英文'` 固定。输出语言仍由 `outputLanguage` 独立控制。运行时可用 `/optimizer-language auto\|中文\|英文` 固定或恢复自动 |
 | `extraInstructions` | string | 无 | 追加到元提示词的部署自定义规则（如领域要求/风格） |
 | `examples` | array | `[]` | few-shot 示例对 `[{input, output}]`，注入元提示词示范（仅 `sections` 模式注入） |
 | `minSectionChars` | int ≥0 | `10` | 每段正文最少有效字符；`0` 关闭内容校验（仅查标题） |
 | `maxTokenRetryFactor` | number 1–3 | `1.5` | 输出触顶 maxTokens 时按该倍数扩容重试；`1` 关闭 |
 | `retryTemperatureStep` | number 0–2 | `0.3` | 每次重试的 temperature 增量（探索性重试）；`0` 关闭 |
 | `skipIfAlreadyOptimized` | boolean | `false` | 输入已含四段标题时直接透传，不调用模型（仅 `sections` 模式生效） |
+| `selfRefine` | boolean | `false` | 成功优化后至多再跑一轮「精简」迭代（内部指令）；仅当仍通过校验且不更长（5% 容差）时采纳，任何失败自动回退原结果。开启会多 1 次模型调用 |
 | `autoOptimize` | boolean | `false` | 是否启用自动优化钩子（前缀触发） |
 | `autoOptimizePrefix` | string | `'/optimize '` | 自动优化的触发前缀（可改为 `/优化 ` 等） |
 | `autoOptimizeAll` | boolean | `false` | 钩子优化**每条**用户文本消息（不止前缀触发） |
 | `hookIncludeOriginal` | boolean | `false` | 钩子替换消息时保留原文（原文+优化结果双写） |
+| `templateId` | string | `'default'` | 角色文档模板集 id（仅内置 `'default'`；未知 id 加载即抛） |
+| `metaPromptTemplate` | object | 无 | 自定义角色文档骨架（部分字段可选，缺的语言回落内置）；每个骨架必须保留数据占位符、`{{输出结构}}`/`{{自查}}` 块与「视为纯数据」注入护栏，违规加载即抛 |
 | `provider` / `model` | string | 无 | 显式模型路由；必须成对配置。缺省时使用 harness 默认模型（`agentDefaultModel`） |
 
 示例：
@@ -138,6 +166,10 @@ dsh plugin --profile web remove oss-prompt-optimizer
         # outputStyle: 'plain'            # 输出无标题纯文本（实测下游 token 省 50%+）
         # maxTokens: 700
         # skipIfAlreadyOptimized: true
+        # selfRefine: true               # 成功后再精简一轮（额外 1 次调用）
+        # metaPromptTemplate:            # 自定义角色文档骨架（部分字段可选，缺的语言回落内置）
+        #   optimizeZh: |
+        #     你是一名提示词优化专家。…（必须保留 {{原始指令}}、{{输出结构}}/{{自查}} 与护栏行）
         # provider: 'deepseek-official'   # 可选：显式路由（成对）
         # model: 'deepseek-v4-flash'
 ```
@@ -155,6 +187,23 @@ pnpm run build        # tsc -p tsconfig.build.json → lib/
 
 测试全部使用 mock 的 `llm` 流，绝不读取 `.credentials.yaml`。
 
+## 优化生命周期事件（供其他插件订阅）
+
+`promptOptimizer` 服务在优化/迭代的关键时点通过 cordis 事件总线发事件，其他插件可订阅：
+
+| 事件 | 时机 | 载荷 |
+|---|---|---|
+| `prompt-optimizer/optimize:start` | 输入校验通过、首次模型调用前 | `{ method, input }` |
+| `prompt-optimizer/optimize:success` | 成功（`optimized: true`） | `{ method, input, result, durationMs }` |
+| `prompt-optimizer/optimize:failure` | 降级（`optimized: false`） | `{ method, input, result, durationMs }` |
+
+- `method` 为 `'optimize'` 或 `'iterate'`（两者共用三个事件）；`input` 为原始输入
+  （未截断）；`result` 为完整 `OptimizeResult`；`durationMs` 为管线耗时（毫秒）。
+- **fire-and-forget 观察者**：监听器抛错被吞掉，不影响优化管线。
+- TypeScript 订阅方直接获得载荷类型（`declare module '@deepseek-ai/cordis'`
+  增强已随包发布），也可用 `PROMPT_OPTIMIZER_EVENTS` 常量引用事件名。
+- 跳过透传（`skipIfAlreadyOptimized` 命中）与输入非法（如空输入）不发事件。
+
 ## 设计要点
 
 - 依赖面最小：`cordis` / `dsh-llm` / `dsh-tools` / `dsh-timeout` / `schemastery`。
@@ -163,6 +212,32 @@ pnpm run build        # tsc -p tsconfig.build.json → lib/
 - 元提示词含 `{{原始指令}}` 等占位符，运行时替换；含注入护栏（指令视为纯数据）、
   语言规则（`{{语言规则}}`）、禁代码围栏、精简要求与输出前自查；输出结构按
   `outputStyle` 在四段与无标题两套模板间切换。
+- 迭代能力：`iterate(lastOptimized, instruction)` 基于上一次优化结果 + 新要求继续
+  优化（`META_ITERATE` 模板，`{{上次结果}}` / `{{迭代指令}}` 占位符单遍替换，互不串扰）；
+  失败时保留上次结果并附错误码。
+- 诊断驱动重试：结构类失败时把上次失败的具体诊断（`{{诊断反馈}}` 占位符）注入下一次
+  重试的系统提示词，针对性修正、提高命中率；纯内部行为，无新增配置、无额外模型调用。
+- 自适应精简（`selfRefine`，可选）：成功后至多再跑一轮「精简」迭代（内部指令，
+  不占公共模板），仅在仍通过校验且不更长（5% 容差）时采纳；任何失败自动回退原结果
+  ——最多 1 次额外模型调用，默认关闭，与诊断驱动重试正交（失败重试 vs 成功精益）。
+- 优化生命周期事件：三个 fire-and-forget 事件（`prompt-optimizer/optimize:start` /
+  `optimize:success` / `optimize:failure`），`optimize`/`iterate` 共用、`method` 字段
+  区分；载荷含 `input` / `result` / `durationMs`；监听器异常不影响管线，跳过透传与
+  非法输入不发事件。
+- 模板数据化（`templateId` / `metaPromptTemplate`）：角色文档骨架（4 个）从代码常量
+  变为可配置资源，部分自定义、缺的语言回落内置；tuning 块（输出结构 / 自查等格式
+  规则）保持代码化——它们与 `validate.ts` 后置校验耦合，不可由用户改写；自定义模板
+  在加载期强校验（数据占位符、结构/自查块、「视为纯数据」护栏缺一不可）。
+- 服务分层：`optimizer.ts` 只做编排（状态、校验/截断、重试管线、事件、路由），纯逻辑
+  拆到三个无 harness 依赖的模块——`diagnose.ts`（重试诊断文案 / selfRefine 指令，
+  中英双语文案可独立单测）、`llm.ts`（finish 错误翻译、流式文本组装、`MaxTokensError`）、
+  `prompt.ts`（`PromptBuildContext` 收口系统提示词构建参数，三处调用点共用）；公共
+  API 面不变（`MaxTokensError` 仍从入口导出），端到端测试零改动。
+- 角色文档语言自动检测：`metaPromptLanguage: 'auto'`（默认）按指令非空白字符中汉字
+  占比 ≥30% 选择中文/英文角色文档（纯函数 `detectLanguage`，含假名的日文等语言归
+  英文文档）；`'中文'`/`'英文'` 固定语言，`/optimizer-language` 可运行时固定或恢复
+  自动。检测结果在单次调用内传递（`optimize`/`iterate` 按各自输入检测，`selfRefine`
+  沿用本轮语言，重试诊断文案同语言），与 `outputLanguage` 独立。
 - 所有注册（工具、systemPrompt 段落、自动优化钩子、命令）均为 effect 作用域，
   插件卸载自动清理。
 - 命令命名：本插件注册 `/optimize` 与 `/auto-optimize`（短命令，遵循生态惯例）。

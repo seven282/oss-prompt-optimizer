@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { StreamChunk } from '@deepseek-ai/dsh-llm'
+import { TimeoutReason } from '@deepseek-ai/dsh-timeout'
 import { CommandId } from '@deepseek-ai/dsh-commands'
-import { PromptOptimizerService } from '../src/optimizer.js'
+import { PromptOptimizerService, PROMPT_OPTIMIZER_TIMEOUT_CODE } from '../src/optimizer.js'
 import type { Config } from '../src/config.js'
 
 const FOUR_SECTIONS = `## Role
@@ -25,12 +26,15 @@ const DEFAULT_CONFIG: Config = {
   timeoutMs: 1000,
   outputLanguage: 'auto',
   outputStyle: 'sections',
+  metaPromptLanguage: 'auto',
   autoOptimize: false,
   autoOptimizePrefix: '/optimize ',
   minSectionChars: 0,
   maxTokenRetryFactor: 1.5,
   retryTemperatureStep: 0.3,
   skipIfAlreadyOptimized: false,
+  selfRefine: false,
+  templateId: 'default',
   autoOptimizeAll: false,
   hookIncludeOriginal: false,
   provider: 'deepseek-official',
@@ -74,9 +78,9 @@ const invocation = (rawInput: string) => ({
 })
 
 describe('registerOptimizeCommand', () => {
-  it('registers the /optimize and /auto-optimize commands', () => {
+  it('registers the /optimize, /auto-optimize and /optimizer-language commands', () => {
     const { commands } = makeService(() => textStream(FOUR_SECTIONS))
-    expect(commands.map((c) => c.name)).toEqual(['optimize', 'auto-optimize'])
+    expect(commands.map((c) => c.name)).toEqual(['optimize', 'auto-optimize', 'optimizer-language'])
     const optimize = commands.find((c) => c.name === 'optimize')!
     expect(optimize.description).toContain('professional')
     expect(optimize.input?.hint).toBeTruthy()
@@ -107,6 +111,32 @@ describe('registerOptimizeCommand', () => {
     const { commands } = makeService(stream)
     const result = await commands.find((c) => c.name === 'optimize')!.handler(invocation('x'))
     expect(result).toMatchObject({ kind: 'error', text: expect.stringContaining('boom') })
+  })
+
+  it('maps a timeout OptimizeError to the stable Chinese message', async () => {
+    const stream = (): AsyncIterable<StreamChunk> => (async function* () {
+      const reason = new TimeoutReason(PROMPT_OPTIMIZER_TIMEOUT_CODE, 10)
+      yield { type: 'text-delta', index: 0, text: '' } as StreamChunk
+      throw Object.assign(new Error('aborted'), { reason })
+    })()
+    const { commands } = makeService(stream)
+    const result = await commands.find((c) => c.name === 'optimize')!.handler(invocation('x'))
+    expect(result).toMatchObject({ kind: 'error', text: expect.stringContaining('超时') })
+  })
+
+  it('maps a no-route OptimizeError to the stable Chinese message', async () => {
+    const captured: CommandDef[] = []
+    const ctx = {
+      reflect: { provide: () => {} },
+      get: () => undefined,
+      tools: { register: () => () => {} },
+      systemPrompt: { section: () => () => {} },
+      commands: { register: (def: CommandDef) => { captured.push(def); return () => {} } },
+      llm: { stream: () => textStream(FOUR_SECTIONS) },
+    }
+    new PromptOptimizerService(ctx as never, { ...DEFAULT_CONFIG, provider: undefined, model: undefined })
+    const result = await captured.find((c) => c.name === 'optimize')!.handler(invocation('x'))
+    expect(result).toMatchObject({ kind: 'error', text: expect.stringContaining('模型路由') })
   })
 })
 
@@ -148,5 +178,43 @@ describe('/auto-optimize command', () => {
     expect(service.isAutoOptimizeAll()).toBe(true)
     service.setAutoOptimizeAll(false)
     expect(service.isAutoOptimizeAll()).toBe(true) // static flag still holds
+  })
+})
+
+describe('/optimizer-language command', () => {
+  const lang = (commands: CommandDef[]) => commands.find((c) => c.name === 'optimizer-language')!
+
+  it('reports the auto default', async () => {
+    const { commands } = makeService(() => textStream(FOUR_SECTIONS))
+    expect(await lang(commands).handler(invocation('status'))).toMatchObject({ kind: 'success', text: 'META_LANGUAGE:AUTO' })
+  })
+
+  it('pins 英文/中文 and clears back to auto', async () => {
+    const { commands, service } = makeService(() => textStream(FOUR_SECTIONS))
+    expect(service.getMetaPromptLanguage()).toBe('auto')
+    expect(await lang(commands).handler(invocation('英文'))).toMatchObject({ kind: 'success', text: 'META_LANGUAGE:EN' })
+    expect(service.getMetaPromptLanguage()).toBe('en')
+    expect(await lang(commands).handler(invocation('中文'))).toMatchObject({ kind: 'success', text: 'META_LANGUAGE:ZH' })
+    expect(service.getMetaPromptLanguage()).toBe('zh')
+    expect(await lang(commands).handler(invocation('auto'))).toMatchObject({ kind: 'success', text: 'META_LANGUAGE:AUTO' })
+    expect(service.getMetaPromptLanguage()).toBe('auto')
+  })
+
+  it('falls back to the config when no runtime override is set', async () => {
+    const ctx = {
+      reflect: { provide: () => {} },
+      get: () => undefined,
+      tools: { register: () => () => {} },
+      systemPrompt: { section: () => () => {} },
+      commands: { register: () => () => {} },
+      llm: { stream: () => textStream(FOUR_SECTIONS) },
+    }
+    const service = new PromptOptimizerService(ctx as never, { ...DEFAULT_CONFIG, metaPromptLanguage: '英文' })
+    expect(service.getMetaPromptLanguage()).toBe('en')
+  })
+
+  it('rejects unknown arguments', async () => {
+    const { commands } = makeService(() => textStream(FOUR_SECTIONS))
+    expect(await lang(commands).handler(invocation('日文'))).toMatchObject({ kind: 'error' })
   })
 })

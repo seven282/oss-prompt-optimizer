@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
-import { PromptOptimizerService } from '../src/optimizer.js'
+import { TimeoutReason } from '@deepseek-ai/dsh-timeout'
 import type { Config } from '../src/config.js'
+import { OptimizeError, OptimizeErrorCode } from '../src/errors.js'
+import { MaxTokensError, PROMPT_OPTIMIZER_TIMEOUT_CODE, PromptOptimizerService } from '../src/optimizer.js'
+import { renderOptimizeResult } from '../src/tool.js'
 
 const FOUR_SECTIONS = `## Role
 你是一名资深产品经理。
@@ -33,12 +36,15 @@ const DEFAULT_CONFIG: Config = {
   timeoutMs: 1000,
   outputLanguage: 'auto',
   outputStyle: 'sections',
+  metaPromptLanguage: '中文',
   autoOptimize: false,
   autoOptimizePrefix: '/optimize ',
   minSectionChars: 10,
   maxTokenRetryFactor: 1.5,
   retryTemperatureStep: 0.3,
   skipIfAlreadyOptimized: false,
+  selfRefine: false,
+  templateId: 'default',
   autoOptimizeAll: false,
   hookIncludeOriginal: false,
   provider: 'deepseek-official',
@@ -56,21 +62,30 @@ function textStream(text: string, finish: StreamChunk = { type: 'finish', reason
 interface CtxStub {
   ctx: unknown
   streamCalls: GenerateOptions[]
+  emitCalls: { name: string; payload: unknown }[]
   registerCalls: unknown[]
   sectionCalls: unknown[]
   commandCalls: unknown[]
   selection?: { provider: string; model: string; reasoningEffort?: string }
 }
 
-function makeCtx(streams: AsyncIterable<StreamChunk>[] | ((options: GenerateOptions) => AsyncIterable<StreamChunk>)): CtxStub {
+function makeCtx(
+  streams: AsyncIterable<StreamChunk>[] | ((options: GenerateOptions) => AsyncIterable<StreamChunk>),
+  options?: { throwingEmit?: boolean },
+): CtxStub {
   const streamCalls: GenerateOptions[] = []
+  const emitCalls: { name: string; payload: unknown }[] = []
   const registerCalls: unknown[] = []
   const sectionCalls: unknown[] = []
   const commandCalls: unknown[] = []
-  const state: CtxStub = { ctx: undefined, streamCalls, registerCalls, sectionCalls, commandCalls }
+  const state: CtxStub = { ctx: undefined, streamCalls, emitCalls, registerCalls, sectionCalls, commandCalls }
   const ctx = {
     reflect: { provide: () => {} },
     get: (key: string) => (key === 'agentDefaultModel' ? { currentSelection: () => state.selection } : undefined),
+    emit: (name: string, payload: unknown) => {
+      if (options?.throwingEmit) throw new Error('listener boom')
+      emitCalls.push({ name, payload })
+    },
     tools: { register: (def: unknown) => { registerCalls.push(def); return () => {} } },
     systemPrompt: { section: (def: unknown) => { sectionCalls.push(def); return () => {} } },
     commands: { register: (def: unknown) => { commandCalls.push(def); return () => {} } },
@@ -108,6 +123,55 @@ describe('PromptOptimizerService.optimize', () => {
     // Tool and guidance registrations happened at construction.
     expect(state.registerCalls).toHaveLength(1)
     expect(state.sectionCalls).toHaveLength(1)
+  })
+
+  it('uses the English role document when metaPromptLanguage is 英文', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    const service = makeService(state, { ...DEFAULT_CONFIG, metaPromptLanguage: '英文' })
+    const result = await service.optimize('帮我写一份 PRD', { signal: new AbortController().signal })
+    expect(result.optimized).toBe(true)
+    expect(state.streamCalls[0].system).toContain('You are a prompt optimization expert')
+    expect(state.streamCalls[0].system).not.toContain('你是一名提示词优化专家')
+  })
+
+  it('honours a runtime metaPromptLanguage override over the config', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    const service = makeService(state) // config default 中文
+    service.setMetaPromptLanguage('en')
+    await service.optimize('帮我写一份 PRD', { signal: new AbortController().signal })
+    expect(state.streamCalls[0].system).toContain('You are a prompt optimization expert')
+  })
+
+  it('auto mode uses the Chinese role document for Chinese input', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    const service = makeService(state, { ...DEFAULT_CONFIG, metaPromptLanguage: 'auto' })
+    await service.optimize('帮我写一份 PRD', { signal: new AbortController().signal })
+    expect(state.streamCalls[0].system).toContain('你是一名提示词优化专家')
+    expect(state.streamCalls[0].system).not.toContain('You are a prompt optimization expert')
+  })
+
+  it('auto mode uses the English role document for English input', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    const service = makeService(state, { ...DEFAULT_CONFIG, metaPromptLanguage: 'auto' })
+    await service.optimize('Write a product requirements document', { signal: new AbortController().signal })
+    expect(state.streamCalls[0].system).toContain('You are a prompt optimization expert')
+    expect(state.streamCalls[0].system).not.toContain('你是一名提示词优化专家')
+  })
+
+  it('auto mode iterate detects the language from the new instruction', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    const service = makeService(state, { ...DEFAULT_CONFIG, metaPromptLanguage: 'auto' })
+    await service.iterate(FOUR_SECTIONS, '帮我改成面向中小企业的版本', { signal: new AbortController().signal })
+    expect(state.streamCalls[0].system).toContain('你是一名提示词优化专家')
+  })
+
+  it('clearing the runtime override falls back to the auto config', async () => {
+    const service = makeService(makeCtx([textStream(FOUR_SECTIONS)]), { ...DEFAULT_CONFIG, metaPromptLanguage: 'auto' })
+    expect(service.getMetaPromptLanguage()).toBe('auto')
+    service.setMetaPromptLanguage('en')
+    expect(service.getMetaPromptLanguage()).toBe('en')
+    service.setMetaPromptLanguage('auto')
+    expect(service.getMetaPromptLanguage()).toBe('auto')
   })
 
   it('retries once when sections are missing, then succeeds', async () => {
@@ -176,7 +240,7 @@ describe('PromptOptimizerService.optimize', () => {
     expect(result.prompt).toBe(PLAIN)
     expect(result.sections).toBeUndefined()
     const system = state.streamCalls[0].system ?? ''
-    expect(system).toContain('连贯正文')
+    expect(system).toContain('严禁使用任何小节标题')
     expect(system).not.toContain('## Role')
   })
 
@@ -316,5 +380,397 @@ describe('PromptOptimizerService.optimize', () => {
     ])
     expect(a.optimized).toBe(true)
     expect(b.optimized).toBe(false)
+  })
+
+  it('leaves errorCode undefined on success', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    const service = makeService(state)
+    const result = await service.optimize('x')
+    expect(result.optimized).toBe(true)
+    expect(result.errorCode).toBeUndefined()
+  })
+
+  it('tags a missing-sections fallback with MISSING_SECTIONS', async () => {
+    const state = makeCtx([textStream(THREE_SECTIONS), textStream(THREE_SECTIONS)])
+    const service = makeService(state)
+    const result = await service.optimize('x')
+    expect(result.optimized).toBe(false)
+    expect(result.errorCode).toBe('MISSING_SECTIONS')
+  })
+
+  it('tags a thin-section fallback with THIN_SECTIONS', async () => {
+    const THIN = '## Role\n\n## Task\n\n## Context\n\n## Format\n'
+    const state = makeCtx([textStream(THIN), textStream(THIN)])
+    const service = makeService(state)
+    const result = await service.optimize('x')
+    expect(result.optimized).toBe(false)
+    expect(result.errorCode).toBe('THIN_SECTIONS')
+  })
+
+  it('tags a thin plain-output fallback with THIN_OUTPUT', async () => {
+    const state = makeCtx([textStream('太短'), textStream('太短')])
+    const service = makeService(state, { ...DEFAULT_CONFIG, outputStyle: 'plain', minSectionChars: 10 })
+    const result = await service.optimize('x')
+    expect(result.optimized).toBe(false)
+    expect(result.errorCode).toBe('THIN_OUTPUT')
+  })
+
+  it('throws OptimizeError(NO_MODEL_ROUTE) when no route exists', async () => {
+    const state = makeCtx([])
+    const service = makeService(state, { ...DEFAULT_CONFIG, provider: undefined, model: undefined })
+    const error = await service.optimize('x').then(() => null, (e: unknown) => e)
+    expect(error).toBeInstanceOf(OptimizeError)
+    expect((error as OptimizeError).code).toBe('NO_MODEL_ROUTE')
+  })
+
+  it('throws OptimizeError(EMPTY_INPUT) for an empty instruction', async () => {
+    const state = makeCtx([])
+    const service = makeService(state)
+    const error = await service.optimize('   ').then(() => null, (e: unknown) => e)
+    expect(error).toBeInstanceOf(OptimizeError)
+    expect((error as OptimizeError).code).toBe('EMPTY_INPUT')
+  })
+
+  it('classifies MaxTokensError as OptimizeError MAX_TOKENS', async () => {
+    const state = makeCtx([textStream('', { type: 'finish', reason: { kind: 'max-tokens' } })])
+    const service = makeService(state, { ...DEFAULT_CONFIG, maxTokenRetryFactor: 1 })
+    const error = await service.optimize('x').then(() => null, (e: unknown) => e)
+    expect(error).toBeInstanceOf(MaxTokensError)
+    expect((error as OptimizeError).code).toBe('MAX_TOKENS')
+  })
+
+  it('classifies a tool-call finish as TOOL_CALL', async () => {
+    const state = makeCtx([textStream('', { type: 'finish', reason: { kind: 'tool-calls' } } as StreamChunk)])
+    const service = makeService(state)
+    const error = await service.optimize('x').then(() => null, (e: unknown) => e)
+    expect(error).toBeInstanceOf(OptimizeError)
+    expect((error as OptimizeError).code).toBe('TOOL_CALL')
+  })
+
+  it('classifies an empty model output as NO_TEXT', async () => {
+    const state = makeCtx([textStream('')])
+    const service = makeService(state)
+    const error = await service.optimize('x').then(() => null, (e: unknown) => e)
+    expect(error).toBeInstanceOf(OptimizeError)
+    expect((error as OptimizeError).code).toBe('NO_TEXT')
+  })
+
+  it('wraps a deadline timeout as OptimizeError TIMEOUT', async () => {
+    const stream = (): AsyncIterable<StreamChunk> => (async function* () {
+      const reason = new TimeoutReason(PROMPT_OPTIMIZER_TIMEOUT_CODE, 10)
+      yield { type: 'text-delta', index: 0, text: '' } as StreamChunk
+      throw Object.assign(new Error('aborted'), { reason })
+    })()
+    const state = makeCtx(stream)
+    const service = makeService(state)
+    const error = await service.optimize('x').then(() => null, (e: unknown) => e)
+    expect(error).toBeInstanceOf(OptimizeError)
+    expect((error as OptimizeError).code).toBe('TIMEOUT')
+    expect((error as OptimizeError).message).toMatch(/timed out after 10ms/)
+  })
+
+  it('renders the error code into the tool failure text', () => {
+    const blocks = renderOptimizeResult({
+      prompt: '原文',
+      optimized: false,
+      error: 'missing sections',
+      errorCode: 'MISSING_SECTIONS',
+      retries: 1,
+    })
+    const text = blocks.map((b) => (b.type === 'text' ? b.text : '')).join('')
+    expect(text).toContain('[MISSING_SECTIONS]')
+    expect(text).toContain('ORIGINAL')
+  })
+
+  it('renders UNKNOWN when the error code is absent', () => {
+    const blocks = renderOptimizeResult({ prompt: '原文', optimized: false, retries: 1 })
+    const text = blocks.map((b) => (b.type === 'text' ? b.text : '')).join('')
+    expect(text).toContain('[UNKNOWN]')
+  })
+
+  it('injects missing-sections diagnosis into the retry system prompt', async () => {
+    const state = makeCtx([textStream(THREE_SECTIONS), textStream(FOUR_SECTIONS)])
+    const service = makeService(state)
+    const result = await service.optimize('x')
+    expect(result.optimized).toBe(true)
+    expect(result.retries).toBe(1)
+    const first = state.streamCalls[0].system ?? ''
+    const retry = state.streamCalls[1].system ?? ''
+    expect(first).not.toContain('上次输出存在以下问题')
+    expect(retry).toContain('上次输出存在以下问题，本次输出必须修正')
+    expect(retry).toContain('缺少以下段落：## Format')
+  })
+
+  it('injects thin-section diagnosis into the retry system prompt', async () => {
+    const THIN = '## Role\n\n## Task\n\n## Context\n\n## Format\n'
+    const state = makeCtx([textStream(THIN), textStream(FOUR_SECTIONS)])
+    const service = makeService(state)
+    const result = await service.optimize('x')
+    expect(result.optimized).toBe(true)
+    const retry = state.streamCalls[1].system ?? ''
+    expect(retry).toContain('内容过少')
+    expect(retry).toContain('## Role')
+  })
+
+  it('uses English diagnosis text when the role document is English', async () => {
+    const state = makeCtx([textStream(THREE_SECTIONS), textStream(FOUR_SECTIONS)])
+    const service = makeService(state, { ...DEFAULT_CONFIG, metaPromptLanguage: '英文' })
+    await service.optimize('x')
+    const retry = state.streamCalls[1].system ?? ''
+    expect(retry).toContain('The previous output had the following problems')
+    expect(retry).toContain('Missing section: ## Format')
+  })
+
+  it('injects the plain-mode too-short diagnosis into the retry', async () => {
+    const PLAIN = '你是产品经理。把需求整理为 PRD，面向中小企业，预算有限，输出 Markdown 文档，不超过 500 字。'
+    const state = makeCtx([textStream('太短'), textStream(PLAIN)])
+    const service = makeService(state, { ...DEFAULT_CONFIG, outputStyle: 'plain', minSectionChars: 10 })
+    const result = await service.optimize('x')
+    expect(result.optimized).toBe(true)
+    const retry = state.streamCalls[1].system ?? ''
+    expect(retry).toContain('输出过短（少于 10 有效字符）')
+  })
+
+  it('falls back with HEADINGS_IN_PLAIN when a plain output still carries headings', async () => {
+    const WITH_HEADINGS = '## Role\n你是一名资深产品经理。\n\n## Task\n分析需求并输出 PRD。'
+    const state = makeCtx([textStream(WITH_HEADINGS), textStream(WITH_HEADINGS)])
+    const service = makeService(state, { ...DEFAULT_CONFIG, outputStyle: 'plain', minSectionChars: 10 })
+    const result = await service.optimize('x')
+    expect(result.optimized).toBe(false)
+    expect(result.errorCode).toBe('HEADINGS_IN_PLAIN')
+  })
+
+  it('injects the plain-mode headings diagnosis into the retry', async () => {
+    const WITH_HEADINGS = '## Role\n你是一名资深产品经理。\n\n## Task\n分析需求并输出 PRD。'
+    const PLAIN = '你是产品经理。把需求整理为 PRD，面向中小企业，预算有限，输出 Markdown 文档，不超过 500 字。'
+    const state = makeCtx([textStream(WITH_HEADINGS), textStream(PLAIN)])
+    const service = makeService(state, { ...DEFAULT_CONFIG, outputStyle: 'plain', minSectionChars: 10 })
+    const result = await service.optimize('x')
+    expect(result.optimized).toBe(true)
+    const retry = state.streamCalls[1].system ?? ''
+    expect(retry).toContain('不得包含任何小节标题')
+  })
+
+  it('injects the diagnosis into an iterate retry as well', async () => {
+    const LAST = '## Role\n分析师\n\n## Task\n写周报\n\n## Context\n团队 5 人\n\n## Format\n300 字'
+    const state = makeCtx([textStream(THREE_SECTIONS), textStream(FOUR_SECTIONS)])
+    const service = makeService(state)
+    const result = await service.iterate(LAST, '改成英文')
+    expect(result.optimized).toBe(true)
+    const retry = state.streamCalls[1].system ?? ''
+    expect(retry).toContain('缺少以下段落：## Format')
+  })
+
+  it('runs one refinement round and adopts the terser result when selfRefine is enabled', async () => {
+    const VERBOSE = '## Role\n你是一名非常资深的、经验丰富的产品经理专家，拥有多年的行业经验。\n\n## Task\n认真分析需求并输出一份详细完整的 PRD 文档。\n\n## Context\n面向中小企业客户群体，预算有限，需要严格控制成本。\n\n## Format\n使用 Markdown 文档格式输出，全文不超过 500 字。'
+    const TERSER = '## Role\n资深产品经理，多年行业经验。\n\n## Task\n分析需求，输出完整 PRD。\n\n## Context\n面向中小企业，预算有限。\n\n## Format\nMarkdown 文档，500 字以内。'
+    const state = makeCtx([textStream(VERBOSE), textStream(TERSER)])
+    const service = makeService(state, { ...DEFAULT_CONFIG, selfRefine: true })
+    const result = await service.optimize('x')
+    expect(result.optimized).toBe(true)
+    expect(state.streamCalls).toHaveLength(2)
+    expect(state.streamCalls[1].system ?? '').toContain('进一步精简')
+    expect(result.prompt).toBe(TERSER)
+  })
+
+  it('keeps the original when the refinement output fails validation', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS), textStream(THREE_SECTIONS)])
+    const service = makeService(state, { ...DEFAULT_CONFIG, selfRefine: true })
+    const result = await service.optimize('x')
+    expect(result.optimized).toBe(true)
+    expect(result.prompt).toBe(FOUR_SECTIONS)
+    expect(state.streamCalls).toHaveLength(2)
+  })
+
+  it('keeps the original when the refinement output is longer', async () => {
+    const LONGER = '## Role\n你是一名非常资深的、经验丰富的产品经理专家，拥有多年的行业经验。\n\n## Task\n认真分析需求并输出一份详细完整的 PRD 文档。\n\n## Context\n面向中小企业客户群体，预算有限，需要严格控制成本。\n\n## Format\n使用 Markdown 文档格式输出，全文不超过 500 字。'
+    const state = makeCtx([textStream(FOUR_SECTIONS), textStream(LONGER)])
+    const service = makeService(state, { ...DEFAULT_CONFIG, selfRefine: true })
+    const result = await service.optimize('x')
+    expect(result.optimized).toBe(true)
+    expect(result.prompt).toBe(FOUR_SECTIONS)
+  })
+
+  it('keeps the original when the refinement call fails', async () => {
+    const failing = (): AsyncIterable<StreamChunk> => (async function* () {
+      yield { type: 'text-delta', index: 0, text: '' }
+      throw new Error('refine boom')
+    })()
+    const state = makeCtx([textStream(FOUR_SECTIONS), failing()])
+    const service = makeService(state, { ...DEFAULT_CONFIG, selfRefine: true })
+    const result = await service.optimize('x')
+    expect(result.optimized).toBe(true)
+    expect(result.prompt).toBe(FOUR_SECTIONS)
+  })
+
+  it('skips the refinement round by default', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    const service = makeService(state)
+    const result = await service.optimize('x')
+    expect(result.optimized).toBe(true)
+    expect(state.streamCalls).toHaveLength(1)
+  })
+
+  it('refines a plain-style result too', async () => {
+    const PLAIN = '你是产品经理。把需求整理为 PRD，面向中小企业，预算有限，输出 Markdown 文档，不超过 500 字。'
+    const TERSER = '你是产品经理。整理需求为 PRD，面向中小企业，预算有限，输出 Markdown，500 字内。'
+    const state = makeCtx([textStream(PLAIN), textStream(TERSER)])
+    const service = makeService(state, { ...DEFAULT_CONFIG, outputStyle: 'plain', minSectionChars: 10, selfRefine: true })
+    const result = await service.optimize('x')
+    expect(result.optimized).toBe(true)
+    expect(state.streamCalls[1].system ?? '').toContain('进一步精简')
+    expect(result.prompt).toBe(TERSER)
+  })
+})
+
+describe('PromptOptimizerService.iterate', () => {
+  const LAST = '## Role\n分析师\n\n## Task\n写周报\n\n## Context\n团队 5 人\n\n## Format\n300 字'
+
+  it('iterates on the previous result with the new requirement', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    const service = makeService(state)
+    const result = await service.iterate(LAST, '改成英文', { signal: new AbortController().signal })
+    expect(result.optimized).toBe(true)
+    expect(result.prompt).toBe(FOUR_SECTIONS)
+    expect(result.retries).toBe(0)
+    // The iteration context reaches the model as the system prompt.
+    const system = state.streamCalls[0].system
+    expect(system).toContain('上一次优化得到的提示词')
+    expect(system).toContain(LAST)
+    expect(system).toContain('改成英文')
+  })
+
+  it('keeps the previous result when the iteration falls back', async () => {
+    const state = makeCtx([textStream(THREE_SECTIONS), textStream(THREE_SECTIONS)])
+    const service = makeService(state)
+    const result = await service.iterate(LAST, '改成英文')
+    expect(result.optimized).toBe(false)
+    expect(result.prompt).toBe(LAST)
+    expect(result.errorCode).toBe('MISSING_SECTIONS')
+    expect(result.error).toBeDefined()
+  })
+
+  it('rejects an empty previous result', async () => {
+    const state = makeCtx([])
+    const service = makeService(state)
+    const error = await service.iterate('   ', '改成英文').then(() => null, (e: unknown) => e)
+    expect(error).toBeInstanceOf(OptimizeError)
+    expect((error as OptimizeError).code).toBe('EMPTY_INPUT')
+  })
+
+  it('rejects an empty iteration instruction', async () => {
+    const state = makeCtx([])
+    const service = makeService(state)
+    const error = await service.iterate(LAST, '   ').then(() => null, (e: unknown) => e)
+    expect(error).toBeInstanceOf(OptimizeError)
+    expect((error as OptimizeError).code).toBe('EMPTY_INPUT')
+  })
+
+  it('falls back to the previous result in plain mode', async () => {
+    const state = makeCtx([textStream('太短'), textStream('太短')])
+    const service = makeService(state, { ...DEFAULT_CONFIG, outputStyle: 'plain', minSectionChars: 10 })
+    const result = await service.iterate(LAST, '精简')
+    expect(result.optimized).toBe(false)
+    expect(result.prompt).toBe(LAST)
+    expect(result.errorCode).toBe('THIN_OUTPUT')
+  })
+})
+
+describe('PromptOptimizerService events', () => {
+  const LAST = '## Role\n分析师\n\n## Task\n写周报\n\n## Context\n团队 5 人\n\n## Format\n300 字'
+
+  it('emits start and success with the optimize method on success', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    const service = makeService(state)
+    const result = await service.optimize('帮我写一份 PRD')
+    expect(result.optimized).toBe(true)
+    expect(state.emitCalls.map((c) => c.name)).toEqual([
+      'prompt-optimizer/optimize:start',
+      'prompt-optimizer/optimize:success',
+    ])
+    const start = state.emitCalls[0].payload as { method: string; input: string }
+    expect(start.method).toBe('optimize')
+    expect(start.input).toBe('帮我写一份 PRD')
+    const done = state.emitCalls[1].payload as { method: string; result: { optimized: boolean }; durationMs: number }
+    expect(done.method).toBe('optimize')
+    expect(done.result.optimized).toBe(true)
+    expect(done.durationMs).toBeGreaterThanOrEqual(0)
+  })
+
+  it('emits a failure event with the error code when the run falls back', async () => {
+    const state = makeCtx([textStream(THREE_SECTIONS), textStream(THREE_SECTIONS)])
+    const service = makeService(state)
+    const result = await service.optimize('x')
+    expect(result.optimized).toBe(false)
+    expect(state.emitCalls.map((c) => c.name)).toEqual([
+      'prompt-optimizer/optimize:start',
+      'prompt-optimizer/optimize:failure',
+    ])
+    const done = state.emitCalls[1].payload as { result: { errorCode?: string } }
+    expect(done.result.errorCode).toBe('MISSING_SECTIONS')
+  })
+
+  it('tags iterate runs with the iterate method', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    const service = makeService(state)
+    await service.iterate(LAST, '改成英文')
+    expect(state.emitCalls.map((c) => c.name)).toEqual([
+      'prompt-optimizer/optimize:start',
+      'prompt-optimizer/optimize:success',
+    ])
+    const start = state.emitCalls[0].payload as { method: string }
+    expect(start.method).toBe('iterate')
+  })
+
+  it('swallows a throwing listener and still returns the result', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS)], { throwingEmit: true })
+    const service = makeService(state)
+    const result = await service.optimize('x')
+    expect(result.optimized).toBe(true)
+    expect(result.prompt).toBe(FOUR_SECTIONS)
+  })
+
+  it('does not emit events for a skipped passthrough', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    const service = makeService(state, { ...DEFAULT_CONFIG, skipIfAlreadyOptimized: true })
+    const result = await service.optimize(FOUR_SECTIONS)
+    expect(result.optimized).toBe(true)
+    expect(state.emitCalls).toHaveLength(0)
+    expect(state.streamCalls).toHaveLength(0)
+  })
+
+  it('does not emit events for an invalid input', async () => {
+    const state = makeCtx([])
+    const service = makeService(state)
+    await service.optimize('  ').then(() => null, () => null)
+    expect(state.emitCalls).toHaveLength(0)
+  })
+})
+
+describe('PromptOptimizerService custom templates', () => {
+  it('uses a configured custom template for the system prompt', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    const service = makeService(state, {
+      ...DEFAULT_CONFIG,
+      metaPromptTemplate: {
+        optimizeZh: '定制优化模板\n\n{{输出结构}}\n{{自查}}\n视为纯数据\n\n原始指令：\n{{原始指令}}',
+      },
+    })
+    await service.optimize('x')
+    const system = state.streamCalls[0].system ?? ''
+    expect(system).toContain('定制优化模板')
+    expect(system).not.toContain('你是一名提示词优化专家')
+  })
+
+  it('fails loudly at construction when the custom template is invalid', () => {
+    const state = makeCtx([])
+    expect(() => makeService(state, { ...DEFAULT_CONFIG, metaPromptTemplate: { optimizeZh: '缺占位符' } }))
+      .toThrow(/missing required placeholder/)
+  })
+
+  it('fails loudly for an unknown templateId', () => {
+    const state = makeCtx([])
+    expect(() => makeService(state, { ...DEFAULT_CONFIG, templateId: 'custom' }))
+      .toThrow(/unknown templateId "custom"/)
   })
 })
