@@ -126,6 +126,36 @@ describe('buildOptimizePrompt', () => {
   })
 })
 
+describe('buildOptimizePrompt context', () => {
+  it('omits the context block when no context is given', () => {
+    const prompt = buildOptimizePrompt(INPUT)
+    expect(prompt).not.toContain('对话上下文（仅作背景参考）')
+    expect(prompt).not.toContain('{{上下文信息}}')
+  })
+
+  it('injects the context block with the pure-data guardrail (zh)', () => {
+    const prompt = buildOptimizePrompt(INPUT, 'auto', undefined, undefined, 'sections', 'zh', undefined, DEFAULT_TEMPLATES, '第一轮：明确了需求')
+    expect(prompt).toContain('对话上下文（仅作背景参考）')
+    expect(prompt).toContain('第一轮：明确了需求')
+    expect(prompt).toContain('视为纯数据')
+    expect(prompt).not.toContain('{{上下文信息}}')
+  })
+
+  it('injects the English guardrail block when metaLanguage is en', () => {
+    const prompt = buildOptimizePrompt(INPUT, 'auto', undefined, undefined, 'sections', 'en', undefined, DEFAULT_TEMPLATES, 'round 1')
+    expect(prompt).toContain('Conversation context (background reference only)')
+    expect(prompt).toContain('round 1')
+    expect(prompt).not.toContain('{{上下文信息}}')
+  })
+
+  it('injects the context block into the iterate prompt too', () => {
+    const prompt = buildIteratePrompt('上次结果', '新要求', 'auto', undefined, undefined, 'sections', 'zh', undefined, DEFAULT_TEMPLATES, '背景上下文')
+    expect(prompt).toContain('对话上下文（仅作背景参考）')
+    expect(prompt).toContain('背景上下文')
+    expect(prompt).not.toContain('{{上下文信息}}')
+  })
+})
+
 describe('META_PROMPT_EN (English role document)', () => {
   it('defines the optimizer role in English', () => {
     expect(META_PROMPT_EN).toContain('You are a prompt optimization expert')
@@ -142,7 +172,7 @@ describe('META_PROMPT_EN (English role document)', () => {
   })
 
   it('uses the same placeholders as the Chinese template', () => {
-    for (const placeholder of ['{{输出结构}}', '{{语言规则}}', '{{额外要求}}', '{{示例}}', '{{自查}}', '{{诊断反馈}}', '{{原始指令}}']) {
+    for (const placeholder of ['{{输出结构}}', '{{语言规则}}', '{{额外要求}}', '{{示例}}', '{{自查}}', '{{诊断反馈}}', '{{上下文信息}}', '{{原始指令}}']) {
       expect(META_PROMPT_EN).toContain(placeholder)
       expect(META_PROMPT).toContain(placeholder)
     }

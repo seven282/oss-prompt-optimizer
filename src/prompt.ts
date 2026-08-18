@@ -13,6 +13,8 @@ export interface PromptBuildContext {
   examples: PromptExample[] | undefined
   metaLanguage: MetaLanguage
   templates: TemplateSet
+  /** Optional conversation context (background reference only). */
+  context?: string
 }
 
 /** Build the system prompt for one `optimize` model call. Pure function. */
@@ -31,6 +33,7 @@ export function buildOptimizeSystem(
     ctx.metaLanguage,
     diagnosis,
     ctx.templates,
+    ctx.context,
   )
 }
 
@@ -52,5 +55,6 @@ export function buildIterateSystem(
     ctx.metaLanguage,
     diagnosis,
     ctx.templates,
+    ctx.context,
   )
 }

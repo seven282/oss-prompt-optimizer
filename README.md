@@ -16,6 +16,9 @@ DeepSeek Harness 插件：提示词优化，将用户原始指令自动优化为
 - **角色文档语言自动切换**：角色文档（元提示词）语言默认按输入内容自动检测——中文指令用
   中文角色文档，英文指令用英文角色文档（见下文）。
 - **自动优化钩子**（可选，默认关闭）：以触发前缀开头的用户消息会在进入模型前被自动优化（见下文）。
+- **上下文感知**（默认开启）：把当前指令之前的最近对话注入元提示词
+  （「视为纯数据 / 背景参考」护栏），让优化结果贴合此前讨论；设
+  `contextAware: false` 关闭（见下文配置表）。
 - 后置校验：模型输出缺段/过薄/过短时自动重试（可配次数），重试前把上次失败的
   诊断（缺失段落名、过薄段落与字数）注入下一次调用的系统提示词，针对性修正、
   提高命中率；仍失败则返回原文/上次结果 + 错误说明，并附稳定机器可读错误码
@@ -146,6 +149,9 @@ dsh plugin --profile web remove oss-prompt-optimizer
 | `autoOptimizePrefix` | string | `'/optimize '` | 自动优化的触发前缀（可改为 `/优化 ` 等） |
 | `autoOptimizeAll` | boolean | `false` | 钩子优化**每条**用户文本消息（不止前缀触发） |
 | `hookIncludeOriginal` | boolean | `false` | 钩子替换消息时保留原文（原文+优化结果双写） |
+| `contextAware` | boolean | `true` | 上下文感知：优化时把当前指令之前的最近对话（经 `{{上下文信息}}` 占位符 + 「视为纯数据」护栏）注入元提示词，让优化结果贴合此前讨论（钩子取 `agent/pre-step` 消息，`/optimize` 取会话记录，尽力而为） |
+| `contextMaxMessages` | int 0–100 | `6` | 上下文感知时采集的最近消息条数上限；`0` 关闭 |
+| `contextMaxTokens` | int ≥0 | `1500` | 上下文 token 预算；超出截断到最长前缀并附标记；`0` 关闭截断 |
 | `templateId` | string | `'default'` | 角色文档模板集 id（仅内置 `'default'`；未知 id 加载即抛） |
 | `metaPromptTemplate` | object | 无 | 自定义角色文档骨架（部分字段可选，缺的语言回落内置）；每个骨架必须保留数据占位符、`{{输出结构}}`/`{{自查}}` 块与「视为纯数据」注入护栏，违规加载即抛 |
 | `provider` / `model` | string | 无 | 显式模型路由；必须成对配置。缺省时使用 harness 默认模型（`agentDefaultModel`） |
@@ -167,6 +173,7 @@ dsh plugin --profile web remove oss-prompt-optimizer
         # maxTokens: 700
         # skipIfAlreadyOptimized: true
         # selfRefine: true               # 成功后再精简一轮（额外 1 次调用）
+        # contextAware: false             # 关闭上下文感知（默认开启）
         # metaPromptTemplate:            # 自定义角色文档骨架（部分字段可选，缺的语言回落内置）
         #   optimizeZh: |
         #     你是一名提示词优化专家。…（必须保留 {{原始指令}}、{{输出结构}}/{{自查}} 与护栏行）

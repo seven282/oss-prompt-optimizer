@@ -3,6 +3,7 @@ import type { StreamChunk } from '@deepseek-ai/dsh-llm'
 import { TimeoutReason } from '@deepseek-ai/dsh-timeout'
 import { CommandId } from '@deepseek-ai/dsh-commands'
 import { PromptOptimizerService, PROMPT_OPTIMIZER_TIMEOUT_CODE } from '../src/optimizer.js'
+import type { OptimizeOptions } from '../src/optimizer.js'
 import type { Config } from '../src/config.js'
 
 const FOUR_SECTIONS = `## Role
@@ -37,6 +38,9 @@ const DEFAULT_CONFIG: Config = {
   templateId: 'default',
   autoOptimizeAll: false,
   hookIncludeOriginal: false,
+  contextAware: false,
+  contextMaxMessages: 6,
+  contextMaxTokens: 1500,
   provider: 'deepseek-official',
   model: 'deepseek-v4-flash',
 }
@@ -55,7 +59,7 @@ interface CommandDef {
   handler: (invocation: { commandId: unknown; agent: unknown; rawInput: string; signal: AbortSignal }) => Promise<unknown>
 }
 
-function makeService(makeStream: () => AsyncIterable<StreamChunk>): { service: PromptOptimizerService; commands: CommandDef[] } {
+function makeService(makeStream: () => AsyncIterable<StreamChunk>, config: Config = DEFAULT_CONFIG): { service: PromptOptimizerService; commands: CommandDef[] } {
   const captured: CommandDef[] = []
   const ctx = {
     reflect: { provide: () => {} },
@@ -65,7 +69,7 @@ function makeService(makeStream: () => AsyncIterable<StreamChunk>): { service: P
     commands: { register: (def: CommandDef) => { captured.push(def); return () => {} } },
     llm: { stream: () => makeStream() },
   }
-  const service = new PromptOptimizerService(ctx as never, DEFAULT_CONFIG)
+  const service = new PromptOptimizerService(ctx as never, config)
   if (captured.length === 0) throw new Error('no command registered')
   return { service, commands: captured }
 }
@@ -137,6 +141,54 @@ describe('registerOptimizeCommand', () => {
     new PromptOptimizerService(ctx as never, { ...DEFAULT_CONFIG, provider: undefined, model: undefined })
     const result = await captured.find((c) => c.name === 'optimize')!.handler(invocation('x'))
     expect(result).toMatchObject({ kind: 'error', text: expect.stringContaining('模型路由') })
+  })
+})
+
+describe('/optimize command context awareness', () => {
+  const sessionMessages = (texts: string[]) =>
+    texts.map((text) => ({ content: [{ type: 'text', text }] }))
+
+  it('gathers session context when contextAware is on', async () => {
+    const { commands, service } = makeService(() => textStream(FOUR_SECTIONS), { ...DEFAULT_CONFIG, contextAware: true })
+    const captured: { text: string; options?: OptimizeOptions }[] = []
+    vi.spyOn(service, 'optimize').mockImplementation(async (text: string, options?: OptimizeOptions) => {
+      captured.push({ text, options })
+      return { prompt: FOUR_SECTIONS, optimized: true, retries: 0 }
+    })
+    const handler = commands.find((c) => c.name === 'optimize')!
+    const inv = invocation('帮我写周报')
+    inv.agent = {
+      session: { deriveMessages: () => sessionMessages(['第一轮：明确需求', '第二轮：预算 5 万']) },
+    }
+    const result = await handler.handler(inv)
+    expect(result).toMatchObject({ kind: 'success', text: FOUR_SECTIONS })
+    expect(captured[0]!.options?.context).toContain('第一轮：明确需求')
+    // The command's own record (the last message) is dropped from the context.
+    expect(captured[0]!.options?.context).not.toContain('帮我写周报')
+  })
+
+  it('does not gather context when contextAware is off', async () => {
+    const { commands, service } = makeService(() => textStream(FOUR_SECTIONS))
+    const captured: { options?: OptimizeOptions }[] = []
+    vi.spyOn(service, 'optimize').mockImplementation(async (_text: string, options?: OptimizeOptions) => {
+      captured.push({ options })
+      return { prompt: FOUR_SECTIONS, optimized: true, retries: 0 }
+    })
+    const handler = commands.find((c) => c.name === 'optimize')!
+    const inv = invocation('帮我写周报')
+    inv.agent = { session: { deriveMessages: () => sessionMessages(['上一轮']) } }
+    await handler.handler(inv)
+    expect(captured[0]!.options?.context).toBeUndefined()
+  })
+
+  it('degrades gracefully when the session API is absent', async () => {
+    const { commands, service } = makeService(() => textStream(FOUR_SECTIONS))
+    const optimize = vi.spyOn(service, 'optimize')
+    const handler = commands.find((c) => c.name === 'optimize')!
+    // agent without a session: the command still succeeds without context.
+    const result = await handler.handler(invocation('帮我写周报'))
+    expect(result).toMatchObject({ kind: 'success', text: FOUR_SECTIONS })
+    expect(optimize).toHaveBeenCalledWith('帮我写周报', expect.objectContaining({ signal: expect.any(AbortSignal) }))
   })
 })
 

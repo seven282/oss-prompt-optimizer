@@ -27,6 +27,9 @@ describe('Config schema', () => {
       templateId: 'default',
       autoOptimizeAll: false,
       hookIncludeOriginal: false,
+      contextAware: true,
+      contextMaxMessages: 6,
+      contextMaxTokens: 1500,
       maxInputTokens: 3000,
     })
     expect(value.provider).toBeUndefined()
@@ -55,6 +58,9 @@ describe('Config schema', () => {
       templateId: 'default',
       autoOptimizeAll: true,
       hookIncludeOriginal: true,
+      contextAware: true,
+      contextMaxMessages: 10,
+      contextMaxTokens: 2000,
       maxInputTokens: 5000,
       metaPromptTemplate: { optimizeZh: '定制模板' },
       provider: 'deepseek-official',
@@ -78,6 +84,9 @@ describe('Config schema', () => {
       templateId: 'default',
       autoOptimizeAll: true,
       hookIncludeOriginal: true,
+      contextAware: true,
+      contextMaxMessages: 10,
+      contextMaxTokens: 2000,
       maxInputTokens: 5000,
       metaPromptTemplate: { optimizeZh: '定制模板' },
       provider: 'deepseek-official',
@@ -102,6 +111,10 @@ describe('Config schema', () => {
     expect(() => validate({ metaPromptLanguage: '日文' })).toThrow()
     expect(() => validate({ templateId: 42 })).toThrow()
     expect(() => validate({ metaPromptTemplate: 'foo' })).toThrow()
+    expect(() => validate({ contextMaxMessages: -1 })).toThrow()
+    expect(() => validate({ contextMaxMessages: 1.5 })).toThrow()
+    expect(() => validate({ contextMaxTokens: -1 })).toThrow()
+    expect(() => validate({ contextAware: 'yes' })).toThrow()
     expect(() => validate({ metaPromptLanguage: 'auto' })).not.toThrow()
   })
 

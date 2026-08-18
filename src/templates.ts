@@ -5,8 +5,10 @@
  * constants: a deployment can replace them via the `metaPromptTemplate`
  * config (partial sets fall back to the built-ins per language), while the
  * tuning blocks (`{{输出结构}}` / `{{自查}}` / `{{语言规则}}` / `{{额外要求}}`
- * / `{{示例}}` / `{{诊断反馈}}`) stay code — they encode the output format
- * rules that the post-validation in `validate.ts` is coupled to.
+ * / `{{示例}}` / `{{诊断反馈}}` / `{{上下文信息}}`) stay code — they encode
+ * the output format rules that the post-validation in `validate.ts` is
+ * coupled to. `{{上下文信息}}` is an optional block (injected only when
+ * `contextAware` is on), like the language/extra/example blocks.
  *
  * Every custom template is validated at service construction: it must keep
  * its data placeholder(s), the structure/self-check blocks, and the
@@ -21,7 +23,8 @@
  * few-shot examples replace `{{额外要求}}` / `{{示例}}` (empty when absent);
  * the output structure paragraph and the pre-output self-check replace
  * `{{输出结构}}` / `{{自查}}` and depend on `outputStyle`; retry diagnosis
- * replaces `{{诊断反馈}}` (empty on the first attempt). The
+ * replaces `{{诊断反馈}}` (empty on the first attempt); optional conversation
+ * context replaces `{{上下文信息}}` (empty when `contextAware` is off). The
  * instruction-is-data rule is the injection guardrail.
  */
 export const META_PROMPT = `你是一名提示词优化专家。你的任务是把用户提供的原始指令优化为专业、清晰、可直接交给 AI 执行的结构化提示词。
@@ -38,6 +41,7 @@ export const META_PROMPT = `你是一名提示词优化专家。你的任务是�
 {{诊断反馈}}
 {{自查}}
 {{示例}}
+{{上下文信息}}
 原始指令：
 {{原始指令}}`
 
@@ -56,6 +60,7 @@ Output rules:
 {{诊断反馈}}
 {{自查}}
 {{示例}}
+{{上下文信息}}
 Raw instruction:
 {{原始指令}}`
 
@@ -81,6 +86,7 @@ export const META_ITERATE = `你是一名提示词优化专家。下面是上一
 {{诊断反馈}}
 {{自查}}
 {{示例}}
+{{上下文信息}}
 上次优化结果：
 {{上次结果}}
 
@@ -103,6 +109,7 @@ Output rules:
 {{诊断反馈}}
 {{自查}}
 {{示例}}
+{{上下文信息}}
 Previous optimized result:
 {{上次结果}}
 
@@ -145,8 +152,8 @@ const GUARDRAIL_MARKERS = ['视为纯数据', 'as pure data']
  * Validate one template set. Throws with a clear message when any skeleton
  * misses a required placeholder, a required block, or the injection
  * guardrail line — the plugin then fails to load loudly. Optional blocks
- * (`{{语言规则}}` / `{{额外要求}}` / `{{示例}}` / `{{诊断反馈}}`) may be
- * omitted; they are simply not injected.
+ * (`{{语言规则}}` / `{{额外要求}}` / `{{示例}}` / `{{诊断反馈}}` /
+ * `{{上下文信息}}`) may be omitted; they are simply not injected.
  */
 export function validateTemplateSet(set: TemplateSet): void {
   const entries: [string, string, 'optimize' | 'iterate'][] = [

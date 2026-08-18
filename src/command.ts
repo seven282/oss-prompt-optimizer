@@ -1,12 +1,45 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { CommandResult } from '@deepseek-ai/dsh-commands'
 import { OptimizeError, OPTIMIZE_ERROR_TEXT } from './errors.js'
+import { gatherConversationContext, type ContextMessage } from './context.js'
 import type { PromptOptimizerService } from './optimizer.js'
 
 /** Stable machine-readable token for the current role-document language mode. */
 export function metaLanguageToken(language: 'auto' | 'zh' | 'en'): string {
   if (language === 'auto') return 'META_LANGUAGE:AUTO'
   return language === 'en' ? 'META_LANGUAGE:EN' : 'META_LANGUAGE:ZH'
+}
+
+/**
+ * Best-effort conversation context from the receiving agent's live session.
+ * The exact session API is duck-typed (`agent.session.deriveMessages()`),
+ * so a missing method or any error yields `undefined` — the optimization
+ * then simply runs without context. Session messages include the current
+ * command record; the last message is dropped so the command line itself is
+ * not treated as user context.
+ */
+function sessionContext(
+  agent: { session?: unknown } | undefined,
+  service: PromptOptimizerService,
+): string | undefined {
+  if (agent === undefined || !service.isContextAware()) return undefined
+  try {
+    const session = agent.session as { deriveMessages?: () => unknown } | undefined
+    const derive = session?.deriveMessages
+    if (typeof derive !== 'function') return undefined
+    const messages = (derive.call(session) ?? []) as ContextMessage[]
+    if (messages.length === 0) return undefined
+    const prior = messages.slice(0, -1)
+    if (prior.length === 0) return undefined
+    const bounds = service.contextConfig()
+    return gatherConversationContext(prior, {
+      maxMessages: bounds.maxMessages,
+      maxTokens: bounds.maxTokens,
+    })
+  } catch {
+    // Context is best-effort; never fail the command over it.
+    return undefined
+  }
 }
 
 /**
@@ -30,7 +63,11 @@ export function registerOptimizeCommand(ctx: Context, service: PromptOptimizerSe
         return { kind: 'error', text: 'prompt-optimize: 请提供要优化的指令' }
       }
       try {
-        const result = await service.optimize(text, { signal: invocation.signal })
+        const context = sessionContext(invocation.agent as { session?: unknown }, service)
+        const result = await service.optimize(text, {
+          signal: invocation.signal,
+          ...(context !== undefined && context.length > 0 ? { context } : {}),
+        })
         if (result.optimized) return { kind: 'success', text: result.prompt }
         return { kind: 'error', text: result.error ?? 'prompt-optimize: 优化失败' }
       } catch (error) {

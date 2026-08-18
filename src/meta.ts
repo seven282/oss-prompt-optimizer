@@ -4,8 +4,9 @@
  * `{{语言规则}}` (empty when `outputLanguage` is 'auto'); deployment extras and
  * few-shot examples replace `{{额外要求}}` / `{{示例}}` (empty when absent);
  * the output structure paragraph and the pre-output self-check replace
- * `{{输出结构}}` / `{{自查}}` and depend on `outputStyle`. The
- * instruction-is-data rule is the injection guardrail.
+ * `{{输出结构}}` / `{{自查}}` and depend on `outputStyle`; optional
+ * conversation context replaces `{{上下文信息}}` (empty when `contextAware`
+ * is off). The instruction-is-data rule is the injection guardrail.
  *
  * The role document exists in two languages: `META_PROMPT` (zh) and
  * `META_PROMPT_EN` (en), selected by `buildOptimizePrompt`'s `metaLanguage`
@@ -72,6 +73,7 @@ const SELFCHECK_SECTIONS_EN = `- Self-check before output: all four section head
 const SELFCHECK_PLAIN_EN = `- Self-check before output: the body covers all four aspects above, is long enough to be executed directly, and contains no section headings or field labels.`
 
 import { DEFAULT_TEMPLATES, type TemplateSet } from './templates.js'
+import { buildContextBlock } from './context.js'
 
 // The role-document skeletons live in templates.ts (the data layer); they are
 // re-exported here so the public module surface stays `meta.js`.
@@ -92,9 +94,10 @@ interface MetaBlocks {
   extra: string
   exampleBlock: string
   diagnosis: string
+  context: string
 }
 
-/** Compute the output-structure, self-check, language, extras, example and diagnosis blocks. */
+/** Compute the output-structure, self-check, language, extras, example, diagnosis and context blocks. */
 function metaBlocks(
   language: string | undefined,
   extraInstructions: string | undefined,
@@ -102,6 +105,7 @@ function metaBlocks(
   outputStyle: 'sections' | 'plain',
   metaLanguage: MetaLanguage,
   diagnosis: string | undefined,
+  context: string | undefined,
 ): MetaBlocks {
   const pinned = language !== undefined && language !== 'auto' && language.length > 0
   const langRule = pinned ? `- 输出语言固定为：${language}。\n` : ''
@@ -130,6 +134,7 @@ function metaBlocks(
     extra,
     exampleBlock,
     diagnosis: diagnosisBlock,
+    context: buildContextBlock(context ?? '', metaLanguage),
   }
 }
 
@@ -142,6 +147,7 @@ function renderBlocks(template: string, blocks: MetaBlocks): string {
     .replace('{{额外要求}}', blocks.extra)
     .replace('{{诊断反馈}}', blocks.diagnosis)
     .replace('{{示例}}', blocks.exampleBlock)
+    .replace('{{上下文信息}}', blocks.context)
 }
 
 /**
@@ -164,6 +170,8 @@ function renderBlocks(template: string, blocks: MetaBlocks): string {
  *   before the self-check. Absent on the first attempt.
  * @param templates - the role-document skeleton set to build from; defaults
  *   to the built-in templates (see `templates.ts`).
+ * @param context - optional conversation context (background reference only);
+ *   injected as the `{{上下文信息}}` block when non-empty.
  */
 export function buildOptimizePrompt(
   input: string,
@@ -174,9 +182,10 @@ export function buildOptimizePrompt(
   metaLanguage: MetaLanguage = 'zh',
   diagnosis?: string,
   templates: TemplateSet = DEFAULT_TEMPLATES,
+  context?: string,
 ): string {
   const template = metaLanguage === 'en' ? templates.optimizeEn : templates.optimizeZh
-  const rendered = renderBlocks(template, metaBlocks(language, extraInstructions, examples, outputStyle, metaLanguage, diagnosis))
+  const rendered = renderBlocks(template, metaBlocks(language, extraInstructions, examples, outputStyle, metaLanguage, diagnosis, context))
   return rendered.replace('{{原始指令}}', input)
 }
 
@@ -189,6 +198,8 @@ export function buildOptimizePrompt(
  * `buildOptimizePrompt`.
  * @param templates - the role-document skeleton set to build from; defaults
  *   to the built-in templates (see `templates.ts`).
+ * @param context - optional conversation context (background reference only);
+ *   injected as the `{{上下文信息}}` block when non-empty.
  */
 export function buildIteratePrompt(
   lastResult: string,
@@ -200,9 +211,10 @@ export function buildIteratePrompt(
   metaLanguage: MetaLanguage = 'zh',
   diagnosis?: string,
   templates: TemplateSet = DEFAULT_TEMPLATES,
+  context?: string,
 ): string {
   const template = metaLanguage === 'en' ? templates.iterateEn : templates.iterateZh
-  const rendered = renderBlocks(template, metaBlocks(language, extraInstructions, examples, outputStyle, metaLanguage, diagnosis))
+  const rendered = renderBlocks(template, metaBlocks(language, extraInstructions, examples, outputStyle, metaLanguage, diagnosis, context))
   return rendered.replace(/\{\{上次结果\}\}|\{\{迭代指令\}\}/g, (match) =>
     match === '{{上次结果}}' ? lastResult : instruction,
   )

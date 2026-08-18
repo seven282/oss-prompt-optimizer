@@ -63,6 +63,9 @@ const CONFIG_KEYS = new Set([
   'selfRefine',
   'autoOptimizeAll',
   'hookIncludeOriginal',
+  'contextAware',
+  'contextMaxMessages',
+  'contextMaxTokens',
   'templateId',
   'metaPromptTemplate',
   'provider',
@@ -108,6 +111,13 @@ export interface OptimizeOptions {
   maxTokens?: number
   /** Per-call output-language override. */
   outputLanguage?: string
+  /**
+   * Optional conversation context (background reference only). The caller
+   * gathers and bounds it (e.g. `gatherConversationContext`); the service
+   * injects it into the meta-prompt as the `{{上下文信息}}` block. Absent
+   * (or empty) keeps the optimizer blind to the conversation.
+   */
+  context?: string
 }
 
 /** The service result: the optimized prompt, or a clear fallback. */
@@ -199,14 +209,25 @@ export class PromptOptimizerService extends Service {
     this.runtimeMetaPromptLanguage = language === 'auto' ? undefined : language
   }
 
-  /** The per-call prompt-build context (config fields + resolved language). */
-  private promptContext(metaLanguage: MetaLanguage): PromptBuildContext {
+  /** Whether context-aware optimization is enabled by config. */
+  isContextAware(): boolean {
+    return this.config.contextAware
+  }
+
+  /** The configured context-gathering bounds (messages / tokens). */
+  contextConfig(): { maxMessages: number; maxTokens: number } {
+    return { maxMessages: this.config.contextMaxMessages, maxTokens: this.config.contextMaxTokens }
+  }
+
+  /** The per-call prompt-build context (config fields + resolved language + optional context). */
+  private promptContext(metaLanguage: MetaLanguage, context?: string): PromptBuildContext {
     return {
       outputStyle: this.config.outputStyle,
       extraInstructions: this.config.extraInstructions,
       examples: this.config.examples,
       metaLanguage,
       templates: this.templates,
+      context,
     }
   }
 
@@ -285,7 +306,7 @@ export class PromptOptimizerService extends Service {
     this.emitStart('optimize', rawInput)
     const result = await this.runPipeline(
       (outputLanguage, diagnosis) =>
-        buildOptimizeSystem(this.promptContext(metaLanguage), input, outputLanguage, diagnosis),
+        buildOptimizeSystem(this.promptContext(metaLanguage, options.context), input, outputLanguage, diagnosis),
       rawInput,
       options,
       metaLanguage,
@@ -320,7 +341,7 @@ export class PromptOptimizerService extends Service {
     this.emitStart('iterate', lastOptimized)
     const result = await this.runPipeline(
       (outputLanguage, diagnosis) =>
-        buildIterateSystem(this.promptContext(metaLanguage), last, next, outputLanguage, diagnosis),
+        buildIterateSystem(this.promptContext(metaLanguage, options.context), last, next, outputLanguage, diagnosis),
       lastOptimized,
       options,
       metaLanguage,
@@ -366,7 +387,7 @@ export class PromptOptimizerService extends Service {
         if (valid) {
           let result = prompt
           if (this.config.selfRefine) {
-            const refined = await this.refineOnce(prompt, route, outputLanguage, options.signal, temperature, metaLanguage)
+            const refined = await this.refineOnce(prompt, route, outputLanguage, options.signal, temperature, metaLanguage, options.context)
             if (refined !== undefined) result = refined
           }
           return {
@@ -449,10 +470,11 @@ export class PromptOptimizerService extends Service {
     signal: AbortSignal | undefined,
     temperature: number,
     metaLanguage: MetaLanguage,
+    context?: string,
   ): Promise<string | undefined> {
     try {
       const system = buildIterateSystem(
-        this.promptContext(metaLanguage),
+        this.promptContext(metaLanguage, context),
         v1,
         refineInstruction(metaLanguage),
         outputLanguage,

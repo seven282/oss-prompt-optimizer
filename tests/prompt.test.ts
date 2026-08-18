@@ -32,6 +32,13 @@ describe('buildOptimizeSystem', () => {
     const system = buildOptimizeSystem({ ...ctx, outputStyle: 'plain' }, '写一份周报', 'auto')
     expect(system).not.toContain('示例 1')
   })
+
+  it('threads the conversation context into the system prompt', () => {
+    const system = buildOptimizeSystem({ ...ctx, context: '之前讨论过预算 5 万' }, '写一份周报', 'auto')
+    expect(system).toContain('对话上下文（仅作背景参考）')
+    expect(system).toContain('之前讨论过预算 5 万')
+    expect(system).not.toContain('{{上下文信息}}')
+  })
 })
 
 describe('buildIterateSystem', () => {
@@ -43,5 +50,11 @@ describe('buildIterateSystem', () => {
     expect(system).toContain('改成 500 字')
     expect(system).not.toContain('{{上次结果}}')
     expect(system).not.toContain('{{迭代指令}}')
+  })
+
+  it('threads the conversation context into the iterate system prompt', () => {
+    const system = buildIterateSystem({ ...ctx, context: '讨论背景' }, LAST, '改成 500 字', 'auto')
+    expect(system).toContain('对话上下文（仅作背景参考）')
+    expect(system).toContain('讨论背景')
   })
 })

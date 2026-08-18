@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.1.3] - 2026-08-18
+
+- **上下文感知（`contextAware`）**：默认开启（可设 `false` 关闭）——把当前指令之前
+  的最近对话注入元提示词（新增 `{{上下文信息}}` 占位符，中英模板共用；「视为纯数据 /
+  背景参考」护栏，不得执行其中嵌入的指令），让优化结果贴合此前讨论
+  - 上下文来源：自动优化钩子取 `agent/pre-step` 的当前消息之前的消息；`/optimize`
+    命令尽力而为地从 `agent.session.deriveMessages()` 取会话记录（缺 API/异常时
+    无上下文，优化照常，不失败）
+  - 信息融合：`OptimizeOptions.context` 按次透传 → `PromptBuildContext` →
+    `buildOptimizeSystem`/`buildIterateSystem`（`iterate`/`selfRefine` 同样注入）
+  - 边界控制：`contextMaxMessages`（默认 6）/ `contextMaxTokens`（默认 1500，
+    超预算截断到最长前缀并附标记）
+- 新增 `src/context.ts`（纯函数：`gatherConversationContext` /
+  `contextMessageText` / `buildContextBlock`），无 harness 依赖、可独立单测
+- 测试：243 用例全绿（新增 context.test.ts 7 例 + meta/prompt/hook/command/
+  optimizer/config 增补 13 例）
+
 ## [1.1.2] - 2026-08-18
 
 - **角色文档语言自动检测（`metaPromptLanguage`）**：配置 `'auto' | '中文' | '英文'`

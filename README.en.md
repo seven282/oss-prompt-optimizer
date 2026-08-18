@@ -14,6 +14,7 @@ By default the result is a four-section structured prompt (`## Role` / `## Task`
 - **Input box ✨ button** — a persistent icon in the composer toolbar: click to optimize the current draft and write the result back, with one-click undo.
 - **Role-document language auto-detection** — the optimizer's role document (its meta-prompt) follows the instruction's language by default: CJK-dominant input uses the Chinese role document, anything else the English one (see below).
 - **Auto-optimize hook** (optional, off by default) — user messages starting with a trigger prefix (e.g. `/optimize `) are optimized before they reach the model.
+- **Context awareness** (on by default) — the recent conversation before the instruction is injected into the meta-prompt ("pure data / background reference" guardrail) so the result fits prior discussion; set `contextAware: false` to disable (see the config table below).
 - **Post-validation with retry** — when the output misses sections / is too thin / too short, the pipeline retries (configurable count), injecting a diagnosis of the previous failure (missing section names, thin sections with character counts) into the next call's system prompt; if it still fails, the original instruction / previous result is returned with an explanation and a stable machine-readable error code (`OptimizeResult.errorCode`: `MISSING_SECTIONS` / `THIN_SECTIONS` / `THIN_OUTPUT` / `TIMEOUT` / `NO_MODEL_ROUTE` …), rendered as a `[error-code]` prefix in tool failures.
 - **Safety rails** — output always carries the four sections; empty input errors out; oversized input is truncated; cancellation signals are forwarded.
 
@@ -130,6 +131,9 @@ Set plugin options in `cordis.patch.yml` (every value below also has a schema de
 | `autoOptimizePrefix` | string | `'/optimize '` | Trigger prefix for auto-optimization |
 | `autoOptimizeAll` | boolean | `false` | Optimize **every** user text message, not only prefixed ones |
 | `hookIncludeOriginal` | boolean | `false` | Keep the original instruction alongside the optimized prompt in the replacement message |
+| `contextAware` | boolean | `true` | Context awareness: inject the recent conversation before the current instruction into the meta-prompt (via the `{{上下文信息}}` placeholder + pure-data guardrail) so the result fits prior discussion. The hook reads `agent/pre-step` messages, `/optimize` reads the session log — best effort |
+| `contextMaxMessages` | int 0–100 | `6` | Max recent messages gathered as context when `contextAware` is on; `0` disables |
+| `contextMaxTokens` | int ≥0 | `1500` | Token budget for the gathered context; over-budget input is truncated to the longest prefix with a marker; `0` disables truncation |
 | `templateId` | string | `'default'` | Template-set id for the role documents (only `'default'` is built-in; unknown ids fail the load) |
 | `metaPromptTemplate` | object | none | Custom role-document skeletons (partial; missing languages fall back to the built-ins). Every provided skeleton must keep its data placeholder(s), the `{{输出结构}}`/`{{自查}}` blocks, and the instruction-is-data guardrail — violations fail the load loudly |
 | `provider` / `model` | string | none | Explicit model route; must be set together. Defaults to the harness default model (`agentDefaultModel`) |
@@ -152,6 +156,7 @@ Example:
         # maxTokens: 700
         # skipIfAlreadyOptimized: true
         # selfRefine: true               # one extra tighten round after success (1 extra call)
+        # contextAware: false             # disable context awareness (enabled by default)
         # metaPromptTemplate:            # custom role-document skeletons (partial; missing languages fall back)
         #   optimizeZh: |
         #     You are a prompt optimization expert.… (must keep {{原始指令}}, {{输出结构}}/{{自查}} and the guardrail line)

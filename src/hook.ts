@@ -1,6 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { createUserMessage, type ContentBlock, type UserMessage } from '@deepseek-ai/dsh-llm'
 import type { Config } from './config.js'
+import { gatherConversationContext } from './context.js'
 import type { PromptOptimizerService } from './optimizer.js'
 
 /** Concatenated text of one user message's text blocks (skips tool-result etc.). */
@@ -41,10 +42,12 @@ export function optimizedMessage(optimized: string, includeOriginal = false, ori
  *
  * A message is eligible when it carries the trigger prefix, or — with
  * `config.autoOptimizeAll` — when it has any non-empty text. The prefix is
- * stripped before optimization. Graceful degradation: an empty instruction or
- * any optimization failure preserves the original messages (`next()`). At most
- * one message per step is optimized. Effect-scoped: the listener is removed on
- * plugin dispose.
+ * stripped before optimization. With `config.contextAware`, the messages
+ * before the eligible one are gathered (bounded by `contextMaxMessages` /
+ * `contextMaxTokens`) and injected as conversation context. Graceful
+ * degradation: an empty instruction or any optimization failure preserves
+ * the original messages (`next()`). At most one message per step is
+ * optimized. Effect-scoped: the listener is removed on plugin dispose.
  */
 export function registerAutoOptimizeHook(
   ctx: Context,
@@ -57,7 +60,8 @@ export function registerAutoOptimizeHook(
     let attempted = false
     let replaced = false
     const nextMessages: UserMessage[] = []
-    for (const message of payload.messages) {
+    for (let index = 0; index < payload.messages.length; index++) {
+      const message = payload.messages[index]
       const text = messageText(message)
       // All-mode (config `autoOptimizeAll` or the runtime `/auto-optimize`
       // switch) optimizes every non-empty text message; otherwise only
@@ -67,8 +71,19 @@ export function registerAutoOptimizeHook(
       if (!attempted && matches) {
         attempted = true
         const instruction = (allMode ? text : text.slice(prefix.length)).trim()
+        // Context-aware mode: the messages before this one are the
+        // conversation context; the instruction itself is excluded.
+        const context = config.contextAware
+          ? gatherConversationContext(payload.messages.slice(0, index), {
+              maxMessages: config.contextMaxMessages,
+              maxTokens: config.contextMaxTokens,
+            })
+          : ''
         try {
-          const result = await service.optimize(instruction, { signal: payload.signal })
+          const result = await service.optimize(instruction, {
+            signal: payload.signal,
+            ...(context.length > 0 ? { context } : {}),
+          })
           if (result.optimized) {
             nextMessages.push(optimizedMessage(result.prompt, config.hookIncludeOriginal, instruction))
             replaced = true

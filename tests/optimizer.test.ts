@@ -47,6 +47,9 @@ const DEFAULT_CONFIG: Config = {
   templateId: 'default',
   autoOptimizeAll: false,
   hookIncludeOriginal: false,
+  contextAware: false,
+  contextMaxMessages: 6,
+  contextMaxTokens: 1500,
   provider: 'deepseek-official',
   model: 'deepseek-v4-flash',
 }
@@ -132,6 +135,27 @@ describe('PromptOptimizerService.optimize', () => {
     expect(result.optimized).toBe(true)
     expect(state.streamCalls[0].system).toContain('You are a prompt optimization expert')
     expect(state.streamCalls[0].system).not.toContain('你是一名提示词优化专家')
+  })
+
+  it('injects per-call conversation context into the system prompt', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    const service = makeService(state)
+    const result = await service.optimize('帮我写一份 PRD', {
+      signal: new AbortController().signal,
+      context: '之前讨论过预算 5 万',
+    })
+    expect(result.optimized).toBe(true)
+    const system = state.streamCalls[0].system
+    expect(system).toContain('对话上下文（仅作背景参考）')
+    expect(system).toContain('之前讨论过预算 5 万')
+    expect(system).not.toContain('{{上下文信息}}')
+  })
+
+  it('omits the context block when no per-call context is given', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    const service = makeService(state)
+    await service.optimize('帮我写一份 PRD', { signal: new AbortController().signal })
+    expect(state.streamCalls[0].system).not.toContain('对话上下文（仅作背景参考）')
   })
 
   it('honours a runtime metaPromptLanguage override over the config', async () => {

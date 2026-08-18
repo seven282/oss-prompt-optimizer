@@ -99,6 +99,20 @@ export interface Config {
   /** When true, the hook's replacement message keeps the original instruction text alongside the optimized prompt. */
   hookIncludeOriginal: boolean
   /**
+   * When true, optimization includes recent conversation context (the
+   * messages before the instruction, injected as the `{{上下文信息}}` block
+   * with the pure-data guardrail). `true` (default) keeps the optimizer aware
+   * of the conversation; set `false` to make it blind to it.
+   */
+  contextAware: boolean
+  /** Maximum number of recent messages gathered as context when `contextAware` is on. */
+  contextMaxMessages: number
+  /**
+   * Token budget for the gathered context; `<= 0` disables the token guard.
+   * The context is truncated to the longest prefix within budget.
+   */
+  contextMaxTokens: number
+  /**
    * Template set id for the optimizer role documents. `'default'` (the only
    * built-in) uses the shipped skeletons; unknown ids fail the load loudly.
    * Custom skeletons come from `metaPromptTemplate`.
@@ -145,6 +159,9 @@ export const Config: z<Config> = z.object({
   selfRefine: z.boolean().default(false),
   autoOptimizeAll: z.boolean().default(false),
   hookIncludeOriginal: z.boolean().default(false),
+  contextAware: z.boolean().default(true),
+  contextMaxMessages: z.number().step(1).min(0).max(100).default(6),
+  contextMaxTokens: z.number().step(1).min(0).max(200000).default(1500),
   templateId: z.string().default('default'),
   metaPromptTemplate: z.object({
     optimizeZh: z.string(),

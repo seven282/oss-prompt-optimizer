@@ -8,7 +8,7 @@ import {
   optimizedMessage,
   registerAutoOptimizeHook,
 } from '../src/hook.js'
-import type { PromptOptimizerService } from '../src/optimizer.js'
+import type { OptimizeOptions, PromptOptimizerService } from '../src/optimizer.js'
 
 const BASE_CONFIG: Config = {
   temperature: 0.2,
@@ -30,6 +30,9 @@ const BASE_CONFIG: Config = {
   templateId: 'default',
   autoOptimizeAll: false,
   hookIncludeOriginal: false,
+  contextAware: false,
+  contextMaxMessages: 6,
+  contextMaxTokens: 1500,
 }
 
 const FOUR_SECTIONS = `## Role
@@ -112,10 +115,12 @@ describe('helpers', () => {
 describe('registerAutoOptimizeHook', () => {
   /** Mock service; `all` drives `isAutoOptimizeAll()` (the hook reads it live). */
   function mockService(optimizeImpl: () => Promise<unknown>, all = false) {
-    return {
-      optimize: vi.fn(optimizeImpl),
+    const optimize = vi.fn((_rawInput: string, _options?: OptimizeOptions) => optimizeImpl())
+    const service = {
+      optimize,
       isAutoOptimizeAll: vi.fn(() => all),
     } as unknown as PromptOptimizerService
+    return { service, optimize }
   }
 
   it('does not register when autoOptimize is disabled', () => {
@@ -126,7 +131,7 @@ describe('registerAutoOptimizeHook', () => {
 
   it('replaces a triggered message with the optimized prompt', async () => {
     const state = makeHarness()
-    const service = mockService(async () => ({ prompt: FOUR_SECTIONS, optimized: true, retries: 0 }))
+    const { service } = mockService(async () => ({ prompt: FOUR_SECTIONS, optimized: true, retries: 0 }))
     register(state, BASE_CONFIG, service)
 
     const messages = [userMessage('/optimize 帮我写周报')]
@@ -145,7 +150,7 @@ describe('registerAutoOptimizeHook', () => {
 
   it('preserves the message when the prefix is absent', async () => {
     const state = makeHarness()
-    const service = mockService(async () => null)
+    const { service } = mockService(async () => null)
     register(state, BASE_CONFIG, service)
 
     const messages = [userMessage('普通消息，没有触发前缀')]
@@ -160,7 +165,7 @@ describe('registerAutoOptimizeHook', () => {
 
   it('preserves the message when optimization fails', async () => {
     const state = makeHarness()
-    const service = mockService(async () => { throw new Error('model exploded') })
+    const { service } = mockService(async () => { throw new Error('model exploded') })
     register(state, BASE_CONFIG, service)
 
     const messages = [userMessage('/optimize 帮我写周报')]
@@ -174,7 +179,7 @@ describe('registerAutoOptimizeHook', () => {
 
   it('preserves the message when optimization falls back unoptimized', async () => {
     const state = makeHarness()
-    const service = mockService(async () => ({ prompt: '/optimize 帮我写周报', optimized: false, error: 'missing sections', retries: 1 }))
+    const { service } = mockService(async () => ({ prompt: '/optimize 帮我写周报', optimized: false, error: 'missing sections', retries: 1 }))
     register(state, BASE_CONFIG, service)
 
     const messages = [userMessage('/optimize 帮我写周报')]
@@ -188,7 +193,7 @@ describe('registerAutoOptimizeHook', () => {
 
   it('optimizes at most one message per step', async () => {
     const state = makeHarness()
-    const service = mockService(async () => ({ prompt: FOUR_SECTIONS, optimized: true, retries: 0 }))
+    const { service } = mockService(async () => ({ prompt: FOUR_SECTIONS, optimized: true, retries: 0 }))
     register(state, BASE_CONFIG, service)
 
     const messages = [userMessage('/optimize 第一条'), userMessage('/optimize 第二条')]
@@ -202,7 +207,7 @@ describe('registerAutoOptimizeHook', () => {
 
   it('optimizes every text message when the runtime all-mode is on', async () => {
     const state = makeHarness()
-    const service = mockService(async () => ({ prompt: FOUR_SECTIONS, optimized: true, retries: 0 }), true)
+    const { service } = mockService(async () => ({ prompt: FOUR_SECTIONS, optimized: true, retries: 0 }), true)
     register(state, BASE_CONFIG, service)
 
     const messages = [userMessage('普通消息，没有触发前缀')]
@@ -218,7 +223,7 @@ describe('registerAutoOptimizeHook', () => {
 
   it('keeps the original instruction in the replacement when hookIncludeOriginal', async () => {
     const state = makeHarness()
-    const service = mockService(async () => ({ prompt: FOUR_SECTIONS, optimized: true, retries: 0 }))
+    const { service } = mockService(async () => ({ prompt: FOUR_SECTIONS, optimized: true, retries: 0 }))
     register(state, { ...BASE_CONFIG, hookIncludeOriginal: true }, service)
 
     const messages = [userMessage('/optimize 帮我写周报')]
@@ -231,5 +236,53 @@ describe('registerAutoOptimizeHook', () => {
     const text = messageText(replaced)
     expect(text).toContain('帮我写周报')
     expect(text).toContain(FOUR_SECTIONS)
+  })
+
+  it('passes no context when contextAware is off', async () => {
+    const state = makeHarness()
+    const { service, optimize } = mockService(async () => ({ prompt: FOUR_SECTIONS, optimized: true, retries: 0 }))
+    register(state, BASE_CONFIG, service)
+
+    const messages = [userMessage('上一轮'), userMessage('/optimize 帮我写周报')]
+    const next = nextDecision(messages)
+    await state.listener!(
+      { agent: {}, messages, turn: 0, step: 0, signal: new AbortController().signal },
+      next,
+    )
+    const options = optimize.mock.calls[0]![1]
+    expect(options?.context).toBeUndefined()
+  })
+
+  it('gathers prior messages as context when contextAware is on', async () => {
+    const state = makeHarness()
+    const { service, optimize } = mockService(async () => ({ prompt: FOUR_SECTIONS, optimized: true, retries: 0 }))
+    register(state, { ...BASE_CONFIG, contextAware: true, contextMaxMessages: 6, contextMaxTokens: 1500 }, service)
+
+    const messages = [userMessage('第一轮：明确了需求'), userMessage('第二轮：预算 5 万'), userMessage('/optimize 帮我写周报')]
+    const next = nextDecision(messages)
+    await state.listener!(
+      { agent: {}, messages, turn: 0, step: 0, signal: new AbortController().signal },
+      next,
+    )
+    const options = optimize.mock.calls[0]![1]
+    expect(options?.context).toContain('第一轮：明确了需求')
+    expect(options?.context).toContain('第二轮：预算 5 万')
+    // The instruction itself (with its trigger prefix) is not part of the context.
+    expect(options?.context).not.toContain('帮我写周报')
+  })
+
+  it('omits the context key when there are no prior messages', async () => {
+    const state = makeHarness()
+    const { service, optimize } = mockService(async () => ({ prompt: FOUR_SECTIONS, optimized: true, retries: 0 }))
+    register(state, { ...BASE_CONFIG, contextAware: true }, service)
+
+    const messages = [userMessage('/optimize 帮我写周报')]
+    const next = nextDecision(messages)
+    await state.listener!(
+      { agent: {}, messages, turn: 0, step: 0, signal: new AbortController().signal },
+      next,
+    )
+    const options = optimize.mock.calls[0]![1]
+    expect(options?.context).toBeUndefined()
   })
 })
