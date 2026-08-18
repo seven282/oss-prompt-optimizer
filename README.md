@@ -1,6 +1,6 @@
 # prompt-optimizer
 
-DeepSeek Harness 插件：将用户原始指令自动优化为专业、结构化的提示词。
+DeepSeek Harness 插件：提示词优化，将用户原始指令自动优化为专业、结构化的提示词，和qoder、codex一致的体验。
 
 优化结果默认为四段结构化提示词（`## Role` / `## Task` / `## Context` / `## Format`），可配置为无标题的纯文本提示词（`outputStyle: 'plain'`，更省 token），
 由内置元提示词驱动，经 harness 的 `llm` 服务完成（不直连任何 API、不触碰凭据）。
