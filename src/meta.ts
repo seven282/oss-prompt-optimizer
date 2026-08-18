@@ -134,7 +134,7 @@ function metaBlocks(
     extra,
     exampleBlock,
     diagnosis: diagnosisBlock,
-    context: buildContextBlock(context ?? '', metaLanguage),
+    context: buildContextBlock(context ?? '', metaLanguage, outputStyle),
   }
 }
 

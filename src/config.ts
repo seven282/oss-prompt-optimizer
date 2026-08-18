@@ -30,6 +30,12 @@ export interface Config {
   maxTokens: number
   /** Extra attempts after the first call when the four-section validation fails. */
   maxRetries: number
+  /**
+   * Unified per-optimization model-call budget (first call + expansions +
+   * validation retries together). Exceeding it degrades to the original
+   * instruction with `TOO_MANY_CALLS` — bounds worst-case cost/latency.
+   */
+  maxCalls: number
   /** Cap on the raw instruction fed to the model (characters). */
   maxInputChars: number
   /** Cap on the raw instruction fed to the model (estimated tokens); `<= 0` disables. */
@@ -75,8 +81,10 @@ export interface Config {
   minSectionChars: number
   /**
    * Multiplier applied to the effective `maxTokens` when a call finishes with
-   * `max-tokens` (a truncated output). Expansion does NOT consume the retry
-   * budget and stops at `maxTokensCap`. `1` disables the expansion.
+   * `max-tokens` (a truncated output). The jump expansion (跳档) grows the
+   * budget by this factor up to `maxTokensCap`, does NOT consume the retry
+   * budget, and resumes from the truncated prefix (断点续传). `1` disables
+   * the expansion.
    */
   maxTokenRetryFactor: number
   /**
@@ -108,6 +116,17 @@ export interface Config {
   autoOptimizeAll: boolean
   /** When true, the hook's replacement message keeps the original instruction text alongside the optimized prompt. */
   hookIncludeOriginal: boolean
+  /**
+   * When true, validated optimization results are cached in memory keyed by
+   * the exact request (route + system + truncated instruction + truncated
+   * context): a repeat returns the previous result with zero model calls.
+   * In-memory only, never persisted (see ADR-008).
+   */
+  cacheEnabled: boolean
+  /** Max cached results before LRU eviction; `0` disables storage. */
+  cacheMaxEntries: number
+  /** Cache TTL in milliseconds; `0` disables expiry. */
+  cacheTtlMs: number
   /**
    * When true, optimization includes recent conversation context (the
    * messages before the instruction, injected as the `{{上下文信息}}` block
@@ -150,6 +169,7 @@ export const Config: z<Config> = z.object({
   temperature: z.number().min(0).max(2).default(0.2),
   maxTokens: z.number().step(1).min(1).max(128000).default(1200),
   maxRetries: z.number().step(1).min(0).max(5).default(1),
+  maxCalls: z.number().step(1).min(1).max(20).default(4),
   maxInputChars: z.number().step(1).min(1).max(100000).default(4000),
   maxInputTokens: z.number().step(1).min(0).max(200000).default(3000),
   timeoutMs: z.number().step(1).min(1).max(MAX_TIMER_DELAY_MS).default(60000),
@@ -164,13 +184,16 @@ export const Config: z<Config> = z.object({
     output: z.string().required(),
   })),
   minSectionChars: z.number().step(1).min(0).max(10000).default(10),
-  maxTokenRetryFactor: z.number().min(1).max(3).default(1.5),
+  maxTokenRetryFactor: z.number().min(1).max(3).default(2),
   maxTokensCap: z.number().step(1).min(1).max(128000).default(8000),
   retryTemperatureStep: z.number().min(0).max(2).default(0.3),
   skipIfAlreadyOptimized: z.boolean().default(true),
   selfRefine: z.boolean().default(false),
   autoOptimizeAll: z.boolean().default(false),
   hookIncludeOriginal: z.boolean().default(false),
+  cacheEnabled: z.boolean().default(true),
+  cacheMaxEntries: z.number().step(1).min(0).max(10000).default(200),
+  cacheTtlMs: z.number().step(1).min(0).max(MAX_TIMER_DELAY_MS).default(600000),
   contextAware: z.boolean().default(true),
   contextMaxMessages: z.number().step(1).min(0).max(100).default(6),
   contextMaxTokens: z.number().step(1).min(0).max(200000).default(800),

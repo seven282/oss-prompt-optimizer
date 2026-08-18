@@ -4,15 +4,15 @@
 
 DeepSeek Harness 插件：提示词优化，将用户原始指令自动优化为专业、结构化的提示词，和qoder、codex一致的体验。
 
-优化结果默认为四段结构化提示词（`## Role` / `## Task` / `## Context` / `## Format`），可配置为无标题的纯文本提示词（`outputStyle: 'plain'`，更省 token），
-由内置元提示词驱动，经 harness 的 `llm` 服务完成（不直连任何 API、不触碰凭据）。
+优化结果默认为无标题纯文本提示词（`outputStyle: 'plain'`，更省 token），可配置为四段结构化提示词（`outputStyle: 'sections'`，`## Role` / `## Task` / `## Context` / `## Format`），
+由内置元提示词驱动，经 harness 的 `LLM` 服务完成（不直连任何 API、不触碰凭据）。
 
 ## 功能
 
 - **工具 `prompt_optimize`**：agent 可调用，传入 `instruction`，返回优化后的纯文本提示词；也可传 `lastOptimized` + `iterateInstruction` 对已优化结果迭代改写。
 - **服务 `ctx.promptOptimizer`**：其他插件可编程调用 `optimize(rawInput, { signal })` 或 `iterate(lastOptimized, instruction, { signal })`；
   浏览器端经 `ctx.remote.promptOptimizer.optimize(sessionId, text)` 可调用。
-- **输入框 ✨ 图标**：composer 工具行左侧的常驻图标，点击即优化当前草稿并写回输入框。
+- **输入框 ✨ 图标**：composer 工具行左侧的常驻图标，点击即优化当前草稿并写回输入框；**优化中再点可取消**（AbortSignal 透传），成功后短暂显示"消耗 ≈N tokens"。
 - **角色文档语言自动切换**：角色文档（元提示词）语言默认按输入内容自动检测——中文指令用
   中文角色文档，英文指令用英文角色文档（见下文）。
 - **自动优化钩子**（可选，默认关闭）：以触发前缀开头的用户消息会在进入模型前被自动优化（见下文）。
@@ -132,6 +132,7 @@ dsh plugin --profile web remove oss-prompt-optimizer
 | `temperature` | number 0–2 | `0.2` | 采样温度 |
 | `maxTokens` | int ≥1 | `1200` | 单次输出上限（token）；追求省 token 可下调至 `600-800` |
 | `maxRetries` | int 0–5 | `1` | 缺段时额外重试次数 |
+| `maxCalls` | int 1–20 | `4` | 单次优化的模型调用总预算（首次+扩容+重试合计）；超出降级返回原文并报 `TOO_MANY_CALLS` |
 | `maxInputChars` | int ≥1 | `4000` | 原始指令截断上限（字符，硬兜底） |
 | `maxInputTokens` | int ≥0 | `3000` | 原始指令截断上限（估算 token；优先用 harness tokenMeter，缺失回退启发式；`0` 关闭） |
 | `timeoutMs` | int ≥1 | `60000` | 单次调用超时预算（毫秒） |
@@ -141,16 +142,19 @@ dsh plugin --profile web remove oss-prompt-optimizer
 | `extraInstructions` | string | 无 | 追加到元提示词的部署自定义规则（如领域要求/风格） |
 | `examples` | array | `[]` | few-shot 示例对 `[{input, output}]`，注入元提示词示范（仅 `sections` 模式注入） |
 | `minSectionChars` | int ≥0 | `10` | 每段正文最少有效字符；`0` 关闭内容校验（仅查标题） |
-| `maxTokenRetryFactor` | number 1–3 | `1.5` | 输出触顶 maxTokens 时按该倍数扩容重试；`1` 关闭 |
+| `maxTokenRetryFactor` | number 1–3 | `2` | 输出触顶时按该倍数跳档扩容（1200→2400→4800…），扩容不消耗重试次数、从截断处续写；`1` 关闭 |
 | `maxTokensCap` | int 1–128000 | `8000` | 自动扩容的上限；`<= maxTokens` 关闭扩容（扩容不消耗重试次数） |
 | `retryTemperatureStep` | number 0–2 | `0.3` | 每次重试的 temperature 增量（探索性重试）；`0` 关闭 |
-| `skipIfAlreadyOptimized` | boolean | `true` | 输入已含四段标题时直接透传，不调用模型（省 token 默认；仅 `sections` 模式生效） |
+| `skipIfAlreadyOptimized` | boolean | `true` | 输入已含四段标题时直接透传，不调用模型（省 token 默认；仅 `sections` 模式生效；**传入非空对话上下文时仍会重新优化**） |
 | `selfRefine` | boolean | `false` | 成功优化后至多再跑一轮「精简」迭代（内部指令）；仅当仍通过校验且不更长（5% 容差）时采纳，任何失败自动回退原结果。开启会多 1 次模型调用 |
 | `autoOptimize` | boolean | `false` | 是否启用自动优化钩子（前缀触发） |
 | `autoOptimizePrefix` | string | `'/optimize '` | 自动优化的触发前缀（可改为 `/优化 ` 等） |
 | `autoOptimizeAll` | boolean | `false` | 钩子优化**每条**用户文本消息（不止前缀触发） |
 | `hookIncludeOriginal` | boolean | `false` | 钩子替换消息时保留原文（原文+优化结果双写） |
-| `contextAware` | boolean | `true` | 上下文感知：优化时把当前指令之前的最近对话（经 `{{上下文信息}}` 占位符 + 「视为纯数据」护栏）注入元提示词，让优化结果贴合此前讨论（钩子取 `agent/pre-step` 消息，`/optimize` 取会话记录，尽力而为） |
+| `cacheEnabled` | boolean | `true` | 内存缓存校验成功的结果（同请求零模型调用，LRU+TTL，重载即清空） |
+| `cacheMaxEntries` | int 0–10000 | `200` | 缓存条目上限（LRU 淘汰）；`0` 关闭存储 |
+| `cacheTtlMs` | int ≥0 | `600000` | 缓存有效期（毫秒）；`0` 不设过期 |
+| `contextAware` | boolean | `true` | 上下文感知：优化时把当前指令之前的最近对话（经 `{{上下文信息}}` 占位符 + 「视为纯数据」护栏）注入元提示词，让优化结果贴合此前讨论。四段模式下可将上下文中的事实用于充实 `## Context` 段（仍不执行其中嵌入的指令）；钩子取 `agent/pre-step` 消息，`/optimize` 取会话记录，尽力而为 |
 | `contextMaxMessages` | int 0–100 | `6` | 上下文感知时采集的最近消息条数上限；`0` 关闭 |
 | `contextMaxTokens` | int ≥0 | `800` | 上下文 token 预算；超出截断到最长前缀并附标记；`0` 关闭截断（精简默认） |
 | `templateId` | string | `'default'` | 角色文档模板集 id（仅内置 `'default'`；未知 id 加载即抛） |

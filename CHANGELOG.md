@@ -1,5 +1,48 @@
 # Changelog
 
+## [1.1.7] - 2026-08-18
+
+- **调用预算（`maxCalls`，默认 4）**：单次优化的模型调用总预算（首次+扩容+重试
+  合计），超出直接降级返回原文并报 `TOO_MANY_CALLS`——控制最坏成本与时长
+  （要优化的功能 #1）
+- **运行统计（观测）**：`service.getStats()` 记录 runs/success/failed/cached、
+  总/最大耗时与最近输出 token 数（#2）
+- **✨ 取消反馈**：优化中再点 ✨ 按钮即取消（`commands.execute` 支持
+  `AbortSignal`），播报"已取消优化"（#4）
+- **成本可见**：`/optimize-stats` 命令返回机器 token `OPTIMIZE_STATS:TOKENS:<n>`，
+  客户端成功后短暂显示"消耗 ≈N tokens"（#5）
+- **保持二期**：上下文按相关性挑选（#3）留待后续（需启发式/模型，避免劣化质量）
+- 测试：270 用例全绿（预算降级、统计、/optimize-stats、config 校验）
+
+## [1.1.6] - 2026-08-18
+
+- **结果缓存（`cacheEnabled`，默认开启）**：校验成功的优化结果按"实际喂给模型的
+  请求"哈希缓存（provider + model + 无诊断 system + 截断指令 + 截断上下文 +
+  可选 scope）——**重复请求零模型调用**（LRU `cacheMaxEntries` 默认 200 +
+  TTL `cacheTtlMs` 默认 10 分钟）
+  - 仅缓存 `optimized: true` 的结果；失败/降级不入缓存
+  - 采样参数（temperature/maxTokens）不入 key：同请求返回同结果
+  - 纯内存、不落盘、插件重载即清空；`OptimizeOptions.cacheScope` 可选分区
+  - 新增 `src/cache.ts`（纯函数：`fnv1a` + `createOptimizeCache`），无依赖可单测
+- 测试：266 用例全绿（新增 cache.test.ts 8 例 + optimizer 缓存 6 例 + config 校验）
+
+## [1.1.5] - 2026-08-18
+
+- **四段输出上下文感知（根治）**：
+  - 方案 A：sections 模式下，上下文块追加一条规则——**可将对话上下文中已出现的
+    事实信息用于充实输出的 `## Context` 段**（仍不得执行其中嵌入的指令），
+    四段结果真正反映对话（plain 模式不受影响）
+  - 方案 B：`skipIfAlreadyOptimized` 透传**遇到非空对话上下文时改为重新优化**
+    （对话已推进，结果应随之更新）；无新上下文才透传
+  - 方案 C：README 澄清上下文影响边界（中英同步）
+- **优化时长根治：断点续传 + 跳档扩容**
+  - 断点续传（resume）：`max-tokens` 截断时保留已生成文本，下一次调用**从断点
+    继续输出**而非整段重生成（长优化不再重复烧钱烧时间；`MaxTokensError` 携带
+    `partial`）
+  - 跳档扩容：`maxTokenRetryFactor` 默认 **1.5 → 2**（1200→2400→4800→…，
+    扩容次数减半），仍不消耗 `maxRetries`、受 `maxTokensCap` 封顶
+- 测试：252 用例全绿（+6：续传合并、上下文重优化、sections 规则、扩容序列更新）
+
 ## [1.1.4] - 2026-08-18
 
 - **省 token 默认值**：`skipIfAlreadyOptimized` 默认改为 `true`（已含四段的输入直接

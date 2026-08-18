@@ -14,6 +14,7 @@ const BASE_CONFIG: Config = {
   temperature: 0.2,
   maxTokens: 1200,
   maxRetries: 1,
+  maxCalls: 4,
   maxInputChars: 4000,
   maxInputTokens: 3000,
   timeoutMs: 1000,
@@ -23,7 +24,7 @@ const BASE_CONFIG: Config = {
   autoOptimize: true,
   autoOptimizePrefix: '/optimize ',
   minSectionChars: 10,
-  maxTokenRetryFactor: 1.5,
+  maxTokenRetryFactor: 2,
   maxTokensCap: 8000,
   retryTemperatureStep: 0.3,
   skipIfAlreadyOptimized: false,
@@ -34,6 +35,9 @@ const BASE_CONFIG: Config = {
   contextAware: false,
   contextMaxMessages: 6,
   contextMaxTokens: 1500,
+  cacheEnabled: true,
+  cacheMaxEntries: 200,
+  cacheTtlMs: 600000,
 }
 
 const FOUR_SECTIONS = `## Role

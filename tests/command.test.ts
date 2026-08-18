@@ -22,6 +22,7 @@ const DEFAULT_CONFIG: Config = {
   temperature: 0.2,
   maxTokens: 1200,
   maxRetries: 1,
+  maxCalls: 4,
   maxInputChars: 4000,
   maxInputTokens: 3000,
   timeoutMs: 1000,
@@ -31,7 +32,7 @@ const DEFAULT_CONFIG: Config = {
   autoOptimize: false,
   autoOptimizePrefix: '/optimize ',
   minSectionChars: 0,
-  maxTokenRetryFactor: 1.5,
+  maxTokenRetryFactor: 2,
   maxTokensCap: 8000,
   retryTemperatureStep: 0.3,
   skipIfAlreadyOptimized: false,
@@ -42,6 +43,9 @@ const DEFAULT_CONFIG: Config = {
   contextAware: false,
   contextMaxMessages: 6,
   contextMaxTokens: 1500,
+  cacheEnabled: true,
+  cacheMaxEntries: 200,
+  cacheTtlMs: 600000,
   provider: 'deepseek-official',
   model: 'deepseek-v4-flash',
 }
@@ -83,9 +87,9 @@ const invocation = (rawInput: string) => ({
 })
 
 describe('registerOptimizeCommand', () => {
-  it('registers the /optimize, /auto-optimize and /optimizer-language commands', () => {
+  it('registers the /optimize, /auto-optimize, /optimizer-language and /optimize-stats commands', () => {
     const { commands } = makeService(() => textStream(FOUR_SECTIONS))
-    expect(commands.map((c) => c.name)).toEqual(['optimize', 'auto-optimize', 'optimizer-language'])
+    expect(commands.map((c) => c.name)).toEqual(['optimize', 'auto-optimize', 'optimizer-language', 'optimize-stats'])
     const optimize = commands.find((c) => c.name === 'optimize')!
     expect(optimize.description).toContain('professional')
     expect(optimize.input?.hint).toBeTruthy()
@@ -269,5 +273,20 @@ describe('/optimizer-language command', () => {
   it('rejects unknown arguments', async () => {
     const { commands } = makeService(() => textStream(FOUR_SECTIONS))
     expect(await lang(commands).handler(invocation('日文'))).toMatchObject({ kind: 'error' })
+  })
+})
+
+describe('/optimize-stats command', () => {
+  const stats = (commands: CommandDef[]) => commands.find((c) => c.name === 'optimize-stats')!
+
+  it('reports the last run output tokens as a machine token', async () => {
+    const { commands } = makeService(() => textStream(FOUR_SECTIONS))
+    // Before any run the token count is 0.
+    expect(await stats(commands).handler(invocation(''))).toMatchObject({ kind: 'success', text: 'OPTIMIZE_STATS:TOKENS:0' })
+    const optimize = commands.find((c) => c.name === 'optimize')!
+    await optimize.handler(invocation('帮我写周报'))
+    const result = await stats(commands).handler(invocation(''))
+    expect(result).toMatchObject({ kind: 'success' })
+    expect((result as { text: string }).text).toMatch(/OPTIMIZE_STATS:TOKENS:\d+/)
   })
 })

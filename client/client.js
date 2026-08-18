@@ -41,6 +41,7 @@ window.__ModuleLoader__.load({
         '.po-optimize-btn:disabled{opacity:.4;cursor:not-allowed}',
         '.po-optimize-btn.is-undo{color:var(--dsw-alias-brand-primary, inherit)}',
         '.po-optimize-btn.has-error{color:var(--dsw-alias-state-error-primary, #d93026)}',
+        '.po-cost{display:inline-flex;align-items:center;font-size:12px;line-height:1;color:var(--dsw-alias-label-secondary, inherit);margin-left:6px;white-space:nowrap;transition:opacity .15s ease}',
         '.po-visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0;padding:0;margin:-1px}',
       ].join('')
       document.head.appendChild(style)
@@ -113,6 +114,13 @@ window.__ModuleLoader__.load({
             var errorState = React.useState(null)
             var error = errorState[0]
             var setError = errorState[1]
+            // AbortController for the in-flight /optimize call (click-to-cancel).
+            var cancelRef = React.useRef(null)
+            // Transient "consumed ≈N tokens" hint after a fresh optimization
+            // (roadmap 要优化的功能 #5: 成本可见).
+            var costState = React.useState(null)
+            var cost = costState[0]
+            var setCost = costState[1]
             // aria-live announcement (screen readers / assistive tech).
             var announceState = React.useState('')
             var announce = announceState[0]
@@ -134,6 +142,17 @@ window.__ModuleLoader__.load({
             }
 
             function onClick() {
+              // Clicking while optimizing cancels the in-flight call
+              // (roadmap 要优化的功能 #4: 取消反馈).
+              if (busy) {
+                if (cancelRef.current) {
+                  cancelRef.current.abort()
+                  cancelRef.current = null
+                }
+                setBusy(false)
+                setAnnounce('已取消优化')
+                return
+              }
               if (canUndo) {
                 props.inputActions.setDraft(undo.original)
                 setUndo(null)
@@ -143,13 +162,33 @@ window.__ModuleLoader__.load({
               if (!canOptimize) return
               if (error !== null) setError(null)
               setBusy(true)
-              ctx.remote.commands.execute(props.sessionId, '/optimize ' + draft)
+              var controller = typeof AbortController === 'function' ? new AbortController() : null
+              cancelRef.current = controller
+              var signal = controller ? controller.signal : undefined
+              ctx.remote.commands.execute(props.sessionId, '/optimize ' + draft, signal)
                 .then(function (response) {
                   var result = resultOf(response)
                   if (result && result.kind === 'success' && typeof result.text === 'string' && result.text.length > 0) {
                     setUndo({ original: draft, optimized: result.text })
                     props.inputActions.setDraft(result.text)
                     setAnnounce('提示词已优化，可点击撤销按钮恢复原文')
+                    // 成本可见: read the last run's output tokens and show a
+                    // transient hint. Best-effort; a failure is ignored.
+                    ctx.remote.commands.execute(props.sessionId, '/optimize-stats')
+                      .then(function (statsResponse) {
+                        var statsResult = resultOf(statsResponse)
+                        var match = statsResult && typeof statsResult.text === 'string'
+                          ? /OPTIMIZE_STATS:TOKENS:(\d+)/.exec(statsResult.text)
+                          : null
+                        if (match) {
+                          setCost(match[1])
+                          setAnnounce('提示词已优化（消耗约 ' + match[1] + ' tokens），可点击撤销按钮恢复原文')
+                          if (typeof setTimeout === 'function') {
+                            setTimeout(function () { setCost(null) }, 4000)
+                          }
+                        }
+                      })
+                      .catch(function () { /* stats are best-effort */ })
                   } else if (result && result.kind === 'error' && typeof result.text === 'string') {
                     flashError(result.text)
                   } else {
@@ -158,11 +197,17 @@ window.__ModuleLoader__.load({
                   }
                 })
                 .catch(function (error) {
+                  // A user-initiated abort is not an error.
+                  if (controller && controller.signal.aborted) {
+                    setAnnounce('已取消优化')
+                    return
+                  }
                   console.error('prompt-optimizer: command call failed', error)
                   flashError(error instanceof Error ? error.message : String(error))
                 })
                 .finally(function () {
                   setBusy(false)
+                  cancelRef.current = null
                 })
             }
 
@@ -172,7 +217,8 @@ window.__ModuleLoader__.load({
             var className = 'po-optimize-btn'
             if (busy) {
               icon = SpinnerIcon
-              title = '正在优化…'
+              title = '正在优化…（点击取消）'
+              aria = '取消优化'
             } else if (canUndo) {
               icon = UndoIcon
               title = '恢复优化前的提示词'
@@ -193,12 +239,17 @@ window.__ModuleLoader__.load({
                   type: 'button',
                   className: className,
                   onClick: onClick,
-                  disabled: !canOptimize && !canUndo,
+                  // Clickable while busy so the same button can cancel.
+                  disabled: !canOptimize && !canUndo && !busy,
                   title: title,
                   'aria-label': aria,
                 },
                 React.createElement(icon),
               ),
+              // Transient cost hint (成本可见) after a fresh optimization.
+              cost !== null
+                ? React.createElement('span', { className: 'po-cost', 'aria-hidden': true }, '≈' + cost + ' tokens')
+                : null,
               // Visually hidden live region: announces status changes to
               // assistive technology (WCAG 4.1.3).
               React.createElement(

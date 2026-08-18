@@ -3,13 +3,19 @@ import { OptimizeError, OptimizeErrorCode } from './errors.js'
 
 /**
  * Raised when a model call stops because the output hit `maxTokens`.
- * Re-exported from `./optimizer.js` (and `index.js`) to keep the public
- * API surface unchanged.
+ * `partial` carries the text assembled before truncation — the resume
+ * (断点续传) path appends it to the accumulated output and asks the next
+ * call to continue from there. Re-exported from `./optimizer.js` (and
+ * `index.js`) to keep the public API surface unchanged.
  */
 export class MaxTokensError extends OptimizeError {
-  constructor() {
+  /** The text produced before the `max-tokens` finish (empty when none). */
+  readonly partial: string
+
+  constructor(partial = '') {
     super(OptimizeErrorCode.MAX_TOKENS, 'prompt-optimizer: model output reached maxTokens')
     this.name = 'MaxTokensError'
+    this.partial = partial
   }
 }
 

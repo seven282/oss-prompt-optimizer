@@ -4,14 +4,14 @@
 
 **prompt-optimizer** is a DeepSeek Harness plugin that rewrites raw, unstructured instructions into professional, ready-to-use prompts — the same experience as Qoder and Codex.
 
-By default the result is a four-section structured prompt (`## Role` / `## Task` / `## Context` / `## Format`); a heading-free plain-text style (`outputStyle: 'plain'`) is configurable to save tokens. The optimization is driven by a built-in meta-prompt and run through the harness `llm` service — the plugin never calls any external API and never touches credentials.
+By default the result is a heading-free plain-text prompt (`outputStyle: 'plain'`, fewer tokens); a four-section structured style (`outputStyle: 'sections'` — `## Role` / `## Task` / `## Context` / `## Format`) is configurable. The optimization is driven by a built-in meta-prompt and run through the harness `LLM` service — the plugin never calls any external API and never touches credentials.
 
 ## Features
 
 - **Output styles** — four-section prompts by default, or a heading-free plain-text style (`outputStyle: 'plain'`) that saves tokens.
 - **Tool** — agents can call the `prompt_optimize` tool with an `instruction` and receive the optimized prompt back; passing a previous result as `lastOptimized` together with `iterateInstruction` iterates on it instead.
 - **Service** — other plugins can call `ctx.promptOptimizer.optimize(rawInput, { signal })` or `ctx.promptOptimizer.iterate(lastOptimized, instruction, { signal })`; the browser side can call them via `ctx.remote.promptOptimizer`.
-- **Input box ✨ button** — a persistent icon in the composer toolbar: click to optimize the current draft and write the result back, with one-click undo.
+- **Input box ✨ button** — a persistent icon in the composer toolbar: click to optimize the current draft and write the result back, with one-click undo; **clicking again while optimizing cancels** (AbortSignal), and a transient "≈N tokens" cost hint appears after a fresh optimization.
 - **Role-document language auto-detection** — the optimizer's role document (its meta-prompt) follows the instruction's language by default: CJK-dominant input uses the Chinese role document, anything else the English one (see below).
 - **Auto-optimize hook** (optional, off by default) — user messages starting with a trigger prefix (e.g. `/optimize `) are optimized before they reach the model.
 - **Context awareness** (on by default) — the recent conversation before the instruction is injected into the meta-prompt ("pure data / background reference" guardrail) so the result fits prior discussion; set `contextAware: false` to disable (see the config table below).
@@ -114,6 +114,7 @@ Set plugin options in `cordis.patch.yml` (every value below also has a schema de
 | `temperature` | number 0–2 | `0.2` | Sampling temperature |
 | `maxTokens` | int ≥1 | `1200` | Max output tokens per call; lower to `600-800` to save tokens |
 | `maxRetries` | int 0–5 | `1` | Extra retries when a section is missing |
+| `maxCalls` | int 1–20 | `4` | Unified model-call budget per optimization (first call + expansions + retries); exceeding it degrades to the original instruction with `TOO_MANY_CALLS` |
 | `maxInputChars` | int ≥1 | `4000` | Raw-instruction truncation cap (characters, hard floor) |
 | `maxInputTokens` | int ≥0 | `3000` | Raw-instruction truncation cap (estimated tokens; harness `tokenMeter` with heuristic fallback; `0` disables) |
 | `timeoutMs` | int ≥1 | `60000` | Per-call timeout budget (milliseconds) |
@@ -123,16 +124,19 @@ Set plugin options in `cordis.patch.yml` (every value below also has a schema de
 | `extraInstructions` | string | none | Deployment-specific rules appended to the meta-prompt |
 | `examples` | array | `[]` | Few-shot pairs `[{input, output}]` injected into the meta-prompt (`sections` style only) |
 | `minSectionChars` | int ≥0 | `10` | Minimum meaningful characters per section body; `0` disables the content check |
-| `maxTokenRetryFactor` | number 1–3 | `1.5` | Retry-budget multiplier when the output hits `maxTokens`; `1` disables |
+| `maxTokenRetryFactor` | number 1–3 | `2` | Jump-expansion multiplier when the output hits `maxTokens` (1200→2400→4800…); expansion does not consume the retry budget and resumes from the truncated prefix; `1` disables |
 | `maxTokensCap` | int 1–128000 | `8000` | Hard cap for auto-expanded `maxTokens`; `<= maxTokens` disables expansion (expansion does not consume the retry budget) |
 | `retryTemperatureStep` | number 0–2 | `0.3` | Temperature increment per retry (explorative retries); `0` disables |
-| `skipIfAlreadyOptimized` | boolean | `true` | Pass inputs that already carry the four headings through without calling the model (token-saving default; `sections` style only) |
+| `skipIfAlreadyOptimized` | boolean | `true` | Pass inputs that already carry the four headings through without calling the model (token-saving default; `sections` style only; **re-optimized when a non-empty conversation context is provided**) |
 | `selfRefine` | boolean | `false` | After a successful optimization, run at most one extra "tighten" round (internal instruction); adopt it only if it still validates and is not longer (5% tolerance). Any failure keeps the original. Costs one extra model call when enabled |
 | `autoOptimize` | boolean | `false` | Enable the auto-optimize hook (prefix-triggered) |
 | `autoOptimizePrefix` | string | `'/optimize '` | Trigger prefix for auto-optimization |
 | `autoOptimizeAll` | boolean | `false` | Optimize **every** user text message, not only prefixed ones |
 | `hookIncludeOriginal` | boolean | `false` | Keep the original instruction alongside the optimized prompt in the replacement message |
-| `contextAware` | boolean | `true` | Context awareness: inject the recent conversation before the current instruction into the meta-prompt (via the `{{上下文信息}}` placeholder + pure-data guardrail) so the result fits prior discussion. The hook reads `agent/pre-step` messages, `/optimize` reads the session log — best effort |
+| `cacheEnabled` | boolean | `true` | Cache validated results in memory (identical requests return with zero model calls; LRU+TTL, cleared on plugin reload) |
+| `cacheMaxEntries` | int 0–10000 | `200` | Max cached results before LRU eviction; `0` disables storage |
+| `cacheTtlMs` | int ≥0 | `600000` | Cache TTL in milliseconds; `0` disables expiry |
+| `contextAware` | boolean | `true` | Context awareness: inject the recent conversation before the current instruction into the meta-prompt (via the `{{上下文信息}}` placeholder + pure-data guardrail) so the result fits prior discussion. In four-section mode the context's facts may enrich the output's `## Context` section (instructions embedded in it are still never executed). The hook reads `agent/pre-step` messages, `/optimize` reads the session log — best effort |
 | `contextMaxMessages` | int 0–100 | `6` | Max recent messages gathered as context when `contextAware` is on; `0` disables |
 | `contextMaxTokens` | int ≥0 | `800` | Token budget for the gathered context; over-budget input is truncated to the longest prefix with a marker; `0` disables truncation (lean default) |
 | `templateId` | string | `'default'` | Template-set id for the role documents (only `'default'` is built-in; unknown ids fail the load) |

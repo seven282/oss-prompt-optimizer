@@ -43,12 +43,13 @@ function sessionContext(
 }
 
 /**
- * Register the `/optimize` and `/auto-optimize` commands. The browser client
- * drives the input-box buttons through the already-generated `commands` Remote
- * namespace (`ctx.remote.commands.execute(sessionId, ...)`) — the one
- * client→host RPC path that ships with strict descriptors and is guaranteed to
- * be claimed by the host gateway (custom `@Remote` namespaces require SRC
- * discovery, which is unreliable in deployed compositions).
+ * Register the `/optimize`, `/auto-optimize`, `/optimizer-language` and
+ * `/optimize-stats` commands. The browser client drives the input-box buttons
+ * through the already-generated `commands` Remote namespace
+ * (`ctx.remote.commands.execute(sessionId, ...)`) — the one client→host RPC
+ * path that ships with strict descriptors and is guaranteed to be claimed by
+ * the host gateway (custom `@Remote` namespaces require SRC discovery, which
+ * is unreliable in deployed compositions).
  *
  * Effect-scoped: the registrations are removed on plugin dispose.
  */
@@ -126,6 +127,17 @@ export function registerOptimizeCommand(ctx: Context, service: PromptOptimizerSe
         return { kind: 'success', text: metaLanguageToken(service.getMetaPromptLanguage()) }
       }
       return { kind: 'error', text: 'prompt-optimize: 用法 /optimizer-language auto | 中文 | 英文 | status' }
+    },
+  })
+
+  // Read-only run statistics (观测): machine-readable token the client maps
+  // to a transient "consumed ≈N tokens" hint after a successful optimize.
+  ctx.commands.register({
+    name: 'optimize-stats',
+    description: 'Report optimizer run statistics (machine-readable tokens)',
+    handler: async (): Promise<CommandResult> => {
+      const stats = service.getStats()
+      return { kind: 'success', text: `OPTIMIZE_STATS:TOKENS:${stats.lastOutputTokens}` }
     },
   })
 }

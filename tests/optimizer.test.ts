@@ -31,6 +31,7 @@ const DEFAULT_CONFIG: Config = {
   temperature: 0.2,
   maxTokens: 1200,
   maxRetries: 1,
+  maxCalls: 4,
   maxInputChars: 4000,
   maxInputTokens: 3000,
   timeoutMs: 1000,
@@ -40,7 +41,7 @@ const DEFAULT_CONFIG: Config = {
   autoOptimize: false,
   autoOptimizePrefix: '/optimize ',
   minSectionChars: 10,
-  maxTokenRetryFactor: 1.5,
+  maxTokenRetryFactor: 2,
   maxTokensCap: 8000,
   retryTemperatureStep: 0.3,
   skipIfAlreadyOptimized: false,
@@ -51,6 +52,9 @@ const DEFAULT_CONFIG: Config = {
   contextAware: false,
   contextMaxMessages: 6,
   contextMaxTokens: 1500,
+  cacheEnabled: true,
+  cacheMaxEntries: 200,
+  cacheTtlMs: 600000,
   provider: 'deepseek-official',
   model: 'deepseek-v4-flash',
 }
@@ -354,10 +358,10 @@ describe('PromptOptimizerService.optimize', () => {
     expect(result.retries).toBe(0)
     expect(state.streamCalls).toHaveLength(2)
     expect(state.streamCalls[0].maxTokens).toBe(1200)
-    expect(state.streamCalls[1].maxTokens).toBe(1800)
+    expect(state.streamCalls[1].maxTokens).toBe(2400)
   })
 
-  it('expands repeatedly up to maxTokensCap', async () => {
+  it('expands repeatedly up to maxTokensCap (jump factor 2)', async () => {
     const state = makeCtx([
       textStream('', { type: 'finish', reason: { kind: 'max-tokens' } }),
       textStream('', { type: 'finish', reason: { kind: 'max-tokens' } }),
@@ -367,18 +371,17 @@ describe('PromptOptimizerService.optimize', () => {
     const result = await service.optimize('x')
     expect(result.optimized).toBe(true)
     expect(result.retries).toBe(0)
-    expect(state.streamCalls.map((c) => c.maxTokens)).toEqual([1200, 1800, 2700])
+    expect(state.streamCalls.map((c) => c.maxTokens)).toEqual([1200, 2400, 4800])
   })
 
   it('stops expanding at maxTokensCap and surfaces MAX_TOKENS', async () => {
     const state = makeCtx([
       textStream('', { type: 'finish', reason: { kind: 'max-tokens' } }),
       textStream('', { type: 'finish', reason: { kind: 'max-tokens' } }),
-      textStream('', { type: 'finish', reason: { kind: 'max-tokens' } }),
     ])
     const service = makeService(state, { ...DEFAULT_CONFIG, maxTokensCap: 2000 })
     await expect(service.optimize('x')).rejects.toThrow(/maxTokens/)
-    expect(state.streamCalls.map((c) => c.maxTokens)).toEqual([1200, 1800, 2000])
+    expect(state.streamCalls.map((c) => c.maxTokens)).toEqual([1200, 2000])
   })
 
   it('does not expand when maxTokensCap is at or below maxTokens', async () => {
@@ -386,6 +389,36 @@ describe('PromptOptimizerService.optimize', () => {
     const service = makeService(state, { ...DEFAULT_CONFIG, maxTokensCap: 1000 })
     await expect(service.optimize('x')).rejects.toThrow(/maxTokens/)
     expect(state.streamCalls).toHaveLength(1)
+  })
+
+  it('resumes from the truncated prefix instead of regenerating (断点续传)', async () => {
+    const PARTIAL = '## Role\n你是一名资深产品分析师。\n\n## Task\n分析需求并输出 PRD 文档，'
+    const CONTINUATION = '包含验收标准与风险清单。\n\n## Context\n面向中小企业，预算有限，团队 5 人。\n\n## Format\nMarkdown 文档，不超过 500 字。'
+    const MERGED = PARTIAL + CONTINUATION
+    const state = makeCtx([
+      textStream(PARTIAL, { type: 'finish', reason: { kind: 'max-tokens' } }),
+      textStream(CONTINUATION),
+    ])
+    const service = makeService(state)
+    const result = await service.optimize('x')
+    expect(result.optimized).toBe(true)
+    expect(result.prompt).toBe(MERGED)
+    expect(result.retries).toBe(0)
+    expect(state.streamCalls).toHaveLength(2)
+    // The continuation call carries the partial text in its user message.
+    const text = (state.streamCalls[1].messages[0].content as { text: string }[])[0].text
+    expect(text).toContain('已生成的优化提示词（被截断）')
+    expect(text).toContain(PARTIAL)
+  })
+
+  it('re-optimizes an already-optimized input when a new context is present (方案 B)', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    const service = makeService(state, { ...DEFAULT_CONFIG, skipIfAlreadyOptimized: true })
+    const result = await service.optimize(FOUR_SECTIONS, { context: '用户补充：预算改为 20 万' })
+    expect(result.optimized).toBe(true)
+    // Not a pass-through: the model was called (with the new context).
+    expect(state.streamCalls).toHaveLength(1)
+    expect(state.streamCalls[0].system).toContain('预算改为 20 万')
   })
 
   it('bumps temperature on retry', async () => {
@@ -800,6 +833,101 @@ describe('PromptOptimizerService events', () => {
     const service = makeService(state)
     await service.optimize('  ').then(() => null, () => null)
     expect(state.emitCalls).toHaveLength(0)
+  })
+})
+
+describe('PromptOptimizerService cache (ADR-008)', () => {
+  const LAST = '## Role\n分析师\n\n## Task\n写周报\n\n## Context\n团队 5 人\n\n## Format\n300 字'
+
+  it('returns the cached result on a repeat call without calling the model', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    const service = makeService(state)
+    const first = await service.optimize('帮我写周报', { signal: new AbortController().signal })
+    expect(first.optimized).toBe(true)
+    const second = await service.optimize('帮我写周报', { signal: new AbortController().signal })
+    expect(second.optimized).toBe(true)
+    expect(second.prompt).toBe(first.prompt)
+    // Only the first call reached the model.
+    expect(state.streamCalls).toHaveLength(1)
+  })
+
+  it('misses the cache when the context differs', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS), textStream(FOUR_SECTIONS)])
+    const service = makeService(state)
+    await service.optimize('x', { context: '第一轮' })
+    await service.optimize('x', { context: '第二轮' })
+    expect(state.streamCalls).toHaveLength(2)
+  })
+
+  it('misses the cache when the instruction differs', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS), textStream(FOUR_SECTIONS)])
+    const service = makeService(state)
+    await service.optimize('写周报')
+    await service.optimize('写月报')
+    expect(state.streamCalls).toHaveLength(2)
+  })
+
+  it('does not cache failed (unoptimized) results', async () => {
+    const state = makeCtx([textStream('缺段'), textStream('缺段')])
+    const service = makeService(state)
+    await service.optimize('x').then(() => null, () => null)
+    await service.optimize('x').then(() => null, () => null)
+    // Both runs went to the model: the failure was not cached.
+    expect(state.streamCalls.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('bypasses the cache entirely when cacheEnabled is false', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS), textStream(FOUR_SECTIONS)])
+    const service = makeService(state, { ...DEFAULT_CONFIG, cacheEnabled: false })
+    await service.optimize('x')
+    await service.optimize('x')
+    expect(state.streamCalls).toHaveLength(2)
+  })
+
+  it('caches iterate results too', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    const service = makeService(state)
+    await service.iterate(LAST, '改成英文')
+    const second = await service.iterate(LAST, '改成英文')
+    expect(second.optimized).toBe(true)
+    expect(state.streamCalls).toHaveLength(1)
+  })
+})
+
+describe('PromptOptimizerService call budget & stats (roadmap #1/#2)', () => {
+  it('degrades with TOO_MANY_CALLS when the unified call budget is exhausted', async () => {
+    const state = makeCtx([
+      textStream('', { type: 'finish', reason: { kind: 'max-tokens' } }),
+      textStream('', { type: 'finish', reason: { kind: 'max-tokens' } }),
+    ])
+    const service = makeService(state, { ...DEFAULT_CONFIG, maxCalls: 2 })
+    const result = await service.optimize('x')
+    expect(result.optimized).toBe(false)
+    expect(result.errorCode).toBe('TOO_MANY_CALLS')
+    expect(state.streamCalls).toHaveLength(2)
+  })
+
+  it('records run statistics including cache hits and tokens', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    const service = makeService(state)
+    await service.optimize('x')
+    await service.optimize('x') // cache hit
+    const stats = service.getStats()
+    expect(stats.runs).toBe(2)
+    expect(stats.success).toBe(2)
+    expect(stats.failed).toBe(0)
+    expect(stats.cached).toBe(1)
+    expect(stats.lastOutputTokens).toBeGreaterThan(0)
+    expect(stats.maxDurationMs).toBeGreaterThanOrEqual(0)
+  })
+
+  it('counts failed runs in the stats', async () => {
+    const state = makeCtx([textStream('缺段'), textStream('缺段')])
+    const service = makeService(state, { ...DEFAULT_CONFIG, maxCalls: 2 })
+    await service.optimize('x')
+    const stats = service.getStats()
+    expect(stats.failed).toBe(1)
+    expect(stats.success).toBe(0)
   })
 })
 

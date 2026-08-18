@@ -35,17 +35,28 @@ import { DEFAULT_TEMPLATES, validateTemplateSet, type TemplateSet } from './temp
 import { MaxTokensError, assembleStream, finishToError } from './llm.js'
 import { buildDiagnosis, refineInstruction } from './diagnose.js'
 import { buildIterateSystem, buildOptimizeSystem, type PromptBuildContext } from './prompt.js'
+import { createOptimizeCache, fnv1a, type OptimizeCache } from './cache.js'
 
 export { MaxTokensError } from './llm.js'
 
 /** Stable capability-owned timeout reason code for optimization calls. */
 export const PROMPT_OPTIMIZER_TIMEOUT_CODE = 'PROMPT_OPTIMIZER_TIMEOUT'
 
+/** Defensive copy of a result before it enters or leaves the cache, so a
+ *  caller's mutation can never corrupt stored entries (nested sections too). */
+function cloneOptimizeResult(result: OptimizeResult): OptimizeResult {
+  return {
+    ...result,
+    ...(result.sections !== undefined ? { sections: result.sections.map((s) => ({ ...s })) } : {}),
+  }
+}
+
 /** Complete set of accepted config keys; anything else fails the load loudly. */
 const CONFIG_KEYS = new Set([
   'temperature',
   'maxTokens',
   'maxRetries',
+  'maxCalls',
   'maxInputChars',
   'maxInputTokens',
   'timeoutMs',
@@ -64,6 +75,9 @@ const CONFIG_KEYS = new Set([
   'selfRefine',
   'autoOptimizeAll',
   'hookIncludeOriginal',
+  'cacheEnabled',
+  'cacheMaxEntries',
+  'cacheTtlMs',
   'contextAware',
   'contextMaxMessages',
   'contextMaxTokens',
@@ -119,6 +133,12 @@ export interface OptimizeOptions {
    * (or empty) keeps the optimizer blind to the conversation.
    */
   context?: string
+  /**
+   * Optional cache-namespace scope (e.g. a session id). Included in the cache
+   * key so cache hits never cross scopes. Absent → a global cache namespace
+   * (the key already contains the full request, so identical requests share).
+   */
+  cacheScope?: string
 }
 
 /** The service result: the optimized prompt, or a clear fallback. */
@@ -169,12 +189,28 @@ export class PromptOptimizerService extends Service {
    * `undefined` falls back to the configured `metaPromptLanguage`.
    */
   private runtimeMetaPromptLanguage: MetaLanguage | undefined
+  /** In-memory validated-result cache (LRU + TTL, see ADR-008). */
+  private readonly cache: OptimizeCache<OptimizeResult>
+  /** Lightweight run statistics (观测, roadmap 要优化的功能 #2). */
+  private readonly stats = {
+    runs: 0,
+    success: 0,
+    failed: 0,
+    cached: 0,
+    totalDurationMs: 0,
+    maxDurationMs: 0,
+    lastOutputTokens: 0,
+  }
 
   constructor(ctx: Context, config: ConfigType) {
     super(ctx, 'promptOptimizer')
     assertConfigKeys(config)
     this.config = config
     this.templates = resolveTemplates(config)
+    this.cache = createOptimizeCache<OptimizeResult>({
+      maxEntries: config.cacheEnabled ? config.cacheMaxEntries : 0,
+      ttlMs: config.cacheTtlMs,
+    })
     registerPromptOptimizeTool(ctx, config, this)
     registerAutoOptimizeHook(ctx, config, this)
     registerOptimizeCommand(ctx, this)
@@ -232,6 +268,23 @@ export class PromptOptimizerService extends Service {
     }
   }
 
+  /**
+   * Cache key for one request: FNV-1a over what is actually fed to the model
+   * (provider + model + the no-diagnosis system prompt + truncated input +
+   * truncated context + optional scope). Sampling/budget knobs (temperature,
+   * maxTokens…) intentionally do NOT participate — an identical request gets
+   * the same validated result regardless of them.
+   */
+  private cacheKeyFor(
+    route: ResolvedRoute,
+    system: string,
+    input: string,
+    context: string | undefined,
+    scope: string | undefined,
+  ): string {
+    return fnv1a([route.provider, route.model, system, input, context ?? '', scope ?? ''].join('\u0000'))
+  }
+
   /** Fire `optimize:start`; a throwing listener must never break the pipeline. */
   private emitStart(method: OptimizeMethod, input: string): void {
     try {
@@ -243,6 +296,15 @@ export class PromptOptimizerService extends Service {
 
   /** Fire `optimize:success` or `optimize:failure` based on the outcome. */
   private emitCompleted(method: OptimizeMethod, input: string, result: OptimizeResult, durationMs: number): void {
+    this.stats.runs++
+    if (result.optimized) {
+      this.stats.success++
+      if (result.outputTokens !== undefined) this.stats.lastOutputTokens = result.outputTokens
+    } else {
+      this.stats.failed++
+    }
+    this.stats.totalDurationMs += durationMs
+    if (durationMs > this.stats.maxDurationMs) this.stats.maxDurationMs = durationMs
     try {
       this.ctx.emit(
         result.optimized ? 'prompt-optimizer/optimize:success' : 'prompt-optimizer/optimize:failure',
@@ -251,6 +313,19 @@ export class PromptOptimizerService extends Service {
     } catch {
       // Observers are best-effort; ignore listener failures.
     }
+  }
+
+  /** Snapshot of the run statistics (观测; copy so callers cannot mutate). */
+  getStats(): {
+    runs: number
+    success: number
+    failed: number
+    cached: number
+    totalDurationMs: number
+    maxDurationMs: number
+    lastOutputTokens: number
+  } {
+    return { ...this.stats }
   }
 
   /** Estimate the token count of one input (harness tokenMeter, heuristic fallback). */
@@ -287,10 +362,15 @@ export class PromptOptimizerService extends Service {
     } catch {
       throw new OptimizeError(OptimizeErrorCode.EMPTY_INPUT, 'prompt-optimizer: instruction must be a non-empty string')
     }
+    // 方案 B: pass-through only when there is no meaningful NEW conversation
+    // context. With a non-empty context the input is re-optimized — the
+    // conversation has moved on and the result should reflect it.
+    const hasContext = options.context !== undefined && options.context.trim().length > 0
     if (
       this.config.skipIfAlreadyOptimized &&
       this.config.outputStyle === 'sections' &&
-      hasAllSections(rawInput)
+      hasAllSections(rawInput) &&
+      !hasContext
     ) {
       return {
         prompt: rawInput,
@@ -303,15 +383,39 @@ export class PromptOptimizerService extends Service {
     let input = truncateInput(rawInput, this.config.maxInputChars)
     input = truncateByTokens(input, this.config.maxInputTokens, (text) => this.estimateInputTokens(text))
     const metaLanguage = this.resolveMetaLanguage(rawInput)
+    const outputLanguage = options.outputLanguage ?? this.config.outputLanguage
     const startedAt = Date.now()
     this.emitStart('optimize', rawInput)
+    // Cache (ADR-008): an identical request (route + system + truncated
+    // input/context + scope) returns the previous validated result with zero
+    // model calls. The route is resolved once here so the pipeline reuses it.
+    let preResolvedRoute: ResolvedRoute | undefined
+    let cacheKey: string | undefined
+    if (this.config.cacheEnabled) {
+      preResolvedRoute = this.resolveRoute()
+      cacheKey = this.cacheKeyFor(
+        preResolvedRoute,
+        buildOptimizeSystem(this.promptContext(metaLanguage, options.context), input, outputLanguage),
+        input,
+        options.context,
+        options.cacheScope,
+      )
+      const hit = this.cache.get(cacheKey)
+      if (hit !== undefined) {
+        this.stats.cached++
+        this.emitCompleted('optimize', rawInput, hit, 0)
+        return cloneOptimizeResult(hit)
+      }
+    }
     const result = await this.runPipeline(
       (outputLanguage, diagnosis) =>
         buildOptimizeSystem(this.promptContext(metaLanguage, options.context), input, outputLanguage, diagnosis),
       rawInput,
       options,
       metaLanguage,
+      preResolvedRoute,
     )
+    if (result.optimized && cacheKey !== undefined) this.cache.set(cacheKey, cloneOptimizeResult(result))
     this.emitCompleted('optimize', rawInput, result, Date.now() - startedAt)
     return result
   }
@@ -338,15 +442,37 @@ export class PromptOptimizerService extends Service {
     let next = truncateInput(instruction, this.config.maxInputChars)
     next = truncateByTokens(next, this.config.maxInputTokens, (text) => this.estimateInputTokens(text))
     const metaLanguage = this.resolveMetaLanguage(instruction)
+    const outputLanguage = options.outputLanguage ?? this.config.outputLanguage
     const startedAt = Date.now()
     this.emitStart('iterate', lastOptimized)
+    // Cache (ADR-008): identical iterate requests share the previous result.
+    let preResolvedRoute: ResolvedRoute | undefined
+    let cacheKey: string | undefined
+    if (this.config.cacheEnabled) {
+      preResolvedRoute = this.resolveRoute()
+      cacheKey = this.cacheKeyFor(
+        preResolvedRoute,
+        buildIterateSystem(this.promptContext(metaLanguage, options.context), last, next, outputLanguage),
+        `${last}\u0000${next}`,
+        options.context,
+        options.cacheScope,
+      )
+      const hit = this.cache.get(cacheKey)
+      if (hit !== undefined) {
+        this.stats.cached++
+        this.emitCompleted('iterate', lastOptimized, hit, 0)
+        return cloneOptimizeResult(hit)
+      }
+    }
     const result = await this.runPipeline(
       (outputLanguage, diagnosis) =>
         buildIterateSystem(this.promptContext(metaLanguage, options.context), last, next, outputLanguage, diagnosis),
       lastOptimized,
       options,
       metaLanguage,
+      preResolvedRoute,
     )
+    if (result.optimized && cacheKey !== undefined) this.cache.set(cacheKey, cloneOptimizeResult(result))
     this.emitCompleted('iterate', lastOptimized, result, Date.now() - startedAt)
     return result
   }
@@ -362,14 +488,23 @@ export class PromptOptimizerService extends Service {
     fallbackPrompt: string,
     options: OptimizeOptions,
     metaLanguage: MetaLanguage,
+    route?: ResolvedRoute,
   ): Promise<OptimizeResult> {
-    const route = this.resolveRoute()
+    const resolvedRoute = route ?? this.resolveRoute()
     const baseTemperature = options.temperature ?? this.config.temperature
     let effectiveMaxTokens = options.maxTokens ?? this.config.maxTokens
     const outputLanguage = options.outputLanguage ?? this.config.outputLanguage
     let lastError: Error | undefined
     let lastDiagnosis: string | undefined
+    // 断点续传: the text accumulated from truncated calls. On `max-tokens`
+    // the partial output is kept and the next call CONTINUES from it, so a
+    // long optimization does not regenerate what was already produced.
+    let resumed = ''
     let attempt = 0
+    // Unified call budget (`maxCalls`, roadmap 要优化的功能 #1): the first
+    // call plus every expansion and validation retry counts; exceeding it
+    // degrades to the fallback with TOO_MANY_CALLS (bounds worst-case cost).
+    let callCount = 0
     // The validation retry budget (`maxRetries`) and the max-tokens
     // auto-expansion are independent: a truncated output grows
     // `effectiveMaxTokens` by the factor up to `maxTokensCap` WITHOUT
@@ -377,24 +512,34 @@ export class PromptOptimizerService extends Service {
     // while a validation failure advances `attempt` and stops at `maxRetries`.
     for (;;) {
       options.signal?.throwIfAborted()
+      if (callCount >= this.config.maxCalls) {
+        lastError = new OptimizeError(
+          OptimizeErrorCode.TOO_MANY_CALLS,
+          `prompt-optimizer: exceeded the ${this.config.maxCalls}-call budget`,
+        )
+        break
+      }
       const temperature = Math.min(2, baseTemperature + this.config.retryTemperatureStep * attempt)
       try {
+        callCount++
         const prompt = await this.generateOnce(
           buildSystem(outputLanguage, attempt > 0 ? lastDiagnosis : undefined),
-          route,
+          resolvedRoute,
           options.signal,
           temperature,
           effectiveMaxTokens,
+          resumed.length > 0 ? resumed : undefined,
         )
+        const full = resumed.length > 0 ? resumed + prompt : prompt
         const valid = this.config.outputStyle === 'plain'
-          ? hasPlainOutput(prompt, this.config.minSectionChars)
+          ? hasPlainOutput(full, this.config.minSectionChars)
           : this.config.minSectionChars > 0
-            ? hasValidSections(prompt, this.config.minSectionChars)
-            : hasAllSections(prompt)
+            ? hasValidSections(full, this.config.minSectionChars)
+            : hasAllSections(full)
         if (valid) {
-          let result = prompt
+          let result = full
           if (this.config.selfRefine) {
-            const refined = await this.refineOnce(prompt, route, outputLanguage, options.signal, temperature, metaLanguage, options.context)
+            const refined = await this.refineOnce(full, resolvedRoute, outputLanguage, options.signal, temperature, metaLanguage, options.context)
             if (refined !== undefined) result = refined
           }
           return {
@@ -405,9 +550,9 @@ export class PromptOptimizerService extends Service {
             ...(this.config.outputStyle === 'sections' ? { sections: this.sectionsOf(result) } : {}),
           }
         }
-        const missingSections = this.config.outputStyle !== 'plain' && !hasAllSections(prompt)
+        const missingSections = this.config.outputStyle !== 'plain' && !hasAllSections(full)
         const failureCode = this.config.outputStyle === 'plain'
-          ? hasSectionHeadings(prompt)
+          ? hasSectionHeadings(full)
             ? OptimizeErrorCode.HEADINGS_IN_PLAIN
             : OptimizeErrorCode.THIN_OUTPUT
           : missingSections
@@ -416,7 +561,7 @@ export class PromptOptimizerService extends Service {
         lastError = new OptimizeError(
           failureCode,
           this.config.outputStyle === 'plain'
-            ? hasSectionHeadings(prompt)
+            ? hasSectionHeadings(full)
               ? plainHeadingsMessage()
               : thinOutputMessage(this.config.minSectionChars)
             : this.config.minSectionChars > 0
@@ -427,18 +572,18 @@ export class PromptOptimizerService extends Service {
           outputStyle: this.config.outputStyle,
           minSectionChars: this.config.minSectionChars,
           language: metaLanguage,
-          prompt,
+          prompt: full,
           failureCode,
         })
       } catch (error) {
         if (error instanceof MaxTokensError && this.config.maxTokenRetryFactor > 1) {
-          // Auto-expansion is decoupled from the validation retry budget:
-          // grow the effective maxTokens by the factor up to maxTokensCap.
-          // Reaching the cap (or factor === 1) stops the expansion and the
-          // MaxTokensError surfaces as OptimizeErrorCode.MAX_TOKENS.
+          // Jump expansion (跳档) + resume (断点续传): grow the effective
+          // maxTokens by the factor up to maxTokensCap, keeping the partial
+          // text so the next call continues instead of regenerating.
           const next = Math.min(this.config.maxTokensCap, Math.ceil(effectiveMaxTokens * this.config.maxTokenRetryFactor))
           if (next > effectiveMaxTokens) {
             effectiveMaxTokens = next
+            resumed = resumed.length > 0 ? resumed + error.partial : error.partial
             lastError = error
             continue
           }
@@ -505,17 +650,26 @@ export class PromptOptimizerService extends Service {
     }
   }
 
-  /** One model call: stream with the pre-built system prompt and return the text. */
+  /**
+   * One model call: stream with the pre-built system prompt and return the
+   * text. With `continueFrom` (断点续传), the user message asks the model to
+   * continue from the truncated prefix instead of regenerating it — only the
+   * continuation text is returned and the caller merges it.
+   */
   private async generateOnce(
     system: string,
     route: ResolvedRoute,
     signal: AbortSignal | undefined,
     temperature: number,
     maxTokens: number,
+    continueFrom?: string,
   ): Promise<string> {
+    const text = continueFrom !== undefined && continueFrom.length > 0
+      ? `以下是已生成的优化提示词（被截断）：\n${continueFrom}\n\n请直接从断点继续输出剩余部分，不要重复或重写已有内容，最后以完整提示词的收尾结束。`
+      : '请严格按上述要求，只输出优化后的提示词。'
     const messages = [
       createUserMessage({
-        content: [{ type: 'text', text: '请严格按上述要求，只输出优化后的提示词。' }],
+        content: [{ type: 'text', text }],
         source: { kind: 'plugin', plugin: 'prompt-optimizer' },
       }),
     ]
@@ -538,10 +692,17 @@ export class PromptOptimizerService extends Service {
       }
       budget.signal.throwIfAborted()
       const failure = finishToError(assembler.finish)
-      if (failure !== undefined) throw failure
-      const text = assembleStream(assembler)
-      if (text.trim().length === 0) throw new OptimizeError(OptimizeErrorCode.NO_TEXT, 'prompt-optimizer: model produced no text')
-      return text
+      if (failure !== undefined) {
+        // Attach the text produced before truncation so the expansion path
+        // can resume from it (断点续传).
+        if (failure instanceof MaxTokensError) {
+          ;(failure as MaxTokensError & { partial: string }).partial = assembleStream(assembler)
+        }
+        throw failure
+      }
+      const result = assembleStream(assembler)
+      if (result.trim().length === 0) throw new OptimizeError(OptimizeErrorCode.NO_TEXT, 'prompt-optimizer: model produced no text')
+      return result
     } finally {
       const dispose = budget[Symbol.dispose]
       if (typeof dispose === 'function') dispose.call(budget)

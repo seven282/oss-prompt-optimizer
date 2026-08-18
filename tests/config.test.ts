@@ -12,6 +12,7 @@ describe('Config schema', () => {
       temperature: 0.2,
       maxTokens: 1200,
       maxRetries: 1,
+      maxCalls: 4,
       maxInputChars: 4000,
       timeoutMs: 60000,
       outputLanguage: 'auto',
@@ -20,7 +21,7 @@ describe('Config schema', () => {
       autoOptimize: false,
       autoOptimizePrefix: '/optimize ',
       minSectionChars: 10,
-      maxTokenRetryFactor: 1.5,
+      maxTokenRetryFactor: 2,
       maxTokensCap: 8000,
       retryTemperatureStep: 0.3,
       skipIfAlreadyOptimized: true,
@@ -31,6 +32,9 @@ describe('Config schema', () => {
       contextAware: true,
       contextMaxMessages: 6,
       contextMaxTokens: 800,
+      cacheEnabled: true,
+      cacheMaxEntries: 200,
+      cacheTtlMs: 600000,
       maxInputTokens: 3000,
     })
     expect(value.provider).toBeUndefined()
@@ -101,6 +105,9 @@ describe('Config schema', () => {
     expect(() => validate({ maxTokens: 0 })).toThrow()
     expect(() => validate({ maxRetries: -1 })).toThrow()
     expect(() => validate({ maxRetries: 1.5 })).toThrow()
+    expect(() => validate({ maxCalls: 0 })).toThrow()
+    expect(() => validate({ maxCalls: 21 })).toThrow()
+    expect(() => validate({ maxCalls: 1.5 })).toThrow()
     expect(() => validate({ maxInputChars: 0 })).toThrow()
     expect(() => validate({ timeoutMs: 0 })).toThrow()
     expect(() => validate({ provider: 42 })).toThrow()
@@ -119,6 +126,10 @@ describe('Config schema', () => {
     expect(() => validate({ contextMaxMessages: 1.5 })).toThrow()
     expect(() => validate({ contextMaxTokens: -1 })).toThrow()
     expect(() => validate({ contextAware: 'yes' })).toThrow()
+    expect(() => validate({ cacheMaxEntries: -1 })).toThrow()
+    expect(() => validate({ cacheMaxEntries: 1.5 })).toThrow()
+    expect(() => validate({ cacheTtlMs: -1 })).toThrow()
+    expect(() => validate({ cacheEnabled: 'no' })).toThrow()
     expect(() => validate({ metaPromptLanguage: 'auto' })).not.toThrow()
   })
 
