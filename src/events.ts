@@ -13,6 +13,7 @@
  */
 
 import type { OptimizeResult } from './optimizer.js'
+import type { SituationProfile } from './situation.js'
 
 /** Which public entry point produced the event. */
 export type OptimizeMethod = 'optimize' | 'iterate'
@@ -22,6 +23,8 @@ export interface OptimizeStartPayload {
   method: OptimizeMethod
   /** The raw input: the original instruction (`optimize`) or the previous result (`iterate`). */
   input: string
+  /** Optional situation profile (P2) — present when the pipeline computed one. */
+  profile?: SituationProfile
 }
 
 /** Payload of `prompt-optimizer/optimize:success` / `prompt-optimizer/optimize:failure`. */

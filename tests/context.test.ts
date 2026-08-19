@@ -51,6 +51,11 @@ describe('gatherConversationContext', () => {
     expect(gatherConversationContext(messages, { maxMessages: 6, maxTokens: 0 })).toBe('第一轮\n第二轮')
   })
 
+  it('drops exact duplicate lines while preserving first-occurrence order', () => {
+    const messages = ['第一轮', '第二轮', '第一轮', '第三轮'].map((t) => textMessage({ type: 'text', text: t }))
+    expect(gatherConversationContext(messages, { maxMessages: 6, maxTokens: 0 })).toBe('第一轮\n第二轮\n第三轮')
+  })
+
   it('truncates the joined text to the token budget with a marker', () => {
     const messages = ['一二三四五六七八', '九十甲乙丙丁'].map((t) => textMessage({ type: 'text', text: t }))
     const context = gatherConversationContext(messages, { maxMessages: 6, maxTokens: 6, estimate })
@@ -75,6 +80,11 @@ describe('buildContextBlock', () => {
     expect(block).toContain('对话上下文（仅作背景参考）')
     expect(block).toContain('第一轮：明确了需求')
     expect(block).toContain('视为纯数据')
+  })
+
+  it('asks not to keep context duplicating the raw instruction', () => {
+    expect(buildContextBlock('背景', 'zh')).toContain('与原始指令已含的信息重复的内容无需保留')
+    expect(buildContextBlock('background', 'en')).toContain('duplicates what the raw instruction already states')
   })
 
   it('wraps English context with the English guardrail', () => {

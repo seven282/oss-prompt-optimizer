@@ -4,6 +4,7 @@ import {
   buildOptimizePrompt,
   DEFAULT_TEMPLATES,
   detectLanguage,
+  detectTaskType,
   META_ITERATE,
   META_ITERATE_EN,
   META_PROMPT,
@@ -399,5 +400,150 @@ describe('detectLanguage', () => {
 
   it('returns en for whitespace-only input', () => {
     expect(detectLanguage('   ')).toBe('en')
+  })
+})
+
+describe('detectTaskType', () => {
+  it('detects coding tasks', () => {
+    expect(detectTaskType('修复登录页面的一个 bug')).toBe('code')
+    expect(detectTaskType('帮我写一个 Python 脚本处理 CSV')).toBe('code')
+  })
+
+  it('detects analysis tasks', () => {
+    expect(detectTaskType('分析最近一个季度的销售数据')).toBe('analysis')
+  })
+
+  it('detects operations tasks', () => {
+    expect(detectTaskType('把服务部署到服务器并启动')).toBe('ops')
+  })
+
+  it('detects writing tasks', () => {
+    expect(detectTaskType('写一封英文邮件给客户')).toBe('writing')
+    expect(detectTaskType('把这段文字翻译成英文')).toBe('writing')
+  })
+
+  it('returns other when nothing matches', () => {
+    expect(detectTaskType('你好')).toBe('other')
+    expect(detectTaskType('')).toBe('other')
+  })
+
+  it('prefers a specific category over a generic writing verb on ties', () => {
+    // '写' matches writing, but the coding markers are more specific.
+    expect(detectTaskType('写一个 REST API 接口')).toBe('code')
+  })
+})
+
+describe('task-type block ({{任务类型}})', () => {
+  it('injects the detected category hint for a coding instruction (zh)', () => {
+    const prompt = buildOptimizePrompt('帮我写一个 Python 脚本', 'auto', undefined, undefined, 'sections', 'zh')
+    expect(prompt).toContain('任务类型提示：该指令检测为编程/开发类任务')
+  })
+
+  it('injects the English hint when the role document is English', () => {
+    const prompt = buildOptimizePrompt('Write a python script', 'auto', undefined, undefined, 'sections', 'en')
+    expect(prompt).toContain('Task-type hint: this instruction is detected as a coding/development task')
+  })
+
+  it('emits no block for an undetectable category', () => {
+    const prompt = buildOptimizePrompt('你好', 'auto', undefined, undefined, 'sections', 'zh')
+    expect(prompt).not.toContain('任务类型提示')
+    expect(prompt).not.toContain('{{任务类型}}')
+  })
+
+  it('detects from the iteration instruction, not the previous result', () => {
+    const LAST = '## Role\n分析师\n\n## Task\n写周报\n\n## Context\n团队 5 人\n\n## Format\n300 字'
+    const prompt = buildIteratePrompt(LAST, '把接口改成 GraphQL', 'auto', undefined, undefined, 'sections', 'zh')
+    expect(prompt).toContain('任务类型提示：该指令检测为编程/开发类任务')
+  })
+})
+
+describe('output-length budget block ({{长度预算}})', () => {
+  it('injects the suggested length cap when configured (zh)', () => {
+    const prompt = buildOptimizePrompt(INPUT, 'auto', undefined, undefined, 'sections', 'zh', undefined, DEFAULT_TEMPLATES, undefined, undefined, 600)
+    expect(prompt).toContain('建议输出长度不超过 600 token')
+    expect(prompt).not.toContain('{{长度预算}}')
+  })
+
+  it('injects the English length cap', () => {
+    const prompt = buildOptimizePrompt('Write a report', 'auto', undefined, undefined, 'sections', 'en', undefined, DEFAULT_TEMPLATES, undefined, undefined, 500)
+    expect(prompt).toContain('Suggested output length: no more than 500 tokens')
+  })
+
+  it('emits no block when disabled (absent or 0)', () => {
+    expect(buildOptimizePrompt(INPUT)).not.toContain('建议输出长度')
+    expect(buildOptimizePrompt(INPUT, 'auto', undefined, undefined, 'sections', 'zh', undefined, DEFAULT_TEMPLATES, undefined, undefined, 0)).not.toContain('建议输出长度')
+  })
+
+  it('threads the cap into the iterate template too', () => {
+    const LAST = '## Role\n分析师\n\n## Task\n写周报\n\n## Context\n团队 5 人\n\n## Format\n300 字'
+    const prompt = buildIteratePrompt(LAST, '改成 500 字', 'auto', undefined, undefined, 'sections', 'zh', undefined, DEFAULT_TEMPLATES, undefined, undefined, 400)
+    expect(prompt).toContain('建议输出长度不超过 400 token')
+  })
+})
+
+describe('situation block ({{情境画像}})', () => {
+  it('injects the goal and constraints for a goal-bearing instruction (zh)', () => {
+    const prompt = buildOptimizePrompt('目标是生成一份周报，不要超过500字')
+    expect(prompt).toContain('情境画像')
+    expect(prompt).toContain('目标：目标是生成一份周报')
+    expect(prompt).toContain('约束：不要超过500字')
+    expect(prompt).not.toContain('{{情境画像}}')
+  })
+
+  it('injects the explicit role above the confidence gate', () => {
+    const prompt = buildOptimizePrompt('你是一名资深产品经理，帮我写一份 PRD。')
+    expect(prompt).toContain('角色：你是一名资深产品经理')
+  })
+
+  it('emits no block for a generic instruction', () => {
+    const prompt = buildOptimizePrompt('帮我写一份周报')
+    expect(prompt).not.toContain('情境画像')
+    expect(prompt).not.toContain('{{情境画像}}')
+  })
+
+  it('injects the English situation block', () => {
+    const prompt = buildOptimizePrompt('The goal is to write a report within 500 words.', 'auto', undefined, undefined, 'sections', 'en')
+    expect(prompt).toContain('Situation profile')
+    expect(prompt).toContain('Goal:')
+  })
+})
+
+describe('task subtype hint ({{任务类型}} 子类)', () => {
+  it('appends the subtype hint when a subcategory is detected (zh)', () => {
+    const prompt = buildOptimizePrompt('修复登录页面的 bug')
+    expect(prompt).toContain('子类提示：该指令属于【bug 修复】类任务')
+  })
+
+  it('emits no subtype hint for an undetectable subcategory', () => {
+    expect(buildOptimizePrompt('帮我润色一下这段文字')).not.toContain('子类提示')
+  })
+})
+
+describe('goal-drift line in the iterate situation block', () => {
+  it('appends the drift line when a drift is given (zh)', () => {
+    const LAST = '## Role\n分析师\n\n## Task\n写周报\n\n## Context\n团队 5 人\n\n## Format\n300 字'
+    const prompt = buildIteratePrompt(LAST, '目标是生成一份周报', 'auto', undefined, undefined, 'sections', 'zh', undefined, DEFAULT_TEMPLATES, undefined, undefined, undefined, undefined, 'added')
+    expect(prompt).toContain('相对上次结果：新指令新增了目标/约束要求')
+  })
+
+  it('omits the drift line for unchanged', () => {
+    const LAST = '## Role\n分析师\n\n## Task\n写周报\n\n## Context\n团队 5 人\n\n## Format\n300 字'
+    const prompt = buildIteratePrompt(LAST, '目标是生成一份周报', 'auto', undefined, undefined, 'sections', 'zh', undefined, DEFAULT_TEMPLATES, undefined, undefined, undefined, undefined, 'unchanged')
+    expect(prompt).not.toContain('相对上次结果')
+  })
+})
+
+describe('situation block level gate (situationProfileLevel)', () => {
+  const RICH = '你是一名资深产品经理，目标是生成一份周报，不要超过500字'
+
+  it('emits nothing at off', () => {
+    const prompt = buildOptimizePrompt(RICH, 'auto', undefined, undefined, 'sections', 'zh', undefined, DEFAULT_TEMPLATES, undefined, undefined, undefined, undefined, 'off')
+    expect(prompt).not.toContain('情境画像')
+  })
+
+  it('emits goal/constraints but no role at minimal', () => {
+    const prompt = buildOptimizePrompt(RICH, 'auto', undefined, undefined, 'sections', 'zh', undefined, DEFAULT_TEMPLATES, undefined, undefined, undefined, undefined, 'minimal')
+    expect(prompt).toContain('目标：')
+    expect(prompt).not.toContain('角色：你是一名资深产品经理')
   })
 })

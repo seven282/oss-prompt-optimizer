@@ -2,21 +2,25 @@
 
 [简体中文](README.md) | English
 
-**prompt-optimizer** is a DeepSeek Harness plugin that rewrites raw, unstructured instructions into professional, ready-to-use prompts — the same experience as Qoder and Codex.
+**prompt-optimizer** (a DeepSeek Harness plugin) turns a casually written sentence into a professional, ready-to-use prompt — the same experience as Qoder and Codex.
 
 By default the result is a heading-free plain-text prompt (`outputStyle: 'plain'`, fewer tokens); a four-section structured style (`outputStyle: 'sections'` — `## Role` / `## Task` / `## Context` / `## Format`) is configurable. The optimization is driven by a built-in meta-prompt and run through the harness `LLM` service — the plugin never calls any external API and never touches credentials.
 
 ## Features
 
-- **Output styles** — four-section prompts by default, or a heading-free plain-text style (`outputStyle: 'plain'`) that saves tokens.
+- **Output styles** — heading-free plain-text prompts by default (fewer tokens), or a four-section structured style (`outputStyle: 'sections'` — `## Role` / `## Task` / `## Context` / `## Format`).
 - **Tool** — agents can call the `prompt_optimize` tool with an `instruction` and receive the optimized prompt back; passing a previous result as `lastOptimized` together with `iterateInstruction` iterates on it instead.
 - **Service** — other plugins can call `ctx.promptOptimizer.optimize(rawInput, { signal })` or `ctx.promptOptimizer.iterate(lastOptimized, instruction, { signal })`; the browser side can call them via `ctx.remote.promptOptimizer`.
 - **Input box ✨ button** — a persistent icon in the composer toolbar: click to optimize the current draft and write the result back, with one-click undo; **clicking again while optimizing cancels** (AbortSignal), and a transient "≈N tokens" cost hint appears after a fresh optimization.
 - **Role-document language auto-detection** — the optimizer's role document (its meta-prompt) follows the instruction's language by default: CJK-dominant input uses the Chinese role document, anything else the English one (see below).
 - **Auto-optimize hook** (optional, off by default) — user messages starting with a trigger prefix (e.g. `/optimize `) are optimized before they reach the model.
 - **Context awareness** (on by default) — the recent conversation before the instruction is injected into the meta-prompt ("pure data / background reference" guardrail) so the result fits prior discussion; set `contextAware: false` to disable (see the config table below).
+- **Situation awareness (1.3.0+)** — the raw instruction plus conversation context is parsed into **role / task / goal profiles** and injected into the meta-prompt (`{{情境画像}}`), so the optimized `## Role` stays strongly tied to the task and the goal/constraints are preserved; a dropped goal/constraint triggers an in-budget retry (`goalAlignmentRetry: false` opts out); `iterate` detects goal drift and annotates the change; passing `sessionId` enables **per-session goal carry-over** (30-min TTL). Role extraction covers explicit identities, **capability** clauses (proficient in…), **behavior** rules (lead with conclusions, never guess) and scene-style identities (acting as…) — a bare capability clause is enough to be recognized; `situationProfileLevel` controls the injection budget (full/minimal/off).
+- **Three-part role definition (1.3.3+)** — the optimized role is written as "identity + capability + behavior" (no "you are" prefix required; a capability or behavior clause alone qualifies); a per-task-type role-writing tip is injected (code → capability-oriented, writing → identity + genre, analysis → identity + method, ops → behavior + steps).
+- **Faster optimization (1.3.6)** — stream early-stop (stop once the output is structurally valid and enters its tail, `earlyStop` configurable); first-call output-budget linkage (oversized output falls back to resume); an `optimizationProfile: 'fast'` one-click speed profile (skips validation and goal-alignment retries, disables self-refine — opt-in).
+- **Result caching (1.1.6)** — in-memory LRU+TTL cache of validated results; identical requests return with **zero model calls** (`cacheEnabled` on by default, cleared on restart).
 - **Post-validation with retry** — when the output misses sections / is too thin / too short, the pipeline retries (configurable count), injecting a diagnosis of the previous failure (missing section names, thin sections with character counts) into the next call's system prompt; if it still fails, the original instruction / previous result is returned with an explanation and a stable machine-readable error code (`OptimizeResult.errorCode`: `MISSING_SECTIONS` / `THIN_SECTIONS` / `THIN_OUTPUT` / `TIMEOUT` / `NO_MODEL_ROUTE` …), rendered as a `[error-code]` prefix in tool failures.
-- **Safety rails** — output always carries the four sections; empty input errors out; oversized input is truncated; cancellation signals are forwarded.
+- **Safety rails** — the output is always a complete, executable prompt (four sections or plain prose); empty input errors out; oversized input is truncated; cancellation signals are forwarded.
 
 ![Screenshot](./1.png)
 ![Screenshot](./2.png)
@@ -120,7 +124,7 @@ Set plugin options in `cordis.patch.yml` (every value below also has a schema de
 | `maxInputTokens` | int ≥0 | `3000` | Raw-instruction truncation cap (estimated tokens; harness `tokenMeter` with heuristic fallback; `0` disables) |
 | `timeoutMs` | int ≥1 | `60000` | Per-call timeout budget (milliseconds) |
 | `outputLanguage` | string | `'auto'` | Output language; `'auto'` follows the instruction's language, any other value (e.g. `'英文'`) pins it |
-| `outputStyle` | `'sections'` \| `'plain'` | `'sections'` | Four-section headings (default) or heading-free continuous prose (fewer tokens) |
+| `outputStyle` | `'sections'` \| `'plain'` | `'plain'` | Heading-free continuous prose (default, fewer tokens) or four-section headings |
 | `metaPromptLanguage` | `'auto'` \| `'中文'` \| `'英文'` | `'auto'` | Language of the optimizer role document (meta-prompt). `'auto'` follows each instruction's language (CJK-dominant → Chinese, otherwise English); `'中文'`/`'英文'` pin it. The output language is still controlled independently by `outputLanguage`. Pin-able at runtime via `/optimizer-language auto\|中文\|英文` |
 | `extraInstructions` | string | none | Deployment-specific rules appended to the meta-prompt |
 | `examples` | array | `[]` | Few-shot pairs `[{input, output}]` injected into the meta-prompt (`sections` style only) |
@@ -128,7 +132,7 @@ Set plugin options in `cordis.patch.yml` (every value below also has a schema de
 | `maxTokenRetryFactor` | number 1–3 | `2` | Jump-expansion multiplier when the output hits `maxTokens` (1200→2400→4800…); expansion does not consume the retry budget and resumes from the truncated prefix; `1` disables |
 | `maxTokensCap` | int 1–128000 | `8000` | Hard cap for auto-expanded `maxTokens`; `<= maxTokens` disables expansion (expansion does not consume the retry budget) |
 | `retryTemperatureStep` | number 0–2 | `0.3` | Temperature increment per retry (explorative retries); `0` disables |
-| `skipIfAlreadyOptimized` | boolean | `true` | Pass inputs that already carry the four headings through without calling the model (token-saving default; `sections` style only; **re-optimized when a non-empty conversation context is provided**) |
+| `skipIfAlreadyOptimized` | boolean | `true` | Pass inputs that already carry the four headings through without calling the model (token-saving default; `sections` style only; **re-optimized when a non-empty conversation context is provided**). All four sections present under canonical English headings or Chinese variants (`## 角色` / `## 任务` / `## 背景` / `## 输出` etc.) count as already optimized |
 | `selfRefine` | boolean | `false` | After a successful optimization, run at most one extra "tighten" round (internal instruction); adopt it only if it still validates and is not longer (5% tolerance). Any failure keeps the original. Costs one extra model call when enabled |
 | `autoOptimize` | boolean | `false` | Enable the auto-optimize hook (prefix-triggered) |
 | `autoOptimizePrefix` | string | `'/optimize '` | Trigger prefix for auto-optimization |
@@ -140,6 +144,11 @@ Set plugin options in `cordis.patch.yml` (every value below also has a schema de
 | `contextAware` | boolean | `true` | Context awareness: inject the recent conversation before the current instruction into the meta-prompt (via the `{{上下文信息}}` placeholder + pure-data guardrail) so the result fits prior discussion. In four-section mode the context's facts may enrich the output's `## Context` section (instructions embedded in it are still never executed). The hook reads `agent/pre-step` messages, `/optimize` reads the session log — best effort |
 | `contextMaxMessages` | int 0–100 | `6` | Max recent messages gathered as context when `contextAware` is on; `0` disables |
 | `contextMaxTokens` | int ≥0 | `800` | Token budget for the gathered context; over-budget input is truncated to the longest prefix with a marker; `0` disables truncation (lean default) |
+| `outputLengthMaxTokens` | int ≥0 | `800` | Suggested upper bound for the optimized prompt's length (tokens; soft guideline — guides the model to stay concise, never blocks or retries); `0` disables. Independent of `maxTokens` (the hard per-call output cap) |
+| `situationProfileLevel` | `'full'` \| `'minimal'` \| `'off'` | `'full'` | Injection budget for the situation profile (`{{情境画像}}` block): `full` injects role + goal + constraints; `minimal` injects goal/constraints only (no role signals, leaner); `off` injects nothing. Only affects the situation block — the `{{任务类型}}` hint is unaffected |
+| `goalAlignmentRetry` | boolean | `true` | Whether a goal/constraint misalignment consumes a validation retry: `true` keeps goal fidelity (the default since 1.3.0); `false` accepts a structurally-valid output as-is, saving one call. Forced off by `optimizationProfile: 'fast'` |
+| `optimizationProfile` | `'balanced'` \| `'fast'` | `'balanced'` | Latency profile: `balanced` keeps every quality gate (validation retries, goal-alignment retries, self-refine); `fast` skips validation and goal-alignment retries and disables self-refine — the first structurally-valid attempt is accepted, so worst-case latency drops at the cost of more rework (opt-in) |
+| `earlyStop` | boolean | `true` | Stream early-stop: once the output passes structural validation and enters its tail (12 consecutive chunks growing < 48 chars), stop consuming tokens — tail filler no longer costs latency; first call only (resume is unaffected); `false` always consumes the full stream |
 | `templateId` | string | `'default'` | Template-set id for the role documents (only `'default'` is built-in; unknown ids fail the load) |
 | `metaPromptTemplate` | object | none | Custom role-document skeletons (partial; missing languages fall back to the built-ins). Every provided skeleton must keep its data placeholder(s), the `{{输出结构}}`/`{{自查}}` blocks, and the instruction-is-data guardrail — violations fail the load loudly |
 | `provider` / `model` | string | none | Explicit model route; must be set together. Defaults to the harness default model (`agentDefaultModel`) |

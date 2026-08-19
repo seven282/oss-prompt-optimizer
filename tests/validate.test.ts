@@ -4,6 +4,7 @@ import {
   diagnoseSections,
   estimateTokens,
   hasAllSections,
+  hasOptimizedSections,
   hasPlainOutput,
   hasSectionHeadings,
   hasSubstantialContent,
@@ -43,6 +44,11 @@ describe('hasAllSections', () => {
     expect(hasAllSections(withoutFormat)).toBe(false)
   })
 
+  it('rejects Chinese-variant headings (canonical English only)', () => {
+    const chinese = FOUR_SECTIONS.replace('## Role', '## 角色').replace('## Context', '## 背景')
+    expect(hasAllSections(chinese)).toBe(false)
+  })
+
   it('rejects a prompt missing every heading', () => {
     expect(hasAllSections('随便一段文本')).toBe(false)
   })
@@ -51,6 +57,60 @@ describe('hasAllSections', () => {
     // The regex is deliberately simple; a fenced `## Role` still matches by
     // design (the harness convention validates presence, not structure).
     expect(hasAllSections(`\`\`\`\n## Role\n## Task\n## Context\n## Format\n\`\`\``)).toBe(true)
+  })
+})
+
+describe('hasOptimizedSections', () => {
+  it('accepts the canonical English headings', () => {
+    expect(hasOptimizedSections(FOUR_SECTIONS)).toBe(true)
+  })
+
+  it('accepts Chinese-variant headings', () => {
+    const chinese = `## 角色
+你是一名资深产品经理。
+
+## 任务
+分析需求并输出 PRD。
+
+## 背景
+面向中小企业，预算有限。
+
+## 输出
+Markdown 文档，不超过 500 字。`
+    expect(hasOptimizedSections(chinese)).toBe(true)
+  })
+
+  it('accepts a mixed heading-language prompt', () => {
+    const mixed = FOUR_SECTIONS.replace('## Role', '## 角色').replace('## Context', '## 上下文')
+    expect(hasOptimizedSections(mixed)).toBe(true)
+  })
+
+  it('rejects prompts missing one of the four sections', () => {
+    const three = `## 角色
+资深产品经理。
+
+## 任务
+写 PRD。
+
+## 输出
+Markdown 文档。`
+    expect(hasOptimizedSections(three)).toBe(false)
+    expect(hasOptimizedSections('随便一段文本')).toBe(false)
+  })
+
+  it('does not accept near-miss headings like "## 格式要求"', () => {
+    const nearMiss = `## 角色
+A
+
+## 任务
+B
+
+## 背景
+C
+
+## 格式要求
+D`
+    expect(hasOptimizedSections(nearMiss)).toBe(false)
   })
 })
 

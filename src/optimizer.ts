@@ -9,15 +9,16 @@ import { deadline, timeoutOf } from '@deepseek-ai/dsh-timeout'
 import { Config, type Config as ConfigType } from './config.js'
 import { OptimizeError, OptimizeErrorCode } from './errors.js'
 import type { OptimizeErrorCode as OptimizeErrorCodeType } from './errors.js'
-import type { OptimizeMethod } from './events.js'
+import { PROMPT_OPTIMIZER_EVENTS, type OptimizeMethod } from './events.js'
 import { detectLanguage, type MetaLanguage } from './meta.js'
 import {
   assertInput,
+  diagnoseSections,
   estimateTokens,
   hasAllSections,
+  hasOptimizedSections,
   hasPlainOutput,
   hasSectionHeadings,
-  hasSubstantialContent,
   hasValidSections,
   INCOMPLETE_SECTIONS_MESSAGE,
   plainHeadingsMessage,
@@ -35,12 +36,18 @@ import { DEFAULT_TEMPLATES, validateTemplateSet, type TemplateSet } from './temp
 import { MaxTokensError, assembleStream, finishToError } from './llm.js'
 import { buildDiagnosis, refineInstruction } from './diagnose.js'
 import { buildIterateSystem, buildOptimizeSystem, type PromptBuildContext } from './prompt.js'
+import { buildSituationProfile, goalAlignment, goalDrift, mergeGoals, type GoalProfile, type SituationProfile } from './situation.js'
 import { createOptimizeCache, fnv1a, type OptimizeCache } from './cache.js'
 
 export { MaxTokensError } from './llm.js'
 
 /** Stable capability-owned timeout reason code for optimization calls. */
 export const PROMPT_OPTIMIZER_TIMEOUT_CODE = 'PROMPT_OPTIMIZER_TIMEOUT'
+
+/** 流式早期终止（latency P1-1）：进入收尾期后，连续多少 chunk 增量低于阈值即停流。 */
+const EARLY_STOP_TAIL_CHUNKS = 12
+/** 收尾期判定：单 chunk 长度增量低于此值视为"凑字/收尾"。 */
+const EARLY_STOP_TAIL_GROWTH = 48
 
 /** Defensive copy of a result before it enters or leaves the cache, so a
  *  caller's mutation can never corrupt stored entries (nested sections too). */
@@ -49,6 +56,21 @@ function cloneOptimizeResult(result: OptimizeResult): OptimizeResult {
     ...result,
     ...(result.sections !== undefined ? { sections: result.sections.map((s) => ({ ...s })) } : {}),
   }
+}
+
+/**
+ * Output validation shared by the main pipeline and the refinement round:
+ * `plain` forbids section headings (`hasPlainOutput`), `sections` requires
+ * all four headings, optionally with a per-section content floor. Keeping one
+ * implementation guarantees both paths apply the SAME rules (the refinement
+ * round used to skip the plain-style heading check).
+ */
+function validateOutput(text: string, outputStyle: 'sections' | 'plain', minSectionChars: number): boolean {
+  return outputStyle === 'plain'
+    ? hasPlainOutput(text, minSectionChars)
+    : minSectionChars > 0
+      ? hasValidSections(text, minSectionChars)
+      : hasAllSections(text)
 }
 
 /** Complete set of accepted config keys; anything else fails the load loudly. */
@@ -62,6 +84,11 @@ const CONFIG_KEYS = new Set([
   'timeoutMs',
   'outputLanguage',
   'outputStyle',
+  'outputLengthMaxTokens',
+  'situationProfileLevel',
+  'goalAlignmentRetry',
+  'optimizationProfile',
+  'earlyStop',
   'metaPromptLanguage',
   'autoOptimize',
   'autoOptimizePrefix',
@@ -139,6 +166,15 @@ export interface OptimizeOptions {
    * (the key already contains the full request, so identical requests share).
    */
   cacheScope?: string
+  /**
+   * Optional session id (P2 会话级目标注册表): enables the per-session goal
+   * registry — goals/constraints stated in earlier calls of the same session
+   * carry forward when the current instruction does not restate them
+   * (fallback semantics, see `mergeGoals`). The merged goal is injected into
+   * the situation block and used by the goal-alignment check. Absent → no
+   * registry participation.
+   */
+  sessionId?: string
 }
 
 /** The service result: the optimized prompt, or a clear fallback. */
@@ -265,7 +301,54 @@ export class PromptOptimizerService extends Service {
       metaLanguage,
       templates: this.templates,
       context,
+      maxOutputTokens: this.config.outputLengthMaxTokens,
+      situationProfileLevel: this.config.situationProfileLevel,
     }
+  }
+
+  /**
+   * Goal-misalignment feedback injected into the next retry's `{{诊断反馈}}`
+   * block (situation layer P0). Lists the goal/constraint labels that the
+   * output lost, in the role-document language.
+   */
+  private goalDiagnosis(missing: string[], language: MetaLanguage): string {
+    const names = missing.join('；')
+    return language === 'en'
+      ? `The output dropped the following goal/constraint: ${names}. Keep the raw instruction's goal and constraints intact.`
+      : `输出丢失了以下目标/约束：${names}。请确保输出完整保留原始指令的目标与约束。`
+  }
+
+  /** TTL for a session's registered goal (P2 会话级目标注册表). */
+  private static readonly GOAL_TTL_MS = 30 * 60 * 1000
+  /** Cap on registered sessions; the oldest entry is evicted beyond it. */
+  private static readonly GOAL_REGISTRY_MAX = 100
+
+  /** Per-session registered goals: sessionId → goal + last-seen timestamp. */
+  private readonly goalRegistry = new Map<string, { goal: GoalProfile; ts: number }>()
+
+  /**
+   * Merge the session's registered goal into the current instruction's
+   * profile and refresh the registry (P2). Fallback semantics — the current
+   * instruction wins whenever it states something; previously-stated goals
+   * and constraints carry forward only when the current call leaves them
+   * unstated. Expired entries are dropped on access.
+   */
+  private mergeSessionGoal(profile: SituationProfile, sessionId: string): SituationProfile {
+    const now = Date.now()
+    const hit = this.goalRegistry.get(sessionId)
+    if (hit !== undefined && now - hit.ts > PromptOptimizerService.GOAL_TTL_MS) {
+      this.goalRegistry.delete(sessionId)
+    }
+    const registered = hit !== undefined && now - hit.ts <= PromptOptimizerService.GOAL_TTL_MS
+      ? hit.goal
+      : { primary: undefined, constraints: [] as string[], successCriteria: [] as string[] }
+    const goal = mergeGoals(registered, profile.goal)
+    this.goalRegistry.set(sessionId, { goal, ts: now })
+    if (this.goalRegistry.size > PromptOptimizerService.GOAL_REGISTRY_MAX) {
+      const oldest = this.goalRegistry.keys().next().value
+      if (oldest !== undefined) this.goalRegistry.delete(oldest)
+    }
+    return { ...profile, goal }
   }
 
   /**
@@ -286,9 +369,9 @@ export class PromptOptimizerService extends Service {
   }
 
   /** Fire `optimize:start`; a throwing listener must never break the pipeline. */
-  private emitStart(method: OptimizeMethod, input: string): void {
+  private emitStart(method: OptimizeMethod, input: string, profile?: SituationProfile): void {
     try {
-      this.ctx.emit('prompt-optimizer/optimize:start', { method, input })
+      this.ctx.emit(PROMPT_OPTIMIZER_EVENTS.start, { method, input, ...(profile !== undefined ? { profile } : {}) })
     } catch {
       // Observers are best-effort; ignore listener failures.
     }
@@ -307,7 +390,7 @@ export class PromptOptimizerService extends Service {
     if (durationMs > this.stats.maxDurationMs) this.stats.maxDurationMs = durationMs
     try {
       this.ctx.emit(
-        result.optimized ? 'prompt-optimizer/optimize:success' : 'prompt-optimizer/optimize:failure',
+        result.optimized ? PROMPT_OPTIMIZER_EVENTS.success : PROMPT_OPTIMIZER_EVENTS.failure,
         { method, input, result, durationMs },
       )
     } catch {
@@ -328,8 +411,8 @@ export class PromptOptimizerService extends Service {
     return { ...this.stats }
   }
 
-  /** Estimate the token count of one input (harness tokenMeter, heuristic fallback). */
-  private estimateInputTokens(text: string): number {
+  /** Estimate the token count of one text (harness tokenMeter, heuristic fallback). */
+  private estimateTextTokens(text: string): number {
     const meter = this.ctx.get('tokenMeter')
     if (meter !== undefined && typeof (meter as { estimateMessage?: unknown }).estimateMessage === 'function') {
       try {
@@ -369,7 +452,7 @@ export class PromptOptimizerService extends Service {
     if (
       this.config.skipIfAlreadyOptimized &&
       this.config.outputStyle === 'sections' &&
-      hasAllSections(rawInput) &&
+      hasOptimizedSections(rawInput) &&
       !hasContext
     ) {
       return {
@@ -377,15 +460,19 @@ export class PromptOptimizerService extends Service {
         optimized: true,
         retries: 0,
         sections: this.sectionsOf(rawInput),
-        outputTokens: this.estimateInputTokens(rawInput),
+        outputTokens: this.estimateTextTokens(rawInput),
       }
     }
     let input = truncateInput(rawInput, this.config.maxInputChars)
-    input = truncateByTokens(input, this.config.maxInputTokens, (text) => this.estimateInputTokens(text))
+    input = truncateByTokens(input, this.config.maxInputTokens, (text) => this.estimateTextTokens(text))
     const metaLanguage = this.resolveMetaLanguage(rawInput)
     const outputLanguage = options.outputLanguage ?? this.config.outputLanguage
     const startedAt = Date.now()
-    this.emitStart('optimize', rawInput)
+    // 情境感知: the truncated input's profile (with conversation role cues),
+    // merged with the session registry when a sessionId is given (P2).
+    const baseProfile = buildSituationProfile(input, options.context)
+    const profile = options.sessionId !== undefined ? this.mergeSessionGoal(baseProfile, options.sessionId) : baseProfile
+    this.emitStart('optimize', rawInput, profile)
     // Cache (ADR-008): an identical request (route + system + truncated
     // input/context + scope) returns the previous validated result with zero
     // model calls. The route is resolved once here so the pipeline reuses it.
@@ -395,7 +482,7 @@ export class PromptOptimizerService extends Service {
       preResolvedRoute = this.resolveRoute()
       cacheKey = this.cacheKeyFor(
         preResolvedRoute,
-        buildOptimizeSystem(this.promptContext(metaLanguage, options.context), input, outputLanguage),
+        buildOptimizeSystem(this.promptContext(metaLanguage, options.context), input, outputLanguage, undefined, profile),
         input,
         options.context,
         options.cacheScope,
@@ -409,10 +496,11 @@ export class PromptOptimizerService extends Service {
     }
     const result = await this.runPipeline(
       (outputLanguage, diagnosis) =>
-        buildOptimizeSystem(this.promptContext(metaLanguage, options.context), input, outputLanguage, diagnosis),
+        buildOptimizeSystem(this.promptContext(metaLanguage, options.context), input, outputLanguage, diagnosis, profile),
       rawInput,
       options,
       metaLanguage,
+      profile,
       preResolvedRoute,
     )
     if (result.optimized && cacheKey !== undefined) this.cache.set(cacheKey, cloneOptimizeResult(result))
@@ -438,13 +526,21 @@ export class PromptOptimizerService extends Service {
       throw new OptimizeError(OptimizeErrorCode.EMPTY_INPUT, 'prompt-optimizer: iteration instruction must be a non-empty string')
     }
     let last = truncateInput(lastOptimized, this.config.maxInputChars)
-    last = truncateByTokens(last, this.config.maxInputTokens, (text) => this.estimateInputTokens(text))
+    last = truncateByTokens(last, this.config.maxInputTokens, (text) => this.estimateTextTokens(text))
     let next = truncateInput(instruction, this.config.maxInputChars)
-    next = truncateByTokens(next, this.config.maxInputTokens, (text) => this.estimateInputTokens(text))
+    next = truncateByTokens(next, this.config.maxInputTokens, (text) => this.estimateTextTokens(text))
     const metaLanguage = this.resolveMetaLanguage(instruction)
     const outputLanguage = options.outputLanguage ?? this.config.outputLanguage
     const startedAt = Date.now()
-    this.emitStart('iterate', lastOptimized)
+    // 情境感知: the next instruction's profile (with conversation role cues,
+    // merged with the session registry when a sessionId is given — P2) and
+    // the goal drift vs the previous result; the drift line goes into the
+    // situation block so the model knows what changed.
+    const nextBase = buildSituationProfile(next, options.context)
+    const nextProfile = options.sessionId !== undefined ? this.mergeSessionGoal(nextBase, options.sessionId) : nextBase
+    const prevProfile = buildSituationProfile(last)
+    const drift = goalDrift(prevProfile.goal, nextProfile.goal)
+    this.emitStart('iterate', lastOptimized, nextProfile)
     // Cache (ADR-008): identical iterate requests share the previous result.
     let preResolvedRoute: ResolvedRoute | undefined
     let cacheKey: string | undefined
@@ -452,7 +548,7 @@ export class PromptOptimizerService extends Service {
       preResolvedRoute = this.resolveRoute()
       cacheKey = this.cacheKeyFor(
         preResolvedRoute,
-        buildIterateSystem(this.promptContext(metaLanguage, options.context), last, next, outputLanguage),
+        buildIterateSystem(this.promptContext(metaLanguage, options.context), last, next, outputLanguage, undefined, nextProfile, drift),
         `${last}\u0000${next}`,
         options.context,
         options.cacheScope,
@@ -466,10 +562,11 @@ export class PromptOptimizerService extends Service {
     }
     const result = await this.runPipeline(
       (outputLanguage, diagnosis) =>
-        buildIterateSystem(this.promptContext(metaLanguage, options.context), last, next, outputLanguage, diagnosis),
+        buildIterateSystem(this.promptContext(metaLanguage, options.context), last, next, outputLanguage, diagnosis, nextProfile, drift),
       lastOptimized,
       options,
       metaLanguage,
+      nextProfile,
       preResolvedRoute,
     )
     if (result.optimized && cacheKey !== undefined) this.cache.set(cacheKey, cloneOptimizeResult(result))
@@ -488,11 +585,22 @@ export class PromptOptimizerService extends Service {
     fallbackPrompt: string,
     options: OptimizeOptions,
     metaLanguage: MetaLanguage,
+    profile: SituationProfile | undefined,
     route?: ResolvedRoute,
   ): Promise<OptimizeResult> {
     const resolvedRoute = route ?? this.resolveRoute()
     const baseTemperature = options.temperature ?? this.config.temperature
-    let effectiveMaxTokens = options.maxTokens ?? this.config.maxTokens
+    const fast = this.config.optimizationProfile === 'fast'
+    // 首调预算（latency P0-1）：当输出长度软约束开启且调用方未显式覆盖时，把首
+    // 调用硬上限约束在软约束的 1.5 倍（fast 档 1.2 倍）以内——短任务不受影响
+    // （不触顶即一次完成），超长输出由跳档扩容 + 断点续传兜底，避免单次调用
+    // 长时间无反馈。扩容路径会让 `effectiveMaxTokens` 递增，后续调用不再受此约束。
+    const configuredMaxTokens = options.maxTokens ?? this.config.maxTokens
+    const soft = this.config.outputLengthMaxTokens
+    const firstBudget = soft > 0 && options.maxTokens === undefined
+      ? Math.min(configuredMaxTokens, Math.max(256, Math.ceil(soft * (fast ? 1.2 : 1.5))))
+      : configuredMaxTokens
+    let effectiveMaxTokens = firstBudget
     const outputLanguage = options.outputLanguage ?? this.config.outputLanguage
     let lastError: Error | undefined
     let lastDiagnosis: string | undefined
@@ -531,50 +639,66 @@ export class PromptOptimizerService extends Service {
           resumed.length > 0 ? resumed : undefined,
         )
         const full = resumed.length > 0 ? resumed + prompt : prompt
-        const valid = this.config.outputStyle === 'plain'
-          ? hasPlainOutput(full, this.config.minSectionChars)
-          : this.config.minSectionChars > 0
-            ? hasValidSections(full, this.config.minSectionChars)
-            : hasAllSections(full)
+        const valid = validateOutput(full, this.config.outputStyle, this.config.minSectionChars)
         if (valid) {
-          let result = full
-          if (this.config.selfRefine) {
-            const refined = await this.refineOnce(full, resolvedRoute, outputLanguage, options.signal, temperature, metaLanguage, options.context)
-            if (refined !== undefined) result = refined
+          // 情境感知（P0）: the structure passed, but the output may have
+          // dropped the instruction's goal or a constraint. When retry budget
+          // remains, fold the misalignment into the diagnosis and retry (the
+          // same loop — no calls beyond the existing `maxCalls` budget). The
+          // last attempt is accepted as-is (lenient default: goal alignment
+          // is a soft gate, structure is the hard one).
+          const goalCheck = profile !== undefined
+            ? goalAlignment(profile.goal, full)
+            : { missing: [] as string[], aligned: true }
+          // `fast` 档或 `goalAlignmentRetry: false`（latency P0-2/P1-2）：目标
+          // 未对齐直接接受，不消耗重试调用。
+          if (!goalCheck.aligned && !fast && this.config.goalAlignmentRetry && attempt < this.config.maxRetries) {
+            lastError = new OptimizeError(OptimizeErrorCode.GOAL_MISALIGNED, goalCheck.missing.join('；'))
+            lastDiagnosis = this.goalDiagnosis(goalCheck.missing, metaLanguage)
+          } else {
+            let result = full
+            if (this.config.selfRefine && !fast) {
+              const refined = await this.refineOnce(full, resolvedRoute, outputLanguage, options.signal, temperature, metaLanguage, options.context)
+              if (refined !== undefined) result = refined
+            }
+            return {
+              prompt: result,
+              optimized: true,
+              retries: attempt,
+              outputTokens: this.estimateTextTokens(result),
+              ...(this.config.outputStyle === 'sections' ? { sections: this.sectionsOf(result) } : {}),
+            }
           }
-          return {
-            prompt: result,
-            optimized: true,
-            retries: attempt,
-            outputTokens: this.estimateInputTokens(result),
-            ...(this.config.outputStyle === 'sections' ? { sections: this.sectionsOf(result) } : {}),
-          }
+        } else {
+          // One structured pass drives the failure classification: diagnose
+          // missing/thin sections (sections style) or headings/thinness
+          // (plain style). The heading scan runs once, not twice.
+          const headings = hasSectionHeadings(full)
+          const failureCode = this.config.outputStyle === 'plain'
+            ? headings
+              ? OptimizeErrorCode.HEADINGS_IN_PLAIN
+              : OptimizeErrorCode.THIN_OUTPUT
+            : diagnoseSections(full, this.config.minSectionChars).missing.length > 0
+              ? OptimizeErrorCode.MISSING_SECTIONS
+              : OptimizeErrorCode.THIN_SECTIONS
+          lastError = new OptimizeError(
+            failureCode,
+            this.config.outputStyle === 'plain'
+              ? headings
+                ? plainHeadingsMessage()
+                : thinOutputMessage(this.config.minSectionChars)
+              : this.config.minSectionChars > 0
+                ? `${INCOMPLETE_SECTIONS_MESSAGE}; ${thinSectionsMessage(this.config.minSectionChars)}`
+                : INCOMPLETE_SECTIONS_MESSAGE,
+          )
+          lastDiagnosis = buildDiagnosis({
+            outputStyle: this.config.outputStyle,
+            minSectionChars: this.config.minSectionChars,
+            language: metaLanguage,
+            prompt: full,
+            failureCode,
+          })
         }
-        const missingSections = this.config.outputStyle !== 'plain' && !hasAllSections(full)
-        const failureCode = this.config.outputStyle === 'plain'
-          ? hasSectionHeadings(full)
-            ? OptimizeErrorCode.HEADINGS_IN_PLAIN
-            : OptimizeErrorCode.THIN_OUTPUT
-          : missingSections
-            ? OptimizeErrorCode.MISSING_SECTIONS
-            : OptimizeErrorCode.THIN_SECTIONS
-        lastError = new OptimizeError(
-          failureCode,
-          this.config.outputStyle === 'plain'
-            ? hasSectionHeadings(full)
-              ? plainHeadingsMessage()
-              : thinOutputMessage(this.config.minSectionChars)
-            : this.config.minSectionChars > 0
-              ? `${INCOMPLETE_SECTIONS_MESSAGE}; ${thinSectionsMessage(this.config.minSectionChars)}`
-              : INCOMPLETE_SECTIONS_MESSAGE,
-        )
-        lastDiagnosis = buildDiagnosis({
-          outputStyle: this.config.outputStyle,
-          minSectionChars: this.config.minSectionChars,
-          language: metaLanguage,
-          prompt: full,
-          failureCode,
-        })
       } catch (error) {
         if (error instanceof MaxTokensError && this.config.maxTokenRetryFactor > 1) {
           // Jump expansion (跳档) + resume (断点续传): grow the effective
@@ -599,8 +723,9 @@ export class PromptOptimizerService extends Service {
         throw error
       }
       // Only a validation failure reaches here: consume the retry budget.
+      // `fast` 档不消费重试预算（maxRetries 视为 0）：一次校验失败即降级。
       attempt++
-      if (attempt > this.config.maxRetries) break
+      if (attempt > (fast ? 0 : this.config.maxRetries)) break
     }
     return {
       prompt: fallbackPrompt,
@@ -635,14 +760,12 @@ export class PromptOptimizerService extends Service {
         outputLanguage,
       )
       const v2 = await this.generateOnce(system, route, signal, temperature, this.config.maxTokens)
-      const valid = this.config.outputStyle === 'plain'
-        ? hasSubstantialContent(v2, this.config.minSectionChars)
-        : this.config.minSectionChars > 0
-          ? hasValidSections(v2, this.config.minSectionChars)
-          : hasAllSections(v2)
+      // Same validation as the main pipeline (`validateOutput`), so the
+      // plain style also rejects headings in a refined result.
+      const valid = validateOutput(v2, this.config.outputStyle, this.config.minSectionChars)
       if (!valid) return undefined
-      const v2Tokens = this.estimateInputTokens(v2)
-      if (v2Tokens > this.estimateInputTokens(v1) * 1.05) return undefined
+      const v2Tokens = this.estimateTextTokens(v2)
+      if (v2Tokens > this.estimateTextTokens(v1) * 1.05) return undefined
       return v2
     } catch {
       // Refinement is best-effort: any failure keeps the original result.
@@ -686,11 +809,40 @@ export class PromptOptimizerService extends Service {
         signal: budget.signal,
       })
       const assembler = new BlockAssembler()
+      // 流式早期终止（latency P1-1）：仅首调（无续传）启用。输出一旦通过结构
+      // 校验（四段齐全 / plain 实质达标）并进入"收尾期"（连续若干 chunk 增量
+      // 低于阈值 = 模型在凑字/收尾），即提前停流——长尾不再消耗时长。稳定窗口
+      // 防误伤：增量超阈值立即重置，模型仍在写实质内容时不会被中断。
+      const earlyStop = continueFrom === undefined && this.config.earlyStop
+      let streamed = ''
+      let tailChunks = 0
+      let tailLen = -1
       for await (const chunk of this.ctx.llm.stream(options)) {
         budget.signal.throwIfAborted()
         assembler.push(chunk)
+        if (chunk.type === 'text-delta' && typeof chunk.text === 'string' && chunk.text.length > 0) streamed += chunk.text
+        if (earlyStop) {
+          if (tailLen < 0) {
+            if (validateOutput(streamed, this.config.outputStyle, this.config.minSectionChars)) {
+              tailLen = streamed.length
+              tailChunks = 0
+            }
+          } else if (streamed.length - tailLen < EARLY_STOP_TAIL_GROWTH) {
+            tailChunks++
+            if (tailChunks >= EARLY_STOP_TAIL_CHUNKS) break
+          } else {
+            tailChunks = 0
+            tailLen = streamed.length
+          }
+        }
       }
       budget.signal.throwIfAborted()
+      // 提前终止视为正常完成（跳过 finish 错误检查，避免把中断误报为 max-tokens）：
+      // 返回已累积文本；未触发早停（或未启用）时走原路径。
+      if (earlyStop && tailLen >= 0) {
+        if (streamed.trim().length === 0) throw new OptimizeError(OptimizeErrorCode.NO_TEXT, 'prompt-optimizer: model produced no text')
+        return streamed
+      }
       const failure = finishToError(assembler.finish)
       if (failure !== undefined) {
         // Attach the text produced before truncation so the expansion path

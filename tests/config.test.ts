@@ -32,6 +32,11 @@ describe('Config schema', () => {
       contextAware: true,
       contextMaxMessages: 6,
       contextMaxTokens: 800,
+      outputLengthMaxTokens: 800,
+      situationProfileLevel: 'full',
+      goalAlignmentRetry: true,
+      optimizationProfile: 'balanced',
+      earlyStop: true,
       cacheEnabled: true,
       cacheMaxEntries: 200,
       cacheTtlMs: 600000,
@@ -68,6 +73,9 @@ describe('Config schema', () => {
       contextMaxTokens: 2000,
       maxInputTokens: 5000,
       metaPromptTemplate: { optimizeZh: '定制模板' },
+      goalAlignmentRetry: false,
+      optimizationProfile: 'fast',
+      earlyStop: false,
       provider: 'deepseek-official',
       model: 'deepseek-v4-flash',
     })
@@ -94,6 +102,9 @@ describe('Config schema', () => {
       contextMaxTokens: 2000,
       maxInputTokens: 5000,
       metaPromptTemplate: { optimizeZh: '定制模板' },
+      goalAlignmentRetry: false,
+      optimizationProfile: 'fast',
+      earlyStop: false,
       provider: 'deepseek-official',
       model: 'deepseek-v4-flash',
     })
@@ -126,6 +137,8 @@ describe('Config schema', () => {
     expect(() => validate({ contextMaxMessages: 1.5 })).toThrow()
     expect(() => validate({ contextMaxTokens: -1 })).toThrow()
     expect(() => validate({ contextAware: 'yes' })).toThrow()
+    expect(() => validate({ situationProfileLevel: 'verbose' })).toThrow()
+    expect(() => validate({ situationProfileLevel: 'minimal' })).not.toThrow()
     expect(() => validate({ cacheMaxEntries: -1 })).toThrow()
     expect(() => validate({ cacheMaxEntries: 1.5 })).toThrow()
     expect(() => validate({ cacheTtlMs: -1 })).toThrow()

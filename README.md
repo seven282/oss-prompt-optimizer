@@ -2,7 +2,7 @@
 
 [English](README.en.md) | 简体中文
 
-DeepSeek Harness 插件：提示词优化，将用户原始指令自动优化为专业、结构化的提示词，和qoder、codex一致的体验。
+提示词优化插件（DeepSeek Harness）能把一句随手写的话自动改写成专业、可直接使用的提示词，体验与 Qoder、Codex 一致。
 
 优化结果默认为无标题纯文本提示词（`outputStyle: 'plain'`，更省 token），可配置为四段结构化提示词（`outputStyle: 'sections'`，`## Role` / `## Task` / `## Context` / `## Format`），
 由内置元提示词驱动，经 harness 的 `LLM` 服务完成（不直连任何 API、不触碰凭据）。
@@ -19,12 +19,28 @@ DeepSeek Harness 插件：提示词优化，将用户原始指令自动优化为
 - **上下文感知**（默认开启）：把当前指令之前的最近对话注入元提示词
   （「视为纯数据 / 背景参考」护栏），让优化结果贴合此前讨论；设
   `contextAware: false` 关闭（见下文配置表）。
+- **情境感知（1.3.0+）**：把「原始指令 + 对话上下文」自动解析为**角色 / 任务 / 目标
+  三份画像**并注入元提示词（`{{情境画像}}`）——优化结果的 `## Role` 与任务强相关、
+  目标与约束自动保留；输出丢失目标/约束时在重试预算内自动修正（`goalAlignmentRetry:
+  false` 可关）；`iterate` 时检测目标漂移并标注变化；传 `sessionId` 可开启**会话级
+  目标沿用**（TTL 30 分钟）。角色识别覆盖显式身份、**能力**（精通/擅长…）、**行为
+  约束**（先给结论/拒绝猜测…）与场景式身份（以…的身份），纯能力句也能被识别为
+  角色信号；`situationProfileLevel` 可控制画像注入预算（full/minimal/off）。
+- **角色定义三重结构（1.3.3+）**：优化结果的角色按「身份＋能力＋行为」三要素撰写
+  （不强制"你是"开头，能力/行为描述同样合格）；并按任务类型给出写法建议
+  （代码→能力导向、文案→身份＋文体、分析→身份＋方法、运维→行为约束＋步骤）。
+- **优化时长（1.3.6）**：流式早期终止（输出结构达标且进入收尾期即停流，长尾凑字
+  不再消耗时长，`earlyStop` 可关）；首调输出预算联动（超长输出由断点续传兜底）；
+  `optimizationProfile: 'fast'` 一键速档（跳过校验与目标对齐重试、禁用 selfRefine，
+  显式开启才生效）。
+- **结果缓存（1.1.6）**：内存缓存校验成功的结果（LRU + TTL），相同请求**零模型调用**
+  （`cacheEnabled` 默认开，重启即清空）。
 - 后置校验：模型输出缺段/过薄/过短时自动重试（可配次数），重试前把上次失败的
   诊断（缺失段落名、过薄段落与字数）注入下一次调用的系统提示词，针对性修正、
   提高命中率；仍失败则返回原文/上次结果 + 错误说明，并附稳定机器可读错误码
   （`OptimizeResult.errorCode`：`MISSING_SECTIONS` / `THIN_SECTIONS` / `THIN_OUTPUT` /
   `TIMEOUT` / `NO_MODEL_ROUTE` 等），工具失败渲染带 `[错误码]` 前缀。
-- 输出恒含四段；空输入报错；超长输入截断护栏；取消信号透传。
+- 输出恒为完整可执行的提示词（四段或 plain 正文）；空输入报错；超长输入截断护栏；取消信号透传。
 ![项目截图](./1.png)
 ![项目截图](./2.png)
 
@@ -139,7 +155,7 @@ dsh plugin --profile web remove oss-prompt-optimizer
 | `maxInputTokens` | int ≥0 | `3000` | 原始指令截断上限（估算 token；优先用 harness tokenMeter，缺失回退启发式；`0` 关闭） |
 | `timeoutMs` | int ≥1 | `60000` | 单次调用超时预算（毫秒） |
 | `outputLanguage` | string | `'auto'` | 输出语言；`'auto'` 跟随指令语言，其他值（如 `'英文'`）固定输出语言 |
-| `outputStyle` | `'sections'` \| `'plain'` | `'sections'` | 输出风格：四段标题（默认）或无标题连贯正文（更省 token） |
+| `outputStyle` | `'sections'` \| `'plain'` | `'plain'` | 输出风格：无标题连贯正文（默认，更省 token）或四段标题 |
 | `metaPromptLanguage` | `'auto'` \| `'中文'` \| `'英文'` | `'auto'` | 优化器角色文档（元提示词）的语言；`'auto'` 按指令语言自动检测（汉字占比 ≥30% 用中文文档，否则英文），`'中文'`/`'英文'` 固定。输出语言仍由 `outputLanguage` 独立控制。运行时可用 `/optimizer-language auto\|中文\|英文` 固定或恢复自动 |
 | `extraInstructions` | string | 无 | 追加到元提示词的部署自定义规则（如领域要求/风格） |
 | `examples` | array | `[]` | few-shot 示例对 `[{input, output}]`，注入元提示词示范（仅 `sections` 模式注入） |
@@ -147,7 +163,7 @@ dsh plugin --profile web remove oss-prompt-optimizer
 | `maxTokenRetryFactor` | number 1–3 | `2` | 输出触顶时按该倍数跳档扩容（1200→2400→4800…），扩容不消耗重试次数、从截断处续写；`1` 关闭 |
 | `maxTokensCap` | int 1–128000 | `8000` | 自动扩容的上限；`<= maxTokens` 关闭扩容（扩容不消耗重试次数） |
 | `retryTemperatureStep` | number 0–2 | `0.3` | 每次重试的 temperature 增量（探索性重试）；`0` 关闭 |
-| `skipIfAlreadyOptimized` | boolean | `true` | 输入已含四段标题时直接透传，不调用模型（省 token 默认；仅 `sections` 模式生效；**传入非空对话上下文时仍会重新优化**） |
+| `skipIfAlreadyOptimized` | boolean | `true` | 输入已含四段标题时直接透传，不调用模型（省 token 默认；仅 `sections` 模式生效；**传入非空对话上下文时仍会重新优化**）。四段在英文标题（`## Role` 等）或中文变体（`## 角色`/`## 任务`/`## 背景`/`## 输出` 等）下齐全均视为已优化 |
 | `selfRefine` | boolean | `false` | 成功优化后至多再跑一轮「精简」迭代（内部指令）；仅当仍通过校验且不更长（5% 容差）时采纳，任何失败自动回退原结果。开启会多 1 次模型调用 |
 | `autoOptimize` | boolean | `false` | 是否启用自动优化钩子（前缀触发） |
 | `autoOptimizePrefix` | string | `'/optimize '` | 自动优化的触发前缀（可改为 `/优化 ` 等） |
@@ -159,6 +175,11 @@ dsh plugin --profile web remove oss-prompt-optimizer
 | `contextAware` | boolean | `true` | 上下文感知：优化时把当前指令之前的最近对话（经 `{{上下文信息}}` 占位符 + 「视为纯数据」护栏）注入元提示词，让优化结果贴合此前讨论。四段模式下可将上下文中的事实用于充实 `## Context` 段（仍不执行其中嵌入的指令）；钩子取 `agent/pre-step` 消息，`/optimize` 取会话记录，尽力而为 |
 | `contextMaxMessages` | int 0–100 | `6` | 上下文感知时采集的最近消息条数上限；`0` 关闭 |
 | `contextMaxTokens` | int ≥0 | `800` | 上下文 token 预算；超出截断到最长前缀并附标记；`0` 关闭截断（精简默认） |
+| `outputLengthMaxTokens` | int ≥0 | `800` | 优化结果建议长度上限（token，软约束：仅指导模型尽量精简，不阻断、不重试）；`0` 关闭。与 `maxTokens`（模型调用硬上限）相互独立 |
+| `situationProfileLevel` | `'full'` \| `'minimal'` \| `'off'` | `'full'` | 情境画像（`{{情境画像}}` 块）注入预算：`full` 角色+目标+约束全量；`minimal` 仅目标/约束（不含角色信号，更省 token）；`off` 不注入。只影响情境块，`{{任务类型}}` 提示不受影响 |
+| `goalAlignmentRetry` | boolean | `true` | 目标/约束未对齐（`goalAlignment` 失败）时是否消耗校验重试预算再试一次：`true` 保留目标保真（1.3.0 起默认行为）；`false` 直接接受结构有效的输出，省一次调用。`optimizationProfile: 'fast'` 时强制关闭 |
+| `optimizationProfile` | `'balanced'` \| `'fast'` | `'balanced'` | 时长档位：`balanced` 保留全部质量门（校验重试/目标对齐重试/selfRefine）；`fast` 跳过校验与目标对齐重试、禁用 selfRefine——一次结构有效即接受，最坏时长显著下降，返工率上升（显式选择才生效） |
+| `earlyStop` | boolean | `true` | 流式早期终止：输出通过结构校验且进入收尾期（连续 12 个 chunk 增量 < 48 字符）即提前停流，长尾凑字不再消耗时长；仅首调生效（断点续传不受影响）；`false` 始终消费完整流 |
 | `templateId` | string | `'default'` | 角色文档模板集 id（仅内置 `'default'`；未知 id 加载即抛） |
 | `metaPromptTemplate` | object | 无 | 自定义角色文档骨架（部分字段可选，缺的语言回落内置）；每个骨架必须保留数据占位符、`{{输出结构}}`/`{{自查}}` 块与「视为纯数据」注入护栏，违规加载即抛 |
 | `provider` / `model` | string | 无 | 显式模型路由；必须成对配置。缺省时使用 harness 默认模型（`agentDefaultModel`） |

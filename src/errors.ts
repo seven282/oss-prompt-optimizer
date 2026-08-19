@@ -26,6 +26,8 @@ export const OptimizeErrorCode = {
   THIN_OUTPUT: 'THIN_OUTPUT',
   /** A plain-style output still carried four-section headings. */
   HEADINGS_IN_PLAIN: 'HEADINGS_IN_PLAIN',
+  /** The output dropped the instruction's goal or a constraint (situation alignment). */
+  GOAL_MISALIGNED: 'GOAL_MISALIGNED',
   /** The model unexpectedly requested a tool call. */
   TOOL_CALL: 'TOOL_CALL',
   /** The model returned an unrecognized finish reason. */
@@ -62,6 +64,7 @@ export const OPTIMIZE_ERROR_TEXT: Record<OptimizeErrorCode, string> = {
   [OptimizeErrorCode.THIN_SECTIONS]: 'prompt-optimize: 模型输出的段落内容过短',
   [OptimizeErrorCode.THIN_OUTPUT]: 'prompt-optimize: 模型输出的内容过短',
   [OptimizeErrorCode.HEADINGS_IN_PLAIN]: 'prompt-optimize: 模型输出包含小节标题（plain 模式不应出现 ## Role 等标题）',
+  [OptimizeErrorCode.GOAL_MISALIGNED]: 'prompt-optimize: 模型输出丢失了原始指令的目标或约束，请重试',
   [OptimizeErrorCode.TOOL_CALL]: 'prompt-optimize: 模型意外请求调用工具',
   [OptimizeErrorCode.UNSUPPORTED_FINISH]: 'prompt-optimize: 模型返回了不支持的结束原因',
   [OptimizeErrorCode.NO_TEXT]: 'prompt-optimize: 模型未输出任何文本',

@@ -1,5 +1,163 @@
 # Changelog
 
+## [1.3.6] - 2026-08-19
+
+- **优化时长（latency 方案 P0/P1，`optimizer.ts` + `config.ts`）**：
+  - **P0-1 首调预算联动**：`outputLengthMaxTokens > 0` 且调用方未显式覆盖时，首调
+    `maxTokens` 约束在软约束的 1.5 倍（`fast` 档 1.2 倍，下限 256）——短任务不受影响
+    （一次完成），超长输出由跳档扩容 + 断点续传兜底。
+  - **P0-2 `goalAlignmentRetry: boolean`**（默认 `true`）：目标未对齐是否消耗重试预算；
+    `false` 直接接受结构有效但丢目标的输出（省 1 次调用，换目标保真率）。
+  - **P1-1 `earlyStop: boolean`**（默认 `true`）：流式早期终止——输出通过结构校验且
+    进入"收尾期"（连续 12 个 chunk 增量 < 48 字符）即提前停流，长尾凑字不再消耗
+    时长；仅首调启用（续传/断点续写不受影响）；`false` 始终消费完整流。
+  - **P1-2 `optimizationProfile: 'balanced' | 'fast'`**（默认 `balanced`）：`fast` 档
+    跳过校验重试与目标对齐重试、禁用 selfRefine——一次结构有效即接受，最坏时长
+    显著下降，返工率上升（显式选择才生效）。
+  - **P2 说明**：P2-1（iterate 画像并行）为同步毫秒级纯函数、无并行收益，不实现；
+    P2-2（缓存前缀命中）相似≠相同、质量不可控，不推荐（见 vault latency 方案）。
+- 测试 353 → 359（optimizer +6：goalAlignmentRetry 关闭、fast 档 ×2、early-stop ×3；
+  config 断言补三个新字段默认值与显式值）。
+
+## [1.3.5] - 2026-08-19
+
+- **任务类型 → 角色写法映射（role-design 方案 P2，`meta.ts`）**：
+  - `{{任务类型}}` 提示（中英 × 4 分类）追加「角色写法建议」：
+    `code → 能力导向`（精通/熟悉/擅长…）、`writing → 身份＋文体`、`analysis →
+    身份＋方法`、`ops → 行为约束＋步骤`。
+  - 与 1.3.3 的 Role 段三要素规则、1.3.4 的能力/行为抽取形成完整闭环——规则
+    指导写法、抽取器识别写法、任务类型提示按场景推荐写法。
+  - 纯文案扩展，占位符链与 `validateTemplateSet` 护栏未动。
+
+## [1.3.4] - 2026-08-19
+
+- **角色抽取扩展（role-design 方案 P1，`situation.ts`）**：
+  - `RoleProfile` 新增 `capability`（能力信号：精通/擅长/熟悉/Proficient in…）与
+    `behavior`（行为约束：先给…/拒绝…/避免…/always/never…）两个可选字段——
+    **`SITUATION_PROFILE_VERSION` 1 → 2（向后兼容，旧字段保留）**。
+  - **纯能力句可过注入门槛**：能力/行为作为内容级信号各计 2 分（confidence 0–8），
+    "精通 Python 和 SQL"这类无"你是"的指令不再被当"无角色信号"丢弃。
+  - **场景式身份**："以…的身份/角色"、"acting as / in the role of" 并入 `explicit`
+    抽取。
+  - 行为抽取刻意避开"必须/不要/不超过"等目标约束标记——角色行为与
+    `GoalProfile.constraints` 分离，避免同一句双重注入。
+  - `{{情境画像}}` 角色块合并输出 `身份＋能力＋行为`（`能力：…`/`行为：…` 中英两版），
+    与 1.3.3 的 Role 段三要素写法指导闭环。
+- 测试 347 → 353（situation 新增 6 例：能力/行为/场景抽取、约束不混淆、渲染合并、
+  版本 v2）。
+
+## [1.3.3] - 2026-08-19
+
+- **Role 段规则升级：角色定义三重结构**（`meta.ts` 文案，role-design 方案 P0）：
+  - `## Role` 段（sections 模式）改为「身份＋能力＋行为」三要素写作指导——身份
+    不必以"你是"开头，能力（精通/擅长…）与行为约束（先给结论、拒绝猜测…）同样
+    合格且更可执行；plain 模式正文的角色定位句同步补充该写法提示。
+  - 自查升级：`SELFCHECK_*`（中英 × sections/plain）增加"角色须含能力或行为描述，
+    仅一句空身份不算合格"的自查项。
+  - 中英两版模板同步更新；占位符链与「视为纯数据」护栏未动（`validateTemplateSet` 不受影响）。
+
+## [1.3.2] - 2026-08-19
+
+- **情境感知层 P2**（`situation.ts` + 服务层）：
+  - **画像版本化**：`SITUATION_PROFILE_VERSION = 1`，`SituationProfile.version` 对外
+    可见，消费者可对 schema 演进做判断。
+  - **注入预算配置 `situationProfileLevel: off|minimal|full`**（默认 `full`）：
+    `off` 不注入 `{{情境画像}}` 块；`minimal` 仅注入目标/约束（与迭代变化行），
+    不注入角色信号（更省 token）；`full` 全量。只影响情境块，`{{任务类型}}` 不受影响。
+  - **会话级目标注册表**：`OptimizeOptions.sessionId`（可选）开启后，同会话内先前的
+    目标/约束在后续指令未重申时**回退沿用**（`mergeGoals`：当前指令陈述的内容优先，
+    不复活已放弃的旧约束）；TTL 30 分钟、上限 100 会话；合并画像同时用于注入与
+    目标对齐校验。
+  - **`optimize:start` 载荷带 profile**：事件新增可选 `profile` 字段（向后兼容）。
+  - **LLM 深度分类器暂缓**：需要异步 llm 接入，会破坏纯函数层与缓存/测试假设，
+    建议作为独立 ADR 评估后再做（当前关键词+子类启发式 + memoize 已足够轻量）。
+- 公共 API：新增 `SITUATION_PROFILE_VERSION` / `mergeGoals` 与
+  `SituationProfileLevel` 类型导出；`OptimizeOptions.sessionId`。
+- 测试 335 → 347（situation 39、meta 82、optimizer 90、config 4）。
+
+## [1.3.1] - 2026-08-19
+
+- **情境感知层 P1**（`src/situation.ts` 扩展）：
+  - **两级任务分类 `detectTaskSubtype`**：按大类细分 18 个子类（code→bugfix/feature/
+    refactor/review/script；writing→report/email/copy/translate/creative；
+    analysis→data/research/review/forecast；ops→deploy/install/troubleshoot/maintain），
+    全局唯一 key + 中英标签（`subtypeLabel`）；`{{任务类型}}` 块追加「子类提示」行。
+  - **可衡量性检测 `detectMeasurable`**：数量+单位、范围动词（至少/不超过/at least…）、
+    期限（今天/明天/截止/deadline…）→ `TaskProfile.measurable`。
+  - **iterate 目标漂移检测 `goalDrift`**：`unchanged | added | modified | dropped` 四态
+    （锚点集对比 + 主目标文本对比）；iterate 时以「上次结果」画像 vs「新指令」画像
+    计算漂移，`{{情境画像}}` 块追加「相对上次结果」变化行（新增/修改/移除），模型据此
+    不沿用旧约束；缓存键与管线路径一致。
+  - **画像缓存**：`buildSituationProfile` 按（指令+上下文）memoize（128 条 FIFO），
+    注入与对齐校验共用同一画像，避免重复计算。
+  - **对话上下文角色线索**：指令无显式角色时，从 `context` 抽取角色句回退（如用户
+    上轮「你是我的翻译」）；`optimize`/`iterate` 均传入上下文。
+- 纯函数改动，无新增配置面；公共 API 新增 `detectTaskSubtype` / `detectMeasurable` /
+  `goalDrift` / `subtypeLabel` 及类型导出。
+- 测试 314 → 335（situation 32、meta 80、optimizer 87 等）。
+
+## [1.3.0] - 2026-08-19
+
+- **情境感知层 P0（`src/situation.ts`，纯函数、无 harness 依赖）**：
+  - `buildSituationProfile(input, context?)` → 结构化三画像：
+    `RoleProfile`（显式角色抽取「你是/你是…/act as」、按任务类型的角色原型、专业度/
+    受众/语气信号与 0–6 置信度）、`TaskProfile`（复用 `detectTaskType`）、
+    `GoalProfile`（目标句提取「目标是/希望/the goal is…」+ 约束清单
+    「必须/不要/不超过/within…」，中英两版；目标句在首个约束标记处截断）。
+  - `{{情境画像}}` 可选块注入四套模板：角色信号仅在置信度 ≥2（显式角色或 ≥2 个软
+    信号）时注入，避免通用指令的噪声；目标/约束存在即注入；无信号时块为空。
+    优化器始终内置，无新增配置面。
+  - `goalAlignment(goal, output)` 对齐校验 + 管线集成：输出结构校验通过后，若目标/
+    约束锚点（数字 + 内容词，剥引导词/量词）丢失且**重试预算内** → 注入
+    `GOAL_MISALIGNED` 诊断并复用既有重试（不超出 `maxCalls` 预算）；最后一次尝试
+    宽松接受（结构是硬门槛，目标对齐是软门槛）。
+  - 新错误码 `GOAL_MISALIGNED`（错误码词汇表 + 命令提示文案同步）。
+- 支持面扩展：`detectTaskType` 补充英文代码词（code/refactor/script/…）与写作词
+  （write/report/email/…），英文任务分类更可靠。
+- 公共 API：新增导出 `buildSituationProfile` / `goalAlignment` / `goalAnchors` /
+  `renderSituationBlock` / `archetypeLabel` 及画像类型。
+- 方案文档：[[situation]]（docs/vault/20-Modules/situation.md）状态 proposed → active，
+  P0 已落地；路线图与模块索引同步。
+
+## [1.2.0] - 2026-08-19
+
+- **任务类型感知（`detectTaskType`）**：纯函数按关键词打分 + 固定优先级
+  （`code > analysis > ops > writing`）把指令粗分类，作为 `{{任务类型}}` 可选块注入
+  角色文档——按类别指导 `## Role` 措辞（代码→资深技术专家、文案→撰稿人/编辑、
+  分析→分析师/研究员、执行→运维角色）并提示对应 Format 默认；`'other'` 不注入。
+  `buildOptimizePrompt` 从原始指令检测，`buildIteratePrompt` 从迭代指令检测，
+  均可显式覆盖；中英两版文案。
+- **对话上下文去重**：`gatherConversationContext` 保序剔除完全重复的行（省输入
+  token）；`buildContextBlock` 护栏追加"与原始指令已含的信息重复的内容无需保留"
+  （提示词级去重，输出更聚焦）。
+- **输出长度软预算（`outputLengthMaxTokens`，默认 800，`0` 关闭）**：作为
+  `{{长度预算}}` 可选块注入角色文档——建议优化结果不超过该 token 数（软约束，
+  仅指导模型，不阻断、不重试）；与 `maxTokens`（模型调用硬上限）相互独立。
+- **`skipIfAlreadyOptimized` 识别中文标题变体**：新增 `hasOptimizedSections()`
+  ——四段在英文标题（`## Role` 等）或中文变体（`## 角色` / `## 任务` / `## 背景`
+  / `## 上下文` / `## 语境` / `## 输出` / `## 格式`）下齐全即透传，中文已优化
+  提示词不再重复调用模型；结构校验（`validate.ts`）仍要求英文规范标题，不受影响。
+- 纯提示词与纯函数改动：无新增依赖；`metaPromptTemplate` 自定义模板仍可通过省略
+  新占位符选择不注入（可选块语义不变）。
+
+## [1.1.8] - 2026-08-19
+
+- **四段结构语义规则升级（`sections` 与 `plain` 两套模板同步，中英两版）**：
+  - `## Role` 补推导规则：角色必须与任务强相关——原始指令已明确执行主体时沿用，
+    否则按任务类型与领域推断（如代码任务对应资深工程师、文案对应资深撰稿人），
+    并体现所需专业度；禁止"AI 助手"这类空泛角色。
+  - `## Task` 补完成标准：说明"做到什么程度算完成"（完成定义，DoD）。
+  - `## Context` 措辞统一：信息可来自原始指令或对话上下文，不得虚构新事实，
+    原始指令已含的信息不必重复；信息不足时显式声明假设（与 `contextAware` 的
+    上下文充实规则消除表面矛盾）。
+  - `## Format` 补最小信息集：结构、格式、长度与风格四项须齐全，原始指令未明确
+    的给合理默认（不再只依赖模型自由发挥）。
+  - 输出前自查同步升级：从"标题存在 + 每段有实质内容"扩展到"角色强相关不空泛 +
+    Context 无虚构 + Format 四项齐全"，把校验从结构层推进到语义层（仍为模型侧
+    自查，`validate.ts` 的结构校验不变）。
+- 纯提示词文案与规则调整，无 API/配置变更，无新增依赖；`metaPromptTemplate`
+  自定义模板不受影响（占位符与护栏校验不变）。
+
 ## [1.1.7] - 2026-08-18
 
 - **调用预算（`maxCalls`，默认 4）**：单次优化的模型调用总预算（首次+扩容+重试

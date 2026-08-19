@@ -52,6 +52,11 @@ const DEFAULT_CONFIG: Config = {
   contextAware: false,
   contextMaxMessages: 6,
   contextMaxTokens: 1500,
+  outputLengthMaxTokens: 800,
+  situationProfileLevel: 'full',
+  goalAlignmentRetry: true,
+  optimizationProfile: 'balanced',
+  earlyStop: true,
   cacheEnabled: true,
   cacheMaxEntries: 200,
   cacheTtlMs: 600000,
@@ -65,6 +70,19 @@ function textStream(text: string, finish: StreamChunk = { type: 'finish', reason
     yield { type: 'text-delta', index: 0, text }
     yield finish
   })()
+}
+
+/** Stream each string as one text-delta chunk, then a stop finish. */
+function chunkStream(...chunks: string[]): AsyncIterable<StreamChunk> {
+  return (async function* () {
+    for (const text of chunks) yield { type: 'text-delta', index: 0, text }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  })()
+}
+
+/** Stream a prefix, then a long tail one character at a time (thin-delta tail). */
+function tailStream(prefix: string, tail: string): AsyncIterable<StreamChunk> {
+  return chunkStream(prefix, ...tail.split(''))
 }
 
 interface CtxStub {
@@ -438,6 +456,144 @@ describe('PromptOptimizerService.optimize', () => {
     expect(result.prompt).toBe(FOUR_SECTIONS)
     expect(result.retries).toBe(0)
     expect(state.streamCalls).toHaveLength(0)
+  })
+
+  it('passes through an already-optimized input with Chinese headings', async () => {
+    const state = makeCtx([])
+    const service = makeService(state, { ...DEFAULT_CONFIG, skipIfAlreadyOptimized: true })
+    const chinese = `## 角色
+你是一名资深产品经理。
+
+## 任务
+分析需求并输出 PRD。
+
+## 背景
+面向中小企业，预算有限。
+
+## 输出
+Markdown 文档，不超过 500 字。`
+    const result = await service.optimize(chinese)
+    expect(result.optimized).toBe(true)
+    expect(result.prompt).toBe(chinese)
+    expect(state.streamCalls).toHaveLength(0)
+  })
+
+  it('retries within budget when the output drops a constraint (goal alignment)', async () => {
+    // First output is structurally valid but drops the "500 字" cap; the
+    // second keeps it — the retry must carry the goal diagnosis.
+    const withoutCap = FOUR_SECTIONS.replace('不超过 500 字', '简洁明了')
+    const state = makeCtx([textStream(withoutCap), textStream(FOUR_SECTIONS)])
+    const service = makeService(state, { ...DEFAULT_CONFIG, outputStyle: 'sections' })
+    const result = await service.optimize('目标是生成一份周报，不要超过500字')
+    expect(result.optimized).toBe(true)
+    expect(state.streamCalls).toHaveLength(2)
+    expect(result.retries).toBe(1)
+    expect(state.streamCalls[1].system).toContain('输出丢失了以下目标/约束')
+  })
+
+  it('accepts the misaligned output directly when goalAlignmentRetry is false', async () => {
+    const withoutCap = FOUR_SECTIONS.replace('不超过 500 字', '简洁明了')
+    const state = makeCtx([textStream(withoutCap)])
+    const service = makeService(state, { ...DEFAULT_CONFIG, goalAlignmentRetry: false })
+    const result = await service.optimize('目标是生成一份周报，不要超过500字')
+    expect(result.optimized).toBe(true)
+    expect(state.streamCalls).toHaveLength(1)
+    expect(result.prompt).toContain('简洁明了')
+  })
+
+  it('fast profile skips validation retries (one attempt only)', async () => {
+    const state = makeCtx([textStream(THREE_SECTIONS)])
+    const service = makeService(state, { ...DEFAULT_CONFIG, optimizationProfile: 'fast' })
+    const result = await service.optimize('x')
+    expect(result.optimized).toBe(false)
+    expect(state.streamCalls).toHaveLength(1)
+  })
+
+  it('fast profile skips goal-alignment retries', async () => {
+    const withoutCap = FOUR_SECTIONS.replace('不超过 500 字', '简洁明了')
+    const state = makeCtx([textStream(withoutCap)])
+    const service = makeService(state, { ...DEFAULT_CONFIG, optimizationProfile: 'fast' })
+    const result = await service.optimize('目标是生成一份周报，不要超过500字')
+    expect(result.optimized).toBe(true)
+    expect(state.streamCalls).toHaveLength(1)
+  })
+
+  it('early-stops the stream once the output is valid and the tail is thin', async () => {
+    const state = makeCtx([tailStream(FOUR_SECTIONS, '尾'.repeat(80))])
+    const service = makeService(state, { ...DEFAULT_CONFIG })
+    const result = await service.optimize('x')
+    expect(result.optimized).toBe(true)
+    expect(state.streamCalls).toHaveLength(1)
+    expect(result.prompt).toContain('## Format')
+    // The trailing filler was cut off well before the full tail.
+    expect(result.prompt).not.toContain('尾'.repeat(20))
+  })
+
+  it('keeps consuming while the output still grows (no premature stop)', async () => {
+    const filler = '尾'.repeat(200)
+    const state = makeCtx([chunkStream(FOUR_SECTIONS, filler)])
+    const service = makeService(state, { ...DEFAULT_CONFIG })
+    const result = await service.optimize('x')
+    expect(result.optimized).toBe(true)
+    expect(result.prompt).toContain(filler)
+  })
+
+  it('consumes the full stream when earlyStop is disabled', async () => {
+    const state = makeCtx([tailStream(FOUR_SECTIONS, '尾'.repeat(80))])
+    const service = makeService(state, { ...DEFAULT_CONFIG, earlyStop: false })
+    const result = await service.optimize('x')
+    expect(result.optimized).toBe(true)
+    expect(result.prompt).toContain('尾'.repeat(80))
+  })
+
+  it('injects the goal-drift line into an iterate system prompt', async () => {
+    // The previous prompt carries a constraint the new instruction drops,
+    // so the iterate system must tell the model what changed. The first
+    // output misses the new goal anchor (周报), triggering a retry whose
+    // second output carries it.
+    const last = '## Task\n写周报\n\n## Context\n必须不超过300字'
+    const reportSections = '## Role\n你是一名资深数据分析师。\n\n## Task\n撰写一份面向团队的周报。\n\n## Context\n团队五人，正在推进新版本。\n\n## Format\n300 字以内，Markdown。'
+    const state = makeCtx([textStream(FOUR_SECTIONS), textStream(reportSections)])
+    const service = makeService(state)
+    const result = await service.iterate(last, '目标是生成一份周报')
+    expect(result.optimized).toBe(true)
+    expect(state.streamCalls).toHaveLength(2)
+    expect(state.streamCalls[0].system).toContain('相对上次结果')
+    expect(state.streamCalls[0].system).toContain('目标：目标是生成一份周报')
+  })
+
+  it('carries a registered session goal into a later call (sessionId registry)', async () => {
+    const report = '## Role\n你是一名资深数据分析师。\n\n## Task\n撰写一份面向团队的周报。\n\n## Context\n团队五人，正在推进新版本。\n\n## Format\n500 字以内，Markdown。'
+    const state = makeCtx([textStream(FOUR_SECTIONS), textStream(report), textStream(report)])
+    const service = makeService(state)
+    await service.optimize('目标是生成一份周报，不要超过500字', { sessionId: 's1' })
+    const second = await service.optimize('输出全文', { sessionId: 's1' })
+    expect(second.optimized).toBe(true)
+    // The second call restates no goal, yet the registered goal/constraint
+    // from the first call is injected into the situation block.
+    expect(state.streamCalls[2].system).toContain('目标：目标是生成一份周报')
+    expect(state.streamCalls[2].system).toContain('约束：不要超过500字')
+  })
+
+  it('does not share goals across sessions', async () => {
+    const report = '## Role\n你是一名资深数据分析师。\n\n## Task\n撰写一份面向团队的周报。\n\n## Context\n团队五人，正在推进新版本。\n\n## Format\n500 字以内，Markdown。'
+    const state = makeCtx([textStream(FOUR_SECTIONS), textStream(report), textStream(report)])
+    const service = makeService(state)
+    await service.optimize('目标是生成一份周报，不要超过500字', { sessionId: 's1' })
+    const other = await service.optimize('输出全文', { sessionId: 's2' })
+    expect(other.optimized).toBe(true)
+    expect(state.streamCalls[2].system).not.toContain('目标：目标是生成一份周报')
+  })
+
+  it('includes the situation profile in the start event', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS), textStream(FOUR_SECTIONS)])
+    const service = makeService(state)
+    await service.optimize('目标是生成一份周报')
+    const start = state.emitCalls.find((e) => e.name === 'prompt-optimizer/optimize:start')
+    expect(start).toBeDefined()
+    const payload = start?.payload as { profile?: { version?: number; goal?: { primary?: string } } }
+    expect(payload.profile?.version).toBe(2)
+    expect(payload.profile?.goal?.primary).toContain('周报')
   })
 
   it('honors per-call temperature and maxTokens overrides', async () => {

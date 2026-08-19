@@ -31,3 +31,6 @@ scripts/check-vault.mjs
 
 # Marketplace submission checklist — internal doc, keep out of repo
 MARKETPLACE.md
+
+# WorkBuddy workspace memory (session logs, local notes) — keep local
+.workbuddy/

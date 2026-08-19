@@ -1,15 +1,16 @@
 import type { Context } from '@deepseek-ai/cordis'
-import { createUserMessage, type ContentBlock, type UserMessage } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, type UserMessage } from '@deepseek-ai/dsh-llm'
 import type { Config } from './config.js'
-import { gatherConversationContext } from './context.js'
+import { contextMessageText, gatherConversationContext } from './context.js'
 import type { PromptOptimizerService } from './optimizer.js'
 
-/** Concatenated text of one user message's text blocks (skips tool-result etc.). */
+/**
+ * Concatenated text of one user message's text blocks (skips tool-result etc.).
+ * Delegates to `contextMessageText` — the single shared text-extraction
+ * implementation (kept as a public alias because `index.ts` re-exports it).
+ */
 export function messageText(message: UserMessage): string {
-  return message.content
-    .filter((block): block is Extract<ContentBlock, { type: 'text' }> => block.type === 'text')
-    .map((block) => block.text)
-    .join('')
+  return contextMessageText(message)
 }
 
 /** Whether a message text carries the configured auto-optimize trigger. */

@@ -1,6 +1,7 @@
 import { buildIteratePrompt, buildOptimizePrompt, type MetaLanguage } from './meta.js'
 import type { PromptExample } from './config.js'
 import type { TemplateSet } from './templates.js'
+import type { GoalDrift, SituationProfile, SituationProfileLevel } from './situation.js'
 
 /**
  * The per-call inputs the service maps onto the meta-prompt builders. One
@@ -15,6 +16,10 @@ export interface PromptBuildContext {
   templates: TemplateSet
   /** Optional conversation context (background reference only). */
   context?: string
+  /** Suggested output-length cap in tokens (soft guideline; 0/absent disables). */
+  maxOutputTokens?: number
+  /** Situation-profile injection budget (`situationProfileLevel`). */
+  situationProfileLevel?: SituationProfileLevel
 }
 
 /** Build the system prompt for one `optimize` model call. Pure function. */
@@ -23,6 +28,7 @@ export function buildOptimizeSystem(
   input: string,
   outputLanguage: string,
   diagnosis?: string,
+  profile?: SituationProfile,
 ): string {
   return buildOptimizePrompt(
     input,
@@ -34,6 +40,10 @@ export function buildOptimizeSystem(
     diagnosis,
     ctx.templates,
     ctx.context,
+    undefined,
+    ctx.maxOutputTokens,
+    profile,
+    ctx.situationProfileLevel,
   )
 }
 
@@ -44,6 +54,8 @@ export function buildIterateSystem(
   next: string,
   outputLanguage: string,
   diagnosis?: string,
+  profile?: SituationProfile,
+  drift?: GoalDrift,
 ): string {
   return buildIteratePrompt(
     last,
@@ -56,5 +68,10 @@ export function buildIterateSystem(
     diagnosis,
     ctx.templates,
     ctx.context,
+    undefined,
+    ctx.maxOutputTokens,
+    profile,
+    drift,
+    ctx.situationProfileLevel,
   )
 }

@@ -1,10 +1,37 @@
 /** The four required section headings, in canonical order. */
 export const REQUIRED_SECTIONS = ['Role', 'Task', 'Context', 'Format'] as const
 
+/**
+ * Headings a section may legitimately appear under — the canonical English
+ * name plus common Chinese variants. Used by `hasOptimizedSections` to
+ * recognize an already-optimized prompt regardless of heading language.
+ */
+const SECTION_ALIASES: Record<string, readonly string[]> = {
+  Role: ['Role', '角色'],
+  Task: ['Task', '任务'],
+  Context: ['Context', '背景', '上下文', '语境'],
+  Format: ['Format', '输出', '格式', '输出格式'],
+}
+
 /** Whether every required section heading appears in `text`. */
 export function hasAllSections(text: string): boolean {
   return REQUIRED_SECTIONS.every((section) =>
     new RegExp(`^##\\s*${section}(?:\\s*[:：]|\\s*$)`, 'm').test(text),
+  )
+}
+
+/**
+ * Whether `text` already looks like an optimized prompt: all four required
+ * sections present under their canonical English heading OR a Chinese-variant
+ * heading (`## 角色` / `## 任务` / `## 背景` / `## 输出` etc.). Used by the
+ * `skipIfAlreadyOptimized` pass-through so a re-optimization of an
+ * already-structured prompt (in either language) is skipped.
+ */
+export function hasOptimizedSections(text: string): boolean {
+  return REQUIRED_SECTIONS.every((section) =>
+    SECTION_ALIASES[section].some((alias) =>
+      new RegExp(`^##\\s*${alias}(?:\\s*[:：]|\\s*$)`, 'm').test(text),
+    ),
   )
 }
 
@@ -101,6 +128,33 @@ export function estimateTokens(text: string): number {
 }
 
 /**
+ * Truncate `text` to the longest prefix whose estimated token count is within
+ * `maxTokens` (binary search over the cut point), appending `marker` when cut.
+ * Shared by the instruction guard (`truncateByTokens`) and the conversation
+ * context gatherer — both bound a text block by a token budget.
+ * @param text - the text to bound.
+ * @param maxTokens - the token budget; `<= 0` disables the guard.
+ * @param estimate - token estimator (harness tokenMeter or a heuristic).
+ * @param marker - the cut-marker line appended after the truncated prefix.
+ */
+export function truncateToTokenBudget(
+  text: string,
+  maxTokens: number,
+  estimate: (text: string) => number,
+  marker: string,
+): string {
+  if (maxTokens <= 0 || estimate(text) <= maxTokens) return text
+  let lo = 0
+  let hi = text.length
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2)
+    if (estimate(text.slice(0, mid)) <= maxTokens) lo = mid
+    else hi = mid - 1
+  }
+  return `${text.slice(0, lo)}…\n${marker}`
+}
+
+/**
  * Truncate `input` to the longest prefix whose estimated token count is within
  * `maxTokens` (binary search over the cut point). Appends a marker when cut.
  * @param input - the text to bound.
@@ -112,15 +166,7 @@ export function truncateByTokens(
   maxTokens: number,
   estimate: (text: string) => number,
 ): string {
-  if (maxTokens <= 0 || estimate(input) <= maxTokens) return input
-  let lo = 0
-  let hi = input.length
-  while (lo < hi) {
-    const mid = Math.ceil((lo + hi) / 2)
-    if (estimate(input.slice(0, mid)) <= maxTokens) lo = mid
-    else hi = mid - 1
-  }
-  return `${input.slice(0, lo)}…\n[原始指令已截断：超出 ${maxTokens} token 的部分被忽略]`
+  return truncateToTokenBudget(input, maxTokens, estimate, `[原始指令已截断：超出 ${maxTokens} token 的部分被忽略]`)
 }
 
 /** Stable failure message when the model omits one or more sections. */

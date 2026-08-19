@@ -101,7 +101,9 @@ export interface Config {
   /**
    * When true, an input that already carries the four headings passes through
    * unchanged (no model call — the token-saving default; re-optimizing an
-   * already-optimized prompt costs nothing).
+   * already-optimized prompt costs nothing). Recognized under the canonical
+   * English headings or their Chinese variants (`## 角色` / `## 任务` /
+   * `## 背景` / `## 输出` etc., see `hasOptimizedSections`).
    */
   skipIfAlreadyOptimized: boolean
   /**
@@ -142,6 +144,49 @@ export interface Config {
    * default keeps context background-sized (most short discussions fit).
    */
   contextMaxTokens: number
+  /**
+   * Suggested upper bound for the length of the optimized prompt (in tokens),
+   * injected into the role document as a soft guideline — the model aims to
+   * stay within it but nothing is rejected or retried when it exceeds. `0`
+   * disables the hint. Distinct from `maxTokens` (the hard per-call output
+   * cap of the model call).
+   */
+  outputLengthMaxTokens: number
+  /**
+   * Injection budget for the situation profile (`{{情境画像}}` block):
+   * `'full'` (default) injects role + goal + constraints (and the iteration
+   * drift line), `'minimal'` injects goal/constraints only (no role signals,
+   * leaner), `'off'` injects nothing. Only controls the situation block —
+   * the `{{任务类型}}` hint is unaffected.
+   */
+  situationProfileLevel: 'off' | 'minimal' | 'full'
+  /**
+   * Whether a goal-alignment miss consumes a validation retry (latency
+   * optimization P0-2). `true` (default) keeps the situation layer's retry:
+   * when the output drops the instruction's goal/constraint and retry budget
+   * remains, fold the misalignment into the diagnosis and retry. `false`
+   * accepts the structurally-valid output as-is — saves the retry call at
+   * the cost of goal fidelity. `optimizationProfile: 'fast'` forces `false`.
+   */
+  goalAlignmentRetry: boolean
+  /**
+   * Latency/speed profile (latency optimization P1-2). `'balanced'` (default)
+   * keeps every quality gate (validation retries, goal-alignment retries,
+   * self-refine). `'fast'` trades corrective calls for time: validation
+   * retries and goal-alignment retries are skipped and `selfRefine` is
+   * disabled — the output is accepted after the first structurally-valid
+   * attempt, so worst-case latency drops at the cost of more rework.
+   */
+  optimizationProfile: 'balanced' | 'fast'
+  /**
+   * Early-stop the stream once the output is structurally valid and enters
+   * its tail (latency optimization P1-1). `true` (default) stops consuming
+   * tokens when the four sections (or plain content) pass validation and the
+   * stream keeps producing little new content — saves tail-token latency
+   * without touching the structural checks. `false` always consumes the
+   * full stream.
+   */
+  earlyStop: boolean
   /**
    * Template set id for the optimizer role documents. `'default'` (the only
    * built-in) uses the shipped skeletons; unknown ids fail the load loudly.
@@ -197,6 +242,11 @@ export const Config: z<Config> = z.object({
   contextAware: z.boolean().default(true),
   contextMaxMessages: z.number().step(1).min(0).max(100).default(6),
   contextMaxTokens: z.number().step(1).min(0).max(200000).default(800),
+  outputLengthMaxTokens: z.number().step(1).min(0).max(200000).default(800),
+  situationProfileLevel: z.union(['off', 'minimal', 'full']).default('full'),
+  goalAlignmentRetry: z.boolean().default(true),
+  optimizationProfile: z.union(['balanced', 'fast']).default('balanced'),
+  earlyStop: z.boolean().default(true),
   templateId: z.string().default('default'),
   metaPromptTemplate: z.object({
     optimizeZh: z.string(),
