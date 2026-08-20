@@ -175,7 +175,7 @@ export function registerOptimizeCommand(ctx: Context, service: PromptOptimizerSe
       }
       const subtype = matchScene(arg)
       if (subtype === undefined) {
-        return { kind: 'error', text: `prompt-optimize: 未识别场景 "${arg}"；支持：周报/邮件/文案/翻译/创作/数据分析/研究/评估/预测/bug修复/新功能/重构/审查/脚本/部署/安装/排查/运维` }
+        return { kind: 'error', text: `prompt-optimize: 未识别场景 "${arg}"；支持：周报/邮件/文案/翻译/创作/润色/简历/演讲/数据分析/研究/评估/预测/bug修复/新功能/重构/审查/脚本/部署/安装/排查/运维` }
       }
       const en = service.getMetaPromptLanguage() === 'en'
       return { kind: 'success', text: renderSceneTemplate(subtype, en) }

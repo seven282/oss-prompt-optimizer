@@ -447,6 +447,9 @@ describe('detectTaskType', () => {
 
   it('detects operations tasks', () => {
     expect(detectTaskType('把服务部署到服务器并启动')).toBe('ops')
+    // 1.5.2 断链修复：纯"部署/发布"指令不再被误判 other（TASK_KEYWORDS.ops 补词）
+    expect(detectTaskType('帮我部署一个服务')).toBe('ops')
+    expect(detectTaskType('发布到生产环境')).toBe('ops')
   })
 
   it('detects writing tasks', () => {
@@ -546,8 +549,12 @@ describe('task subtype hint ({{任务类型}} 子类)', () => {
     expect(prompt).toContain('子类提示：该指令属于【bug 修复】类任务')
   })
 
+  it('emits a subtype hint for polish/rewrite (1.5.2 new subtype)', () => {
+    expect(buildOptimizePrompt('帮我润色一下这段文字')).toContain('子类提示：该指令属于【润色/改写】类任务')
+  })
+
   it('emits no subtype hint for an undetectable subcategory', () => {
-    expect(buildOptimizePrompt('帮我润色一下这段文字')).not.toContain('子类提示')
+    expect(buildOptimizePrompt('帮我安排一下会议')).not.toContain('子类提示')
   })
 })
 

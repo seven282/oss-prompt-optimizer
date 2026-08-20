@@ -216,7 +216,7 @@ export function archetypeLabel(type: TaskType, en: boolean): string | undefined 
 /** Two-level subcategory keys (globally unique, prefixed by task category). */
 export type TaskSubtype =
   | 'code-bugfix' | 'code-feature' | 'code-refactor' | 'code-review' | 'code-script'
-  | 'writing-report' | 'writing-email' | 'writing-copy' | 'writing-translate' | 'writing-creative'
+  | 'writing-report' | 'writing-email' | 'writing-copy' | 'writing-translate' | 'writing-creative' | 'writing-polish' | 'writing-resume' | 'writing-speech'
   | 'analysis-data' | 'analysis-research' | 'analysis-review' | 'analysis-forecast'
   | 'ops-deploy' | 'ops-install' | 'ops-troubleshoot' | 'ops-maintain'
 
@@ -232,14 +232,17 @@ const TASK_SUBTYPES: Record<Exclude<TaskType, 'other'>, readonly { key: TaskSubt
   writing: [
     { key: 'writing-report', zh: '报告/总结', en: 'report/summary', keywords: ['周报', '日报', '报告', '总结', '复盘', '汇报', '简报', 'report'] },
     { key: 'writing-email', zh: '邮件', en: 'email', keywords: ['邮件', 'email', '写信', '回信'] },
-    { key: 'writing-copy', zh: '文案/营销', en: 'copywriting', keywords: ['文案', '营销', '广告', '宣传', '口号', 'slogan', '推广', '公众号', '标题'] },
+    { key: 'writing-copy', zh: '文案/营销', en: 'copywriting', keywords: ['文案', '营销', '广告', '宣传', '口号', 'slogan', '推广', '公众号', '标题', '新闻稿', '博客'] },
     { key: 'writing-translate', zh: '翻译', en: 'translation', keywords: ['翻译', '译成', 'translate'] },
     { key: 'writing-creative', zh: '创作', en: 'creative writing', keywords: ['故事', '小说', '诗', '剧本', '散文'] },
+    { key: 'writing-polish', zh: '润色/改写', en: 'polish/rewrite', keywords: ['润色', '改写', '修改措辞', '优化表达', '回复', '摘要', '缩写', 'polish', 'rewrite'] },
+    { key: 'writing-resume', zh: '简历', en: 'resume', keywords: ['简历', '自我介绍', '求职', 'resume', 'cv'] },
+    { key: 'writing-speech', zh: '演讲/讲稿', en: 'speech', keywords: ['演讲', '讲稿', '致辞', '发言', '演示稿', 'speech', 'presentation'] },
   ],
   analysis: [
     { key: 'analysis-data', zh: '数据分析', en: 'data analysis', keywords: ['数据', '统计', '指标', '趋势', '图表', '报表'] },
     { key: 'analysis-research', zh: '研究/调研', en: 'research', keywords: ['研究', '调研', '资料', '文献', '调查'] },
-    { key: 'analysis-review', zh: '评估/审查', en: 'evaluation/review', keywords: ['评估', '对比', '比较', '审查', '复盘', '评价'] },
+    { key: 'analysis-review', zh: '评估/审查', en: 'evaluation/review', keywords: ['评估', '对比', '比较', '审查', '复盘', '评价', '解读', '方案', '洞察'] },
     { key: 'analysis-forecast', zh: '预测', en: 'forecasting', keywords: ['预测', '预估', '走势', '前景'] },
   ],
   ops: [

@@ -144,6 +144,10 @@ describe('detectTaskSubtype (two-level classification)', () => {
     expect(detectTaskSubtype('写一篇周报', 'writing')).toBe('writing-report')
     expect(detectTaskSubtype('把这段翻译成英文', 'writing')).toBe('writing-translate')
     expect(detectTaskSubtype('写一个公众号文案', 'writing')).toBe('writing-copy')
+    expect(detectTaskSubtype('帮我润色这段文字', 'writing')).toBe('writing-polish')
+    expect(detectTaskSubtype('写一份求职简历', 'writing')).toBe('writing-resume')
+    expect(detectTaskSubtype('帮我写个演讲讲稿', 'writing')).toBe('writing-speech')
+    expect(detectTaskSubtype('写一篇新闻稿', 'writing')).toBe('writing-copy')
   })
 
   it('classifies analysis and ops subcategories', () => {

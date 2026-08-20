@@ -48,7 +48,7 @@ export type TaskType = 'code' | 'writing' | 'analysis' | 'ops' | 'other'
 const TASK_KEYWORDS: Record<Exclude<TaskType, 'other'>, readonly string[]> = {
   code: ['代码', '编程', '开发', '函数', '接口', '脚本', '程序', '编译', '调试', 'bug', '报错', '测试用例', '前端', '后端', 'api', 'sql', '数据库', '正则', '框架', 'docker', '命令行', 'bash', 'python', 'javascript', 'typescript', '算法', '重构', 'code', 'refactor', 'script', 'function', 'debug', 'compile'],
   analysis: ['分析', '研究', '评估', '对比', '比较', '预测', '趋势', '数据', '统计', '指标', '原因', '影响', '调研', '审查', '复盘', '解读', '方案', '洞察'],
-  ops: ['运行', '执行', '操作', '启动', '停止', '安装', '配置', '运维', '监控', '备份', '恢复', '迁移', '排查', '修复', '步骤', '命令'],
+  ops: ['运行', '执行', '操作', '启动', '停止', '安装', '配置', '运维', '监控', '备份', '恢复', '迁移', '排查', '修复', '步骤', '命令', '部署', '发布', '上线', 'deploy', 'release'],
   writing: ['写', '撰写', '文案', '文章', '报告', '邮件', '总结', '摘要', '标题', '润色', '翻译', '改写', '回复', '宣传', '营销', '广告', '故事', '小说', '诗', '周报', '日报', '简历', '演讲', '新闻稿', '博客', '公众号', 'write', 'report', 'email', 'article', 'summary', 'translate'],
 }
 
@@ -173,6 +173,18 @@ const SUB_TOPIC_TEMPLATES: Record<TaskSubtype, { zh: string; en: string }> = {
   'writing-creative': {
     zh: '场景骨架：Role 创作者；Task 题材→风格→结构；Format 篇幅 + 分节。',
     en: 'Scene skeleton: Role writer; Task genre → style → structure; Format length + sections.',
+  },
+  'writing-polish': {
+    zh: '场景骨架：Role 编辑；Task 保义→调语气→顺表达；Format 修改前后对照 + 改动理由。',
+    en: 'Scene skeleton: Role editor; Task keep meaning → adjust tone → smooth wording; Format before/after + reasons.',
+  },
+  'writing-resume': {
+    zh: '场景骨架：Role 职业顾问；Task 经历→量化→匹配岗位；Format 结构 + 要点 + 篇幅限制。',
+    en: 'Scene skeleton: Role career advisor; Task experience → quantify → match the role; Format structure + bullets + length cap.',
+  },
+  'writing-speech': {
+    zh: '场景骨架：Role 演讲稿作者；Task 主题→结构→口语化；Format 分节 + 时长。',
+    en: 'Scene skeleton: Role speechwriter; Task theme → structure → spoken style; Format sections + duration.',
   },
   'analysis-data': {
     zh: '场景骨架：Role 数据分析师；Task 清洗→指标→趋势→结论；Format 结论先行 + 图表/数据支撑。',

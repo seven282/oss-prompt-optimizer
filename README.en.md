@@ -96,7 +96,7 @@ Once enabled, the host enters "optimize before sending" mode: the `agent/pre-ste
 
 ## Quick scene templates (/template)
 
-`/template <scene>` returns a ready-to-fill four-section template (Role / Task / Context / Format skeleton with placeholders) — **no model call, zero latency/cost** — for common scenes like a weekly report, email, copy, translation, data analysis, deployment checklist, etc. Covers all 18 subcategories (zh/en scene names and keywords matched); for personalized needs use `/optimize` (1.5.1).
+`/template <scene>` returns a ready-to-fill four-section template (Role / Task / Context / Format skeleton with placeholders) — **no model call, zero latency/cost** — for common scenes like a weekly report, email, copy, translation, data analysis, deployment checklist, etc. Covers all 21 subcategories (zh/en scene names and keywords matched; polish/resume/speech added in 1.5.2); for personalized needs use `/optimize` (1.5.1).
 
 ## Auto-optimize hook
 
