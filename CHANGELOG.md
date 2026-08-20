@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.4.7] - 2026-08-20
+
+- **四区块详略动态调配（C-1 + B-1，meta.ts 模板文案，中英同步）**：
+  - C-1 区块侧重提示：`{{任务类型}}` 行新增「区块侧重」——按 4 类任务明确
+    详略导向（code/ops：Task+Format 强化、Role 简洁；writing：Role+Context
+    强化；analysis：Task+Context 强化、Format 结论先行），与既有「角色写法
+    建议」行并列；**区块侧重用"X 段"表述（无 `##` 前缀）**，避免污染 plain
+    模式（plain 禁标题，sections 下语义等价）。
+  - B-1 Context 极简规则：Context 规则补"无额外背景或约束时可写'无额外背景，
+    按通用标准执行'，不必硬凑信息"（对齐 1.3.8 假设防制与 ADR-009 无信号零
+    注入；sections/plain 中英）。
+  - 背景：四区块保持骨架固定（契约），详略通过任务类型感知动态调配——
+    依据知识库 ADR-009 / 1.3.5 任务类型映射 / situation.md「Format 贴合任务」。
+- 测试 374 全绿（typecheck / test / build）。
+
 ## [1.4.6] - 2026-08-20
 
 - **输入侧成本可观测 + 内置示例开关（省 token 定向优化）**：

@@ -88,18 +88,18 @@ export function detectTaskType(input: string): TaskType {
 
 /** Per-category role/format hints injected as the `{{任务类型}}` block (zh). */
 const TASKTYPE_ZH: Record<Exclude<TaskType, 'other'>, string> = {
-  code: '任务类型提示：该指令检测为编程/开发类任务——角色定位应偏向相关领域的资深技术专家（如资深工程师、架构师），并在输出中明确输出语言、代码可运行性与必要的注释要求。\n角色写法建议：偏向能力导向——用"精通/熟悉/擅长…"描述技术栈与专长，比单纯"你是工程师"更可执行；能力陈述保持简短（一句为限）、与任务直接相关，不展开完整技术栈清单。',
-  writing: '任务类型提示：该指令检测为写作/文案类任务——角色定位应偏向对应领域的资深撰稿人或编辑，并在输出中明确文体、篇幅、语气与目标读者。\n角色写法建议：偏向身份＋文体——给出身份（如"资深撰稿人"），并明确文体、篇幅与语气。',
-  analysis: '任务类型提示：该指令检测为分析/研究类任务——角色定位应偏向分析师或研究员，并在输出中明确结论先行、给出依据与数据来源、说明分析维度。\n角色写法建议：偏向身份＋方法——给出身份（如"分析师/研究员"），并说明分析方法（如"结论先行、数据支撑"）。',
-  ops: '任务类型提示：该指令检测为执行/操作类任务——角色定位应偏向执行者或运维角色，并在输出中明确步骤顺序、前置条件与完成检查。\n角色写法建议：偏向行为约束＋步骤——说明执行边界与步骤顺序（如"先确认环境、按清单操作、完成后自检"）。',
+  code: '任务类型提示：该指令检测为编程/开发类任务——角色定位应偏向相关领域的资深技术专家（如资深工程师、架构师），并在输出中明确输出语言、代码可运行性与必要的注释要求。\n角色写法建议：偏向能力导向——用"精通/熟悉/擅长…"描述技术栈与专长，比单纯"你是工程师"更可执行；能力陈述保持简短（一句为限）、与任务直接相关，不展开完整技术栈清单。\n区块侧重：Task 段与 Format 段强化（可运行性、交付物），Role 段一句简洁带过。',
+  writing: '任务类型提示：该指令检测为写作/文案类任务——角色定位应偏向对应领域的资深撰稿人或编辑，并在输出中明确文体、篇幅、语气与目标读者。\n角色写法建议：偏向身份＋文体——给出身份（如"资深撰稿人"），并明确文体、篇幅与语气。\n区块侧重：Role 段与 Context 段强化（身份、受众、语气），Format 段保留。',
+  analysis: '任务类型提示：该指令检测为分析/研究类任务——角色定位应偏向分析师或研究员，并在输出中明确结论先行、给出依据与数据来源、说明分析维度。\n角色写法建议：偏向身份＋方法——给出身份（如"分析师/研究员"），并说明分析方法（如"结论先行、数据支撑"）。\n区块侧重：Task 段与 Context 段强化（方法、数据来源），Format 段结论先行。',
+  ops: '任务类型提示：该指令检测为执行/操作类任务——角色定位应偏向执行者或运维角色，并在输出中明确步骤顺序、前置条件与完成检查。\n角色写法建议：偏向行为约束＋步骤——说明执行边界与步骤顺序（如"先确认环境、按清单操作、完成后自检"）。\n区块侧重：Task 段与 Format 段强化（步骤、命令、回滚），Role 段简洁。',
 }
 
 /** Per-category role/format hints injected as the `{{任务类型}}` block (en). */
 const TASKTYPE_EN: Record<Exclude<TaskType, 'other'>, string> = {
-  code: 'Task-type hint: this instruction is detected as a coding/development task — lean the role toward a senior technical expert (e.g. senior engineer, architect), and make the output explicit about the language, runnability of the code, and any required comments.\nRole-writing tip: lean capability-oriented — describe the stack and expertise with "proficient in / skilled at / familiar with…" rather than a bare "you are an engineer"; keep the capability statement brief (one sentence), directly relevant to the task, and free of a full technology-stack list.',
-  writing: 'Task-type hint: this instruction is detected as a writing task — lean the role toward a senior writer or editor for the domain, and make the output explicit about the genre, length, tone, and target reader.\nRole-writing tip: lean identity + genre — name the persona (e.g. "senior copywriter") and be explicit about genre, length and tone.',
-  analysis: 'Task-type hint: this instruction is detected as an analysis/research task — lean the role toward an analyst or researcher, and make the output explicit about leading with conclusions, citing evidence and data sources, and listing the analysis dimensions.\nRole-writing tip: lean identity + method — name the persona (e.g. "analyst / researcher") and the analysis approach (e.g. "lead with conclusions, back them with data").',
-  ops: 'Task-type hint: this instruction is detected as an execution/operations task — lean the role toward an executor or ops persona, and make the output explicit about step order, prerequisites, and completion checks.\nRole-writing tip: lean behavior + steps — state execution boundaries and step order (e.g. "verify the environment first, follow the checklist, self-check when done").',
+  code: 'Task-type hint: this instruction is detected as a coding/development task — lean the role toward a senior technical expert (e.g. senior engineer, architect), and make the output explicit about the language, runnability of the code, and any required comments.\nRole-writing tip: lean capability-oriented — describe the stack and expertise with "proficient in / skilled at / familiar with…" rather than a bare "you are an engineer"; keep the capability statement brief (one sentence), directly relevant to the task, and free of a full technology-stack list.\nSection emphasis: strengthen the Task and Format sections (runnability, deliverable); keep the Role section to one concise sentence.',
+  writing: 'Task-type hint: this instruction is detected as a writing task — lean the role toward a senior writer or editor for the domain, and make the output explicit about the genre, length, tone, and target reader.\nRole-writing tip: lean identity + genre — name the persona (e.g. "senior copywriter") and be explicit about genre, length and tone.\nSection emphasis: strengthen the Role and Context sections (persona, audience, tone); keep the Format section.',
+  analysis: 'Task-type hint: this instruction is detected as an analysis/research task — lean the role toward an analyst or researcher, and make the output explicit about leading with conclusions, citing evidence and data sources, and listing the analysis dimensions.\nRole-writing tip: lean identity + method — name the persona (e.g. "analyst / researcher") and the analysis approach (e.g. "lead with conclusions, back them with data").\nSection emphasis: strengthen the Task and Context sections (method, data source); lead the Format section with the conclusion.',
+  ops: 'Task-type hint: this instruction is detected as an execution/operations task — lean the role toward an executor or ops persona, and make the output explicit about step order, prerequisites, and completion checks.\nRole-writing tip: lean behavior + steps — state execution boundaries and step order (e.g. "verify the environment first, follow the checklist, self-check when done").\nSection emphasis: strengthen the Task and Format sections (steps, commands, rollback); keep the Role section concise.',
 }
 
 /** Section-style structure paragraph (the default output shape). */
@@ -109,13 +109,13 @@ const STRUCTURE_SECTIONS = `段落结构：
 - 全局：正文按句断行——每句或每个要点独占一行，段落间空一行；避免超长单行。
 - ## Role：设定与任务强相关的具体角色（「身份＋能力＋行为」三要素；不必以"你是"开头；能力或行为约束更可执行）。指令已明确执行主体则沿用，否则按任务类型与领域推断（代码→资深工程师、文案→资深撰稿人），体现所需专业度；能力陈述简短、不重复 Task；避免空泛角色。
 - ## Task：用明确动词描述任务，必要时拆成可执行步骤；目标具体、可衡量；说明完成标准。
-- ## Context：补充背景、约束、目标受众与质量标准；不虚构事实，不重复指令已含信息；仅信息确实缺失时声明假设。
+- ## Context：补充背景、约束、目标受众与质量标准；不虚构事实，不重复指令已含信息；仅信息确实缺失时声明假设；无额外背景或约束时可写"无额外背景，按通用标准执行"，不必硬凑信息。
 - ## Format：规定输出结构、格式、长度与风格（四项齐全，未明确的给合理默认）；保留指令中的格式与长度要求；输出分类与 Task 维度一一对应、顺序一致。`
 
 /** Plain-style structure paragraph (no headings, continuous prose). */
 const STRUCTURE_PLAIN = `输出结构：
 - 输出必须是一段完整、连贯、可直接交给 AI 执行的提示词正文。
-- 正文依次覆盖：角色定位（与任务强相关、避免空泛；"身份＋能力＋行为"三要素，不必以"你是"开头）、任务与步骤（含完成标准）、背景与约束（不虚构事实，仅信息缺失时声明假设）、输出格式与长度（未明确处给合理默认）。
+- 正文依次覆盖：角色定位（与任务强相关、避免空泛；"身份＋能力＋行为"三要素，不必以"你是"开头）、任务与步骤（含完成标准）、背景与约束（不虚构事实，仅信息缺失时声明假设；无额外信息时一句带过）、输出格式与长度（未明确处给合理默认）。
 - 正文必须精炼——删重复表述、空话与无意义假设，每条信息一句为限；输出分类与任务维度一一对应、顺序一致。
 - 正文按句断行——每句或每个要点一行，段落间空一行；避免超长单行。
 - 严禁使用任何小节标题（如 ##、###）或"角色：""任务："等字段标签——即使需要分点，也用普通段落或列表，绝不输出标题行。`
@@ -133,13 +133,13 @@ const STRUCTURE_SECTIONS_EN = `Section structure:
 - Global: break lines by sentence — each sentence or bullet on its own line, with a blank line between paragraphs; avoid overlong single lines.
 - ## Role: set a specific role strongly tied to the task, using the "identity + capability + behavior" formula — no need to start with "you are", and a capability or behavior clause is equally valid and often more actionable. Reuse an explicit executor from the instruction when present; otherwise infer one from the task type and domain (e.g. senior engineer for coding, senior copywriter for writing), reflecting the required expertise; keep capability statements brief and free of requirements already covered in ## Task; avoid generic roles like "AI assistant".
 - ## Task: describe the task with clear verbs, breaking it into executable steps when necessary; the goal must be specific and measurable; state the completion criteria.
-- ## Context: add background, constraints, target audience, and quality standards; never invent facts or repeat what the instruction already states; state assumptions only when information is genuinely missing.
+- ## Context: add background, constraints, target audience, and quality standards; never invent facts or repeat what the instruction already states; state assumptions only when information is genuinely missing; when there is no extra background or constraints, write "no extra context — apply general standards" instead of padding.
 - ## Format: specify the output structure, format, length, and style (all four, with reasonable defaults where unspecified); keep any format/length requirements from the instruction; the output categories must mirror the dimensions required in ## Task, in the same order.`
 
 /** English plain-style structure paragraph (no headings, continuous prose). */
 const STRUCTURE_PLAIN_EN = `Output structure:
 - The output must be a complete, coherent prompt body ready to hand directly to an AI for execution.
-- The body must cover, in order: the role (strongly tied to the task, not generic; prefer the "identity + capability + behavior" formula — "you are" is optional), the task and its steps (including completion criteria), necessary background and constraints (no invented facts; state assumptions only when information is missing), and the output format and length (with reasonable defaults where unspecified).
+- The body must cover, in order: the role (strongly tied to the task, not generic; prefer the "identity + capability + behavior" formula — "you are" is optional), the task and its steps (including completion criteria), necessary background and constraints (no invented facts; state assumptions only when information is missing; skip padding when nothing extra applies), and the output format and length (with reasonable defaults where unspecified).
 - The body must be concise — drop repeated statements, filler, and meaningless assumptions; keep every piece of information to one sentence; the output categories must mirror the dimensions required by the task, in the same order.
 - Break lines by sentence — each sentence or bullet on its own line, with a blank line between paragraphs; avoid overlong single lines.
 - Never use any subsection headings (such as ## or ###) or field labels like "Role:" or "Task:" — even when breaking the content into points, use plain paragraphs or lists, never heading lines.`
