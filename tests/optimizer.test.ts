@@ -68,6 +68,7 @@ const DEFAULT_CONFIG: Config = {
   earlyStopTailChunks: 12,
   earlyStopTailGrowth: 48,
   builtinExamples: true,
+  dreamInsightFeedback: false,
 }
 
 /** Build a text-only chunk stream (delta-only, tolerated by BlockAssembler). */
@@ -1197,5 +1198,28 @@ describe('PromptOptimizerService custom templates', () => {
     const state = makeCtx([])
     expect(() => makeService(state, { ...DEFAULT_CONFIG, templateId: 'custom' }))
       .toThrow(/unknown templateId "custom"/)
+  })
+})
+
+describe('dream insight feedback (1.4.9)', () => {
+  it('carries the senseNeeds appendix into the next call of the same session', async () => {
+    const insight = '--- 延伸洞察（AI 推断，供你选用，非事实）---\n· 深层目标：得到可直接落地的方案\n· 隐含约束：不引入新依赖'
+    const state = makeCtx([textStream(`${FOUR_SECTIONS}\n\n${insight}`), textStream(FOUR_SECTIONS)])
+    const service = makeService(state, { ...DEFAULT_CONFIG, dreamInsightFeedback: true })
+    const first = await service.optimize('帮我写方案', { sessionId: 's1', senseNeeds: true })
+    expect(first.optimized).toBe(true)
+    const second = await service.optimize('继续细化', { sessionId: 's1' })
+    expect(second.optimized).toBe(true)
+    // 第二次调用（同 session、非 senseNeeds）system 应携带上一轮洞察回填
+    expect(state.streamCalls[1].system).toContain('延伸洞察')
+  })
+
+  it('does not inject dream insights when feedback is off', async () => {
+    const insight = '--- 延伸洞察（AI 推断，供你选用，非事实）---\n· 深层目标：目标'
+    const state = makeCtx([textStream(`${FOUR_SECTIONS}\n\n${insight}`), textStream(FOUR_SECTIONS)])
+    const service = makeService(state, { ...DEFAULT_CONFIG, dreamInsightFeedback: false })
+    await service.optimize('帮我写方案', { sessionId: 's1', senseNeeds: true })
+    await service.optimize('继续细化', { sessionId: 's1' })
+    expect(state.streamCalls[1].system).not.toContain('延伸洞察')
   })
 })

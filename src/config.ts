@@ -212,6 +212,13 @@ export interface Config {
    */
   builtinExamples: boolean
   /**
+   * Dream-insight feedback (1.4.9): when a session run with `senseNeeds`
+   * produced a `--- 延伸洞察 ---` appendix, keep it per session and inject it
+   * into later optimize/iterate calls (marked as AI-inferred, non-fact).
+   * Off by default — opt in to turn one-shot 造梦 mode into cross-turn context.
+   */
+  dreamInsightFeedback: boolean
+  /**
    * Template set id for the optimizer role documents. `'default'` (the only
    * built-in) uses the shipped skeletons; unknown ids fail the load loudly.
    * Custom skeletons come from `metaPromptTemplate`.
@@ -279,6 +286,7 @@ export const Config: z<Config> = z.object({
   optimizationProfile: z.union(['balanced', 'fast']).default('balanced'),
   earlyStop: z.boolean().default(false),
   builtinExamples: z.boolean().default(true),
+  dreamInsightFeedback: z.boolean().default(false),
   templateId: z.string().default('default'),
   metaPromptTemplate: z.object({
     optimizeZh: z.string(),

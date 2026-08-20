@@ -59,6 +59,7 @@ const DEFAULT_CONFIG: Config = {
   earlyStopTailChunks: 12,
   earlyStopTailGrowth: 48,
   builtinExamples: true,
+  dreamInsightFeedback: false,
 }
 
 function textStream(text: string): AsyncIterable<StreamChunk> {

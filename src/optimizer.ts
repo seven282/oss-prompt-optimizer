@@ -107,6 +107,7 @@ const CONFIG_KEYS = new Set([
   'earlyStopTailChunks',
   'earlyStopTailGrowth',
   'builtinExamples',
+  'dreamInsightFeedback',
   'metaPromptLanguage',
   'autoOptimize',
   'autoOptimizePrefix',
@@ -411,6 +412,25 @@ export class PromptOptimizerService extends Service {
   private readonly goalRegistry = new Map<string, { goal: GoalProfile; ts: number }>()
 
   /**
+   * Dream-insight feedback registry (1.4.9): sessionId → the raw
+   * `--- 延伸洞察 ---` appendix of the last `senseNeeds` run, so a later
+   * optimize/iterate in the same session can carry the AI-inferred insights
+   * forward (marked as non-fact). TTL 30 min like the goal registry.
+   */
+  private readonly dreamInsightRegistry = new Map<string, { insights: string; ts: number }>()
+
+  /**
+   * Extract the `--- 延伸洞察（AI 推断，供你选用，非事实）---` appendix from a
+   * senseNeeds result (the text after the marker, trimmed). Pure function.
+   */
+  private extractDreamInsights(prompt: string): string | undefined {
+    const idx = prompt.indexOf('--- 延伸洞察')
+    if (idx < 0) return undefined
+    const insights = prompt.slice(idx).trim()
+    return insights.length > 0 ? insights : undefined
+  }
+
+  /**
    * Merge the session's registered goal into the current instruction's
    * profile and refresh the registry (P2). Fallback semantics — the current
    * instruction wins whenever it states something; previously-stated goals
@@ -481,6 +501,19 @@ export class PromptOptimizerService extends Service {
    */
   private withSenseNeeds(system: string, senseNeeds: boolean, metaLanguage: MetaLanguage): string {
     return senseNeeds ? system + senseNeedsBlock(metaLanguage) : system
+  }
+
+  /**
+   * Dream-insight feedback (1.4.9): when enabled and the session has a saved
+   * `--- 延伸洞察 ---` appendix from an earlier `senseNeeds` run, append it to
+   * this call's system — the AI-inferred insights carry across turns (marked
+   * as non-fact, reference only). Off by default.
+   */
+  private withDreamFeedback(system: string, sessionId: string | undefined): string {
+    if (!this.config.dreamInsightFeedback || sessionId === undefined) return system
+    const entry = this.dreamInsightRegistry.get(sessionId)
+    if (entry === undefined) return system
+    return system + `\n\n--- 上一轮 AI 推断洞察（dream 回填，供参考，非事实）---\n${entry.insights}\n`
   }
 
   /**
@@ -676,10 +709,13 @@ export class PromptOptimizerService extends Service {
     }
     const result = await this.runPipeline(
       (outputLanguage, diagnosis) =>
-        this.withSenseNeeds(
-          buildOptimizeSystem(this.promptContext(metaLanguage, options.context), input, outputLanguage, diagnosis, profile),
-          senseNeeds,
-          metaLanguage,
+        this.withDreamFeedback(
+          this.withSenseNeeds(
+            buildOptimizeSystem(this.promptContext(metaLanguage, options.context), input, outputLanguage, diagnosis, profile),
+            senseNeeds,
+            metaLanguage,
+          ),
+          options.sessionId,
         ),
       rawInput,
       options,
@@ -689,6 +725,14 @@ export class PromptOptimizerService extends Service {
     )
     if (result.optimized && cacheKey !== undefined) {
       this.cache.set(cacheKey, { result: cloneOptimizeResult(result), input, context: options.context })
+    }
+    // Dream-insight feedback storage (1.4.9): keep the senseNeeds appendix per
+    // session so later calls can carry the AI-inferred insights forward.
+    if (result.optimized && options.sessionId !== undefined && this.config.dreamInsightFeedback) {
+      const insights = this.extractDreamInsights(result.prompt)
+      if (insights !== undefined) {
+        this.dreamInsightRegistry.set(options.sessionId, { insights, ts: Date.now() })
+      }
     }
     this.emitCompleted('optimize', rawInput, result, Date.now() - startedAt)
     return result
@@ -751,10 +795,13 @@ export class PromptOptimizerService extends Service {
     }
     const result = await this.runPipeline(
       (outputLanguage, diagnosis) =>
-        this.withSenseNeeds(
-          buildIterateSystem(this.promptContext(metaLanguage, options.context), last, next, outputLanguage, diagnosis, nextProfile, drift),
-          senseNeeds,
-          metaLanguage,
+        this.withDreamFeedback(
+          this.withSenseNeeds(
+            buildIterateSystem(this.promptContext(metaLanguage, options.context), last, next, outputLanguage, diagnosis, nextProfile, drift),
+            senseNeeds,
+            metaLanguage,
+          ),
+          options.sessionId,
         ),
       lastOptimized,
       options,

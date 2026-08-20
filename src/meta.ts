@@ -102,6 +102,31 @@ const TASKTYPE_EN: Record<Exclude<TaskType, 'other'>, string> = {
   ops: 'Task-type hint: this instruction is detected as an execution/operations task — lean the role toward an executor or ops persona, and make the output explicit about step order, prerequisites, and completion checks.\nRole-writing tip: lean behavior + steps — state execution boundaries and step order (e.g. "verify the environment first, follow the checklist, self-check when done").\nSection emphasis: strengthen the Task and Format sections (steps, commands, rollback); keep the Role section concise.',
 }
 
+/**
+ * Role library (1.4.9): one ready-to-use "identity + capability + behavior"
+ * reference per task category. Injected alongside the `{{任务类型}}` hints so
+ * the model has a concrete role fallback when the situation profile carries
+ * no explicit role (low-confidence cases) — never injected into the profile.
+ */
+const ROLE_LIBRARY: Record<Exclude<TaskType, 'other'>, { zh: string; en: string }> = {
+  code: {
+    zh: '角色参考：资深工程师，精通 Python/TypeScript，先保证可运行再优化、代码附必要注释。',
+    en: 'Role reference: senior engineer, proficient in Python/TypeScript; make it run first, then optimize; annotate where needed.',
+  },
+  writing: {
+    zh: '角色参考：资深撰稿人，擅长公文/营销/技术写作，按文体控制语气与篇幅。',
+    en: 'Role reference: senior writer, skilled at business/marketing/technical writing; adapt tone and length to the genre.',
+  },
+  analysis: {
+    zh: '角色参考：数据分析师，擅长趋势解读与因果分析，结论先行、数据支撑。',
+    en: 'Role reference: data analyst, skilled at trend interpretation and causal analysis; lead with conclusions, back them with data.',
+  },
+  ops: {
+    zh: '角色参考：资深运维，熟悉 Linux 与部署流程，按步骤执行、先备份后变更。',
+    en: 'Role reference: senior ops engineer, familiar with Linux and deployment; follow the steps, back up before changing.',
+  },
+}
+
 /** Section-style structure paragraph (the default output shape). */
 const STRUCTURE_SECTIONS = `段落结构：
 - 输出必须包含四段，标题严格使用英文：## Role、## Task、## Context、## Format。
@@ -293,6 +318,11 @@ function metaBlocks(
         ? `- Subtype hint: this instruction falls into the 【${subtypeLabel(subtype, true)}】 category.\n`
         : `- 子类提示：该指令属于【${subtypeLabel(subtype, false)}】类任务。\n`)
     : ''
+  // 角色参考（1.4.9）：画像无显式角色（低置信）时给模型一个可直接采用的角色
+  // 三要素参考——与任务类型提示并列注入，不进情境画像。
+  const roleLibraryBlock = taskType !== undefined && taskType !== 'other'
+    ? `${en ? ROLE_LIBRARY[taskType].en : ROLE_LIBRARY[taskType].zh}\n`
+    : ''
   const lengthBlock = maxOutputTokens !== undefined && maxOutputTokens > 0
     ? (en
         ? `- Suggested output length: no more than ${maxOutputTokens} tokens. Soft guideline — be as concise as the task allows, never pad to fill it.\n`
@@ -311,7 +341,7 @@ function metaBlocks(
     exampleBlock,
     diagnosis: diagnosisBlock,
     context: buildContextBlock(context ?? '', metaLanguage, outputStyle),
-    taskType: `${taskTypeBlock}${subtypeBlock}`,
+    taskType: `${taskTypeBlock}${subtypeBlock}${roleLibraryBlock}`,
     length: lengthBlock,
     situation: situationBlock,
   }

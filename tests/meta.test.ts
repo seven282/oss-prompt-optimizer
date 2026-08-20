@@ -579,3 +579,15 @@ describe('situation block level gate (situationProfileLevel)', () => {
     expect(prompt).not.toContain('角色：你是一名资深产品经理')
   })
 })
+
+describe('role library (1.4.9)', () => {
+  it('injects a role reference for coding tasks', () => {
+    const prompt = buildOptimizePrompt('帮我写个 Python 脚本')
+    expect(prompt).toContain('角色参考：资深工程师')
+  })
+
+  it('injects the English role reference for english meta-prompt', () => {
+    const prompt = buildOptimizePrompt('Write a Python script', 'auto', undefined, undefined, 'sections', 'en')
+    expect(prompt).toContain('Role reference: senior engineer')
+  })
+})

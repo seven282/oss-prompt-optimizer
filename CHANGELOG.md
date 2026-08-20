@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.4.9] - 2026-08-20
+
+- **并行线 A：角色模板库 + 造梦洞察回填**：
+  - A-1 ROLE_LIBRARY（`meta.ts`）：按任务类型预置"身份＋能力＋行为"角色参考
+    （code/writing/analysis/ops，中英），随 `{{任务类型}}` 注入——画像无显式
+    角色（低置信）时模型可直接采用，不进情境画像（保持零注入原则）。
+  - A-2 `dreamInsightFeedback`（默认 `false`，opt-in）：会话级保存上一次
+    `senseNeeds` 产生的 `--- 延伸洞察 ---` 附录（`dreamInsightRegistry`，
+    TTL 30 分钟），后续 optimize/iterate 的 system 尾部注入（标注 AI 推断、
+    非事实）——把一次性造梦升级为**跨轮上下文**。
+  - README 两版配置表同步。
+- 测试 380 → 384（角色参考中英注入 ×2、dream 回填注入/默认关闭 ×2）。
+
 ## [1.4.8] - 2026-08-20
 
 - **情境感知启发式增强（阶段一，situation.ts 纯函数）**：
