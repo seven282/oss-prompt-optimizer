@@ -219,6 +219,13 @@ export interface Config {
    */
   dreamInsightFeedback: boolean
   /**
+   * Task classifier backend (ADR-011): `'heuristic'` (default) wraps the
+   * keyword/regex heuristics; `'llm'` is the opt-in service-layer LLM
+   * classifier — until the LLM implementation ships, `'llm''` falls back to
+   * the heuristic with a warning.
+   */
+  classifier: 'heuristic' | 'llm'
+  /**
    * Template set id for the optimizer role documents. `'default'` (the only
    * built-in) uses the shipped skeletons; unknown ids fail the load loudly.
    * Custom skeletons come from `metaPromptTemplate`.
@@ -287,6 +294,7 @@ export const Config: z<Config> = z.object({
   earlyStop: z.boolean().default(false),
   builtinExamples: z.boolean().default(true),
   dreamInsightFeedback: z.boolean().default(false),
+  classifier: z.union(['heuristic', 'llm']).default('heuristic'),
   templateId: z.string().default('default'),
   metaPromptTemplate: z.object({
     optimizeZh: z.string(),

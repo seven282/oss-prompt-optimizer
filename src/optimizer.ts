@@ -108,6 +108,7 @@ const CONFIG_KEYS = new Set([
   'earlyStopTailGrowth',
   'builtinExamples',
   'dreamInsightFeedback',
+  'classifier',
   'metaPromptLanguage',
   'autoOptimize',
   'autoOptimizePrefix',

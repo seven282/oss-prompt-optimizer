@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.5.0] - 2026-08-20
+
+- **并行线 B：ADR-011 步 1-2 落地（可替换分类器接口 + 配置）**：
+  - `TaskClassifier` / `ClassifiedTask` 接口 + `heuristicClassifier` 默认实现
+    （situation.ts 纯函数层，包装 detectTaskType/detectTaskSubtype/
+    extractMainVerbObject，置信度 0.2–1.0）——LLM 实现的注入位就绪。
+  - 配置 `classifier: 'heuristic'\|'llm'`（默认 heuristic；'llm' 在当前无 LLM
+    实现时回落启发式并告警——步 3 落地后启用）。
+  - 纯函数层红线保持：situation.ts 无 harness 依赖。
+- 测试 384 → 387（heuristicClassifier 分类/置信度/other 低置信）。
+- 版本号：1.4.9 末尾递增进位 → **1.5.0**。
+
 ## [1.4.9] - 2026-08-20
 
 - **并行线 A：角色模板库 + 造梦洞察回填**：

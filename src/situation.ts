@@ -87,6 +87,39 @@ export const SITUATION_PROFILE_VERSION = 2
 export type SituationProfileLevel = 'off' | 'minimal' | 'full'
 
 /**
+ * Replaceable task classifier (ADR-011, step 1-2, 1.5.0). The interface lives
+ * in the pure-function layer; the default `heuristicClassifier` wraps the
+ * existing `detectTaskType` / `detectTaskSubtype` / `extractMainVerbObject`
+ * heuristics. An optional LLM implementation (step 3) lives in the service
+ * layer and is injected via `classifier: 'llm'` — the pure-function layer
+ * never depends on the harness.
+ */
+export interface ClassifiedTask {
+  type: TaskType
+  subtype?: TaskSubtype
+  /** 0–1 confidence; the caller decides the injection gate. */
+  confidence: number
+}
+
+/** Sync pure-function classifier contract (heuristic by default). */
+export interface TaskClassifier {
+  classify(input: string, context?: string): ClassifiedTask
+}
+
+/** Default classifier: wraps the existing keyword/regex heuristics. */
+export const heuristicClassifier: TaskClassifier = {
+  classify(input, context): ClassifiedTask {
+    const type = detectTaskType(input)
+    if (type === 'other') return { type, confidence: 0.2 }
+    let confidence = 0.6
+    const subtype = detectTaskSubtype(input, type)
+    if (subtype !== undefined) confidence += 0.3
+    if (extractMainVerbObject(input) !== undefined) confidence += 0.1
+    return { type, subtype, confidence: Math.min(1, confidence) }
+  },
+}
+
+/**
  * Merge a previously registered session goal into the current instruction's
  * goal (P2 会话级目标注册表). Fallback semantics — the current instruction
  * wins whenever it states something: its primary replaces the registry's,

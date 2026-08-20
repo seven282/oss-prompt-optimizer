@@ -50,6 +50,7 @@ const BASE_CONFIG: Config = {
   earlyStopTailGrowth: 48,
   builtinExamples: true,
   dreamInsightFeedback: false,
+  classifier: 'heuristic',
 }
 
 const FOUR_SECTIONS = `## Role

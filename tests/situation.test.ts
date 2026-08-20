@@ -10,6 +10,7 @@ import {
   goalDrift,
   mergeGoals,
   normalizeInstruction,
+  heuristicClassifier,
   renderSituationBlock,
   SITUATION_PROFILE_VERSION,
   subtypeLabel,
@@ -350,5 +351,26 @@ describe('normalizeInstruction + extractMainVerbObject (1.4.8)', () => {
     expect(block).toContain('核心动作：写')
     // 无角色/目标信号的 generic 指令仍不渲染（ADR-009 零注入）
     expect(renderSituationBlock(buildSituationProfile('周报'), false)).toBe('')
+  })
+})
+
+describe('heuristicClassifier (ADR-011 step 1-2)', () => {
+  it('classifies with confidence and subtype', () => {
+    const r = heuristicClassifier.classify('帮我修复登录页面的 bug')
+    expect(r.type).toBe('code')
+    expect(r.subtype).toBe('code-bugfix')
+    expect(r.confidence).toBeGreaterThan(0.5)
+  })
+
+  it('returns a low-confidence `other` for generic input', () => {
+    const r = heuristicClassifier.classify('今天天气怎么样')
+    expect(r.type).toBe('other')
+    expect(r.confidence).toBeLessThan(0.5)
+  })
+
+  it('boosts confidence when the main verb-object is found', () => {
+    const withVerb = heuristicClassifier.classify('帮我写一份周报').confidence
+    const without = heuristicClassifier.classify('周报').confidence
+    expect(withVerb).toBeGreaterThan(without)
   })
 })

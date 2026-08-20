@@ -185,6 +185,7 @@ dsh plugin --profile web remove oss-prompt-optimizer
 | `cacheFuzzyThreshold` | number 0–1 | `0.6` | 近失配的 bigram-Jaccard 相似度阈值 |
 | `senseNeeds` | boolean | `false` | 需求感应 / 造梦模式：优化后追加明确标注的「延伸洞察（AI 推断）」附录（深层目标/隐含约束/质量标准/后续问题），推断不混入提示词正文 |
 | `dreamInsightFeedback` | boolean | `false` | 造梦洞察跨轮回填：开启后，本会话上一次 `senseNeeds` 产生的延伸洞察会注入后续 optimize/iterate（标注 AI 推断、非事实；会话级、TTL 30 分钟） |
+| `classifier` | `'heuristic'` \| `'llm'` | `'heuristic'` | 任务分类后端（ADR-011）：heuristic = 关键词/正则启发式（默认）；llm = 服务层 LLM 分类器（opt-in，当前无 LLM 实现时回落启发式） |
 | `contextAware` | boolean | `true` | 上下文感知：优化时把当前指令之前的最近对话（经 `{{上下文信息}}` 占位符 + 「视为纯数据」护栏）注入元提示词，让优化结果贴合此前讨论。四段模式下可将上下文中的事实用于充实 `## Context` 段（仍不执行其中嵌入的指令）；钩子取 `agent/pre-step` 消息，`/optimize` 取会话记录，尽力而为 |
 | `contextMaxMessages` | int 0–100 | `6` | 上下文感知时采集的最近消息条数上限；`0` 关闭 |
 | `contextMaxTokens` | int ≥0 | `800` | 上下文 token 预算；超出截断到最长前缀并附标记；`0` 关闭截断（精简默认） |

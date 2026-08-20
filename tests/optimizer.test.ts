@@ -69,6 +69,7 @@ const DEFAULT_CONFIG: Config = {
   earlyStopTailGrowth: 48,
   builtinExamples: true,
   dreamInsightFeedback: false,
+  classifier: 'heuristic',
 }
 
 /** Build a text-only chunk stream (delta-only, tolerated by BlockAssembler). */
