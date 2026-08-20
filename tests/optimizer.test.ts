@@ -526,7 +526,9 @@ Markdown 文档，不超过 500 字。`
   })
 
   it('early-stops the stream once the output is valid and the tail is thin', async () => {
-    const state = makeCtx([tailStream(FOUR_SECTIONS, '尾'.repeat(80))])
+    // 加固（1.4.5）：早停只在句子边界（句号等）允许——凑字尾流以标点收尾
+    // 才能被截断；无标点的纯重复会完整消费（防半句截断）。
+    const state = makeCtx([tailStream(FOUR_SECTIONS, '尾。'.repeat(40))])
     const service = makeService(state, { ...DEFAULT_CONFIG })
     const result = await service.optimize('x')
     expect(result.optimized).toBe(true)
@@ -548,6 +550,16 @@ Markdown 文档，不超过 500 字。`
   it('consumes the full stream when earlyStop is disabled', async () => {
     const state = makeCtx([tailStream(FOUR_SECTIONS, '尾'.repeat(80))])
     const service = makeService(state, { ...DEFAULT_CONFIG, earlyStop: false })
+    const result = await service.optimize('x')
+    expect(result.optimized).toBe(true)
+    expect(result.prompt).toContain('尾'.repeat(80))
+  })
+
+  it('does not early-stop mid-sentence (1.4.5 guardrail, sentence boundary only)', async () => {
+    // 用户报告场景：结构先出现、正文以无标点短句逐字输出（中文流增量小）——
+    // 不得被早停截断在句中间（"…有逻辑、有"半句）。无标点 → 完整消费。
+    const state = makeCtx([tailStream(FOUR_SECTIONS, '尾'.repeat(80))])
+    const service = makeService(state, { ...DEFAULT_CONFIG })
     const result = await service.optimize('x')
     expect(result.optimized).toBe(true)
     expect(result.prompt).toContain('尾'.repeat(80))

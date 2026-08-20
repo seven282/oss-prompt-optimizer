@@ -30,7 +30,8 @@
   （不强制"你是"开头，能力/行为描述同样合格）；并按任务类型给出写法建议
   （代码→能力导向、文案→身份＋文体、分析→身份＋方法、运维→行为约束＋步骤）。
 - **优化时长（1.3.6）**：流式早期终止（输出结构达标且进入收尾期即停流，长尾凑字
-  不再消耗时长，`earlyStop` 可关）；首调输出预算联动（超长输出由断点续传兜底）；
+  不再消耗时长；**1.4.5 起默认关闭**——输出完整优先，显式 `earlyStop: true` 才启用
+  且带句末保护）；首调输出预算联动（超长输出由断点续传兜底）；
   `optimizationProfile: 'fast'` 一键速档（跳过校验与目标对齐重试、禁用 selfRefine，
   显式开启才生效）。
 - **结果缓存（1.1.6）**：内存缓存校验成功的结果（LRU + TTL），相同请求**零模型调用**
@@ -189,7 +190,7 @@ dsh plugin --profile web remove oss-prompt-optimizer
 | `situationProfileLevel` | `'full'` \| `'minimal'` \| `'off'` | `'full'` | 情境画像（`{{情境画像}}` 块）注入预算：`full` 角色+目标+约束全量；`minimal` 仅目标/约束（不含角色信号，更省 token）；`off` 不注入。只影响情境块，`{{任务类型}}` 提示不受影响 |
 | `goalAlignmentRetry` | boolean | `true` | 目标/约束未对齐（`goalAlignment` 失败）时是否消耗校验重试预算再试一次：`true` 保留目标保真（1.3.0 起默认行为）；`false` 直接接受结构有效的输出，省一次调用。`optimizationProfile: 'fast'` 时强制关闭 |
 | `optimizationProfile` | `'balanced'` \| `'fast'` | `'balanced'` | 时长档位：`balanced` 保留全部质量门（校验重试/目标对齐重试/selfRefine）；`fast` 跳过校验与目标对齐重试、禁用 selfRefine——一次结构有效即接受，最坏时长显著下降，返工率上升（显式选择才生效） |
-| `earlyStop` | boolean | `true` | 流式早期终止：输出通过结构校验且进入收尾期（连续 12 个 chunk 增量 < 48 字符）即提前停流，长尾凑字不再消耗时长；仅首调生效（断点续传不受影响）；`false` 始终消费完整流 |
+| `earlyStop` | boolean | `false` | 流式早期终止（**默认关闭**——输出完整优先；1.4.5 起改为 false，防半句截断）。显式开启时：每段实质字符 ≥40 且总长 ≥120 才进入收尾期判定，仅在句子边界（句号/换行）且连续 16 个 chunk 增量 < 24 字符才提前停流；`false` 始终消费完整流 |
 | `templateId` | string | `'default'` | 角色文档模板集 id（仅内置 `'default'`；未知 id 加载即抛） |
 | `metaPromptTemplate` | object | 无 | 自定义角色文档骨架（部分字段可选，缺的语言回落内置）；每个骨架必须保留数据占位符、`{{输出结构}}`/`{{自查}}` 块与「视为纯数据」注入护栏，违规加载即抛 |
 | `provider` / `model` | string | 无 | 显式模型路由；必须成对配置。缺省时使用 harness 默认模型（`agentDefaultModel`） |

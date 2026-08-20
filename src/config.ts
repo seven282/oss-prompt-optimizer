@@ -270,7 +270,7 @@ export const Config: z<Config> = z.object({
   situationProfileLevel: z.union(['off', 'minimal', 'full']).default('full'),
   goalAlignmentRetry: z.boolean().default(true),
   optimizationProfile: z.union(['balanced', 'fast']).default('balanced'),
-  earlyStop: z.boolean().default(true),
+  earlyStop: z.boolean().default(false),
   templateId: z.string().default('default'),
   metaPromptTemplate: z.object({
     optimizeZh: z.string(),
@@ -280,6 +280,6 @@ export const Config: z<Config> = z.object({
   }),
   provider: z.string(),
   model: z.string(),
-  earlyStopTailChunks: z.number().step(1).min(1).max(100).default(12),
-  earlyStopTailGrowth: z.number().step(1).min(1).max(200).default(48),
+  earlyStopTailChunks: z.number().step(1).min(1).max(100).default(16),
+  earlyStopTailGrowth: z.number().step(1).min(1).max(200).default(24),
 })

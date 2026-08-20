@@ -36,7 +36,7 @@ describe('Config schema', () => {
       situationProfileLevel: 'full',
       goalAlignmentRetry: true,
       optimizationProfile: 'balanced',
-      earlyStop: true,
+      earlyStop: false,
       cacheEnabled: true,
       cacheMaxEntries: 200,
       cacheTtlMs: 600000,

@@ -45,6 +45,12 @@ export { MaxTokensError } from './llm.js'
 /** Stable capability-owned timeout reason code for optimization calls. */
 export const PROMPT_OPTIMIZER_TIMEOUT_CODE = 'PROMPT_OPTIMIZER_TIMEOUT'
 
+/** 早停加固：每段最少实质字符数才视为"结构达标"（默认 minSectionChars=10 太低，
+ *  骨架刚出现即达标会把正在填充的正文误判为收尾，导致半句截断——1.4.5）。 */
+const EARLY_STOP_MIN_SECTION_CHARS = 40
+/** 早停加固：允许早停的输出总长下限（防"骨架长、正文短"误伤——1.4.5）。 */
+const EARLY_STOP_MIN_OUTPUT = 120
+
 /** Defensive copy of a result before it enters or leaves the cache, so a
  *  caller's mutation can never corrupt stored entries (nested sections too). */
 function cloneOptimizeResult(result: OptimizeResult): OptimizeResult {
@@ -342,8 +348,8 @@ export class PromptOptimizerService extends Service {
    */
   private getEarlyStopThresholds(): { chunks: number; growth: number } {
     return {
-      chunks: this.config.earlyStopTailChunks ?? 12,
-      growth: this.config.earlyStopTailGrowth ?? 48,
+      chunks: this.config.earlyStopTailChunks ?? 16,
+      growth: this.config.earlyStopTailGrowth ?? 24,
     }
   }
 
@@ -996,10 +1002,13 @@ export class PromptOptimizerService extends Service {
         signal: budget.signal,
       })
       const assembler = new BlockAssembler()
-      // 流式早期终止（latency P1-1）：仅首调（无续传）启用。输出一旦通过结构
-      // 校验（四段齐全 / plain 实质达标）并进入"收尾期"（连续若干 chunk 增量
-      // 低于阈值 = 模型在凑字/收尾），即提前停流——长尾不再消耗时长。稳定窗口
-      // 防误伤：增量超阈值立即重置，模型仍在写实质内容时不会被中断。
+      // 流式早期终止（latency P1-1）：仅首调（无续传）启用，且**默认关闭**
+      // （earlyStop: false，输出完整优先——1.4.5 起）。显式开启时：输出通过
+      // 结构校验（每段实质字符 ≥ 加固门槛）并进入"收尾期"（连续若干 chunk
+      // 增量低于阈值 = 模型在凑字/收尾），且当前停在句子边界、总长足够，
+      // 才提前停流——长尾不再消耗时长。
+      // 加固（1.4.5）：minSectionChars 默认 10 太低，骨架刚出现即"达标"会把
+      // 正在填充的正文误判为收尾（中文逐字流增量小），导致半句截断。
       const earlyStop = continueFrom === undefined && this.config.earlyStop
       let streamed = ''
       let tailChunks = 0
@@ -1018,13 +1027,19 @@ export class PromptOptimizerService extends Service {
         if (chunk.type === 'text-delta' && typeof chunk.text === 'string' && chunk.text.length > 0) streamed += chunk.text
         if (earlyStop) {
           if (tailLen < 0) {
-            if (validateOutput(streamed, this.config.outputStyle, this.config.minSectionChars)) {
+            // 加固：每段须有 ≥ EARLY_STOP_MIN_SECTION_CHARS 实质字符才算
+            // "结构达标"，防骨架误触发收尾判定。
+            if (validateOutput(streamed, this.config.outputStyle, Math.max(this.config.minSectionChars, EARLY_STOP_MIN_SECTION_CHARS))) {
               tailLen = streamed.length
               tailChunks = 0
             }
           } else if (streamed.length - tailLen < earlyStopTailGrowth) {
             tailChunks++
-            if (tailChunks >= earlyStopTailChunks) break
+            // 加固：仅在句子边界（句号/问号/感叹号/换行）且总长足够时允许停，
+            // 防半句截断与"骨架长、正文短"误伤。
+            if (tailChunks >= earlyStopTailChunks
+              && streamed.length >= EARLY_STOP_MIN_OUTPUT
+              && /[。！？.!?]|\n$/.test(streamed)) break
           } else {
             tailChunks = 0
             tailLen = streamed.length
