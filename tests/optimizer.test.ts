@@ -245,7 +245,8 @@ describe('PromptOptimizerService.optimize', () => {
     expect(result.optimized).toBe(false)
     expect(result.prompt).toBe('原始指令原文')
     expect(result.error).toMatch(/missing one or more required sections/)
-    expect(result.retries).toBe(1)
+    // 1.5.3（C-3）：retries 返回实际校验失败次数（2 次调用均失败）。
+    expect(result.retries).toBe(2)
     expect(state.streamCalls).toHaveLength(2)
   })
 
@@ -306,7 +307,8 @@ describe('PromptOptimizerService.optimize', () => {
     expect(result.optimized).toBe(false)
     expect(result.prompt).toBe('原始指令原文')
     expect(result.error).toMatch(/fewer than 10/)
-    expect(result.retries).toBe(1)
+    // 1.5.3（C-3）：retries 返回实际校验失败次数。
+    expect(result.retries).toBe(2)
     expect(state.streamCalls).toHaveLength(2)
   })
 
@@ -361,9 +363,10 @@ describe('PromptOptimizerService.optimize', () => {
       textStream('', { type: 'finish', reason: { kind: 'error', failure: { message: 'provider exploded', code: 'RATE_LIMIT' } } }),
     ])
     const service = makeService(state)
-    const error = await service.optimize('x').then(() => null, (e: Error & { code?: string }) => e)
+    const error = await service.optimize('x').then(() => null, (e: Error & { detailCode?: string }) => e)
     expect(error).toBeInstanceOf(Error)
-    expect((error as Error & { code?: string }).code).toBe('RATE_LIMIT')
+    // 1.5.3（C-2）：OptimizeError 归 UNKNOWN，harness 原始码经 detailCode 保留。
+    expect((error as Error & { detailCode?: string }).detailCode).toBe('RATE_LIMIT')
     expect((error as Error).message).toContain('provider exploded')
   })
 
@@ -486,6 +489,8 @@ Markdown 文档，不超过 500 字。`
     expect(result.optimized).toBe(true)
     expect(result.prompt).toBe(chinese)
     expect(state.streamCalls).toHaveLength(0)
+    // C-4 修复：中文标题路径不再产出空 sections（英文解析不到）。
+    expect(result.sections).toBeUndefined()
   })
 
   it('retries within budget when the output drops a constraint (goal alignment)', async () => {
@@ -1222,5 +1227,30 @@ describe('dream insight feedback (1.4.9)', () => {
     await service.optimize('帮我写方案', { sessionId: 's1', senseNeeds: true })
     await service.optimize('继续细化', { sessionId: 's1' })
     expect(state.streamCalls[1].system).not.toContain('延伸洞察')
+  })
+
+  it('does not serve a stale cache hit once dream insights exist (C-1 fix)', async () => {
+    const insight = '--- 延伸洞察（AI 推断，供你选用，非事实）---\n· 深层目标：得到可直接落地的方案'
+    const state = makeCtx([textStream(`${FOUR_SECTIONS}\n\n${insight}`), textStream(FOUR_SECTIONS)])
+    const service = makeService(state, { ...DEFAULT_CONFIG, dreamInsightFeedback: true })
+    await service.optimize('帮我写方案', { sessionId: 's1', senseNeeds: true })
+    const second = await service.optimize('帮我写方案', { sessionId: 's1' })
+    expect(second.optimized).toBe(true)
+    // 修复前：第二次命中不含洞察的旧缓存（仅 1 次流调用）；修复后：缓存键含
+    // dream 回填 → 不命中 → 重新生成（2 次流调用），且第二次 system 携带洞察。
+    expect(state.streamCalls).toHaveLength(2)
+    expect(state.streamCalls[1].system).toContain('上一轮 AI 推断洞察')
+  })
+
+  it('uses the English dream block and extracts the en marker (M-1 fix)', async () => {
+    const insight = '--- Extended insights (AI-inferred, optional, NOT facts) ---\n· Deep goal: X'
+    const state = makeCtx([textStream(`${FOUR_SECTIONS}\n\n${insight}`), textStream(FOUR_SECTIONS)])
+    const service = makeService(state, { ...DEFAULT_CONFIG, dreamInsightFeedback: true, metaPromptLanguage: '英文' })
+    await service.optimize('write a plan', { sessionId: 's1', senseNeeds: true })
+    expect(state.streamCalls[0].system).toContain('Needs sensing (dream mode)')
+    const second = await service.optimize('write a plan', { sessionId: 's1' })
+    expect(second.optimized).toBe(true)
+    expect(state.streamCalls[1].system).toContain('Previous AI-inferred insights')
+    expect(state.streamCalls[1].system).toContain('Deep goal: X')
   })
 })

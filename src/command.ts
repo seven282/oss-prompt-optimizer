@@ -1,6 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { CommandResult } from '@deepseek-ai/dsh-commands'
-import { OptimizeError, OPTIMIZE_ERROR_TEXT } from './errors.js'
+import { OptimizeError, OptimizeErrorCode, OPTIMIZE_ERROR_TEXT } from './errors.js'
 import { gatherConversationContext, type ContextMessage } from './context.js'
 import { matchScene, renderSceneTemplate } from './meta.js'
 import type { PromptOptimizerService } from './optimizer.js'
@@ -76,6 +76,11 @@ export function registerOptimizeCommand(ctx: Context, service: PromptOptimizerSe
       return { kind: 'error', text: result.error ?? 'prompt-optimize: 优化失败' }
     } catch (error) {
       if (error instanceof OptimizeError) {
+        // 稳定码优先；UNKNOWN 码透传原始 message（含 harness 错误细节，如
+        // provider 报错原文——C-2 修复后 terminal error finish 归为 UNKNOWN）。
+        if (error.code === OptimizeErrorCode.UNKNOWN && error.message.length > 0) {
+          return { kind: 'error', text: error.message }
+        }
         return { kind: 'error', text: OPTIMIZE_ERROR_TEXT[error.code] }
       }
       return { kind: 'error', text: `prompt-optimize: ${error instanceof Error ? error.message : String(error)}` }

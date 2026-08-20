@@ -69,7 +69,7 @@ function cloneOptimizeResult(result: OptimizeResult): OptimizeResult {
  */
 function senseNeedsBlock(metaLanguage: MetaLanguage): string {
   return metaLanguage === 'en'
-    ? `\n\n需求感应（dream mode）：完成优化提示词后，在末尾追加一段明确标注的附录：\n\n--- 延伸洞察（AI 推断，供你选用，非事实）---\n· 深层目标（Deep goal）：\n· 隐含约束（Implicit constraints）：\n· 质量标准（Quality criteria）：\n· 可能的后续（Likely follow-ups）：\n\n规则：附录用 \`---\` 分隔、位于提示词之后；每条推断必须标注为推断，不得混入上方提示词正文；若指令已足够明确、无新的洞察，可省略附录。`
+    ? `\n\nNeeds sensing (dream mode): after completing the optimized prompt, append a clearly marked appendix at the end:\n\n--- Extended insights (AI-inferred, optional, NOT facts) ---\n· Deep goal: infer the result the user really wants to achieve\n· Implicit constraints: infer unstated limits and prerequisites\n· Quality criteria: infer the expected quality of the result\n· Likely follow-ups: infer what the user may ask next\n\nRules: separate the appendix with \`---\` and place it after the prompt; label every inference as inference and never mix it into the prompt body above; if the instruction is already clear enough and there is nothing new to infer, omit the appendix.`
     : `\n\n需求感应（造梦模式）：完成优化提示词后，在末尾追加一段明确标注的附录：\n\n--- 延伸洞察（AI 推断，供你选用，非事实）---\n· 深层目标：推断用户真正想达成的结果\n· 隐含约束：推断未明说的限制与前提\n· 质量标准：推断期望的完成质量\n· 可能的后续：推断下一步可能的需求\n\n规则：附录用 \`---\` 分隔、位于提示词之后；每条推断必须标注为推断，不得混入上方提示词正文；若指令已足够明确、无新的洞察，可省略附录。`
 }
 
@@ -88,54 +88,12 @@ function validateOutput(text: string, outputStyle: 'sections' | 'plain', minSect
       : hasAllSections(text)
 }
 
-/** Complete set of accepted config keys; anything else fails the load loudly. */
-const CONFIG_KEYS = new Set([
-  'temperature',
-  'maxTokens',
-  'maxRetries',
-  'maxCalls',
-  'maxInputChars',
-  'maxInputTokens',
-  'timeoutMs',
-  'outputLanguage',
-  'outputStyle',
-  'outputLengthMaxTokens',
-  'situationProfileLevel',
-  'goalAlignmentRetry',
-  'optimizationProfile',
-  'earlyStop',
-  'earlyStopTailChunks',
-  'earlyStopTailGrowth',
-  'builtinExamples',
-  'dreamInsightFeedback',
-  'classifier',
-  'metaPromptLanguage',
-  'autoOptimize',
-  'autoOptimizePrefix',
-  'extraInstructions',
-  'examples',
-  'minSectionChars',
-  'maxTokenRetryFactor',
-  'maxTokensCap',
-  'retryTemperatureStep',
-  'skipIfAlreadyOptimized',
-  'selfRefine',
-  'autoOptimizeAll',
-  'hookIncludeOriginal',
-  'cacheEnabled',
-  'cacheMaxEntries',
-  'cacheTtlMs',
-  'cacheFuzzyMatch',
-  'cacheFuzzyThreshold',
-  'senseNeeds',
-  'contextAware',
-  'contextMaxMessages',
-  'contextMaxTokens',
-  'templateId',
-  'metaPromptTemplate',
-  'provider',
-  'model',
-])
+/**
+ * Complete set of accepted config keys; anything else fails the load loudly.
+ * D-1 修复（1.5.3）：直接从 Config schema 推导（`Config.dict` 暴露全部字段）——
+ * 消除白名单与 schema 的双份维护（1.4.6 曾因漏注册导致 114 个测试失败）。
+ */
+const CONFIG_KEYS = new Set(Object.keys(Config.dict ?? {}))
 
 /** Reject unknown config keys (a typo is a loud load failure, harness convention). */
 function assertConfigKeys(config: ConfigType): void {
@@ -228,6 +186,23 @@ export interface OptimizeResult {
   sections?: { name: string; content: string }[]
   /** Estimated token count of the optimized prompt (successful results only). */
   outputTokens?: number
+}
+
+/** Run-statistics snapshot (观测; see `getStats`). */
+export interface OptimizeStats {
+  runs: number
+  success: number
+  failed: number
+  cached: number
+  totalDurationMs: number
+  maxDurationMs: number
+  lastOutputTokens: number
+  lastCallMs: number
+  avgCallMs: number
+  maxCallMs: number
+  callCount: number
+  lastRunCalls: number
+  lastInputTokens: number
 }
 
 /**
@@ -389,13 +364,15 @@ export class PromptOptimizerService extends Service {
   private static readonly GOAL_TTL_MS = 30 * 60 * 1000
   /** Cap on registered sessions; the oldest entry is evicted beyond it. */
   private static readonly GOAL_REGISTRY_MAX = 100
+  /** Cap on dream-insight registry sessions (1.5.3, mirrors the goal registry). */
+  private static readonly DREAM_REGISTRY_MAX = 100
   /** Clean interval for expired registry entries (5 minutes). */
   private static readonly GOAL_REGISTRY_CLEAN_INTERVAL = 5 * 60 * 1000
   /** Last time the registry was cleaned (for periodic cleanup). */
   private lastRegistryClean = 0
 
   /**
-   * Clean expired entries from the goal registry.
+   * Clean expired entries from the goal and dream-insight registries.
    */
   private cleanExpiredRegistry(now: number): void {
     const expiredKeys: string[] = []
@@ -406,6 +383,14 @@ export class PromptOptimizerService extends Service {
     }
     for (const key of expiredKeys) {
       this.goalRegistry.delete(key)
+    }
+    for (const [key, entry] of this.dreamInsightRegistry.entries()) {
+      if (now - entry.ts > PromptOptimizerService.GOAL_TTL_MS) {
+        expiredKeys.push(key)
+      }
+    }
+    for (const key of expiredKeys) {
+      this.dreamInsightRegistry.delete(key)
     }
   }
 
@@ -422,10 +407,13 @@ export class PromptOptimizerService extends Service {
 
   /**
    * Extract the `--- 延伸洞察（AI 推断，供你选用，非事实）---` appendix from a
-   * senseNeeds result (the text after the marker, trimmed). Pure function.
+   * senseNeeds result (the text after the marker, trimmed). Matches both the
+   * zh marker and the en `--- Extended insights ---` marker (1.5.3). Pure.
    */
   private extractDreamInsights(prompt: string): string | undefined {
-    const idx = prompt.indexOf('--- 延伸洞察')
+    const zh = prompt.indexOf('--- 延伸洞察')
+    const en = prompt.indexOf('--- Extended insights')
+    const idx = zh < 0 ? en : (en < 0 ? zh : Math.min(zh, en))
     if (idx < 0) return undefined
     const insights = prompt.slice(idx).trim()
     return insights.length > 0 ? insights : undefined
@@ -504,18 +492,26 @@ export class PromptOptimizerService extends Service {
     return senseNeeds ? system + senseNeedsBlock(metaLanguage) : system
   }
 
-  /**
-   * Dream-insight feedback (1.4.9): when enabled and the session has a saved
-   * `--- 延伸洞察 ---` appendix from an earlier `senseNeeds` run, append it to
-   * this call's system — the AI-inferred insights carry across turns (marked
-   * as non-fact, reference only). Off by default.
-   */
-  private withDreamFeedback(system: string, sessionId: string | undefined): string {
-    if (!this.config.dreamInsightFeedback || sessionId === undefined) return system
-    const entry = this.dreamInsightRegistry.get(sessionId)
-    if (entry === undefined) return system
-    return system + `\n\n--- 上一轮 AI 推断洞察（dream 回填，供参考，非事实）---\n${entry.insights}\n`
-  }
+/**
+ * Dream-insight feedback (1.4.9): when enabled and the session has a saved
+ * `--- 延伸洞察 ---` appendix from an earlier `senseNeeds` run, append it to
+ * this call's system — the AI-inferred insights carry across turns (marked
+ * as non-fact, reference only). Off by default.
+ */
+private dreamFeedbackFor(sessionId: string | undefined, metaLanguage: MetaLanguage): string {
+  if (!this.config.dreamInsightFeedback || sessionId === undefined) return ''
+  const entry = this.dreamInsightRegistry.get(sessionId)
+  if (entry === undefined) return ''
+  const header = metaLanguage === 'en'
+    ? '--- Previous AI-inferred insights (dream feedback, reference only, NOT facts) ---'
+    : '--- 上一轮 AI 推断洞察（dream 回填，供参考，非事实）---'
+  return `\n\n${header}\n${entry.insights}\n`
+}
+
+private withDreamFeedback(system: string, sessionId: string | undefined, metaLanguage: MetaLanguage): string {
+  const feedback = this.dreamFeedbackFor(sessionId, metaLanguage)
+  return feedback.length > 0 ? system + feedback : system
+}
 
   /**
    * 阶段 1A 近失配热启动: the best cached validated entry whose instruction
@@ -580,21 +576,7 @@ export class PromptOptimizerService extends Service {
   }
 
   /** Snapshot of the run statistics (观测; copy so callers cannot mutate). */
-  getStats(): {
-    runs: number
-    success: number
-    failed: number
-    cached: number
-    totalDurationMs: number
-    maxDurationMs: number
-    lastOutputTokens: number
-    lastCallMs: number
-    avgCallMs: number
-    maxCallMs: number
-    callCount: number
-    lastRunCalls: number
-    lastInputTokens: number
-  } {
+  getStats(): OptimizeStats {
     return {
       ...this.stats,
       avgCallMs: this.stats.callCount > 0 ? Math.round(this.stats.totalCallMs / this.stats.callCount) : 0,
@@ -652,7 +634,9 @@ export class PromptOptimizerService extends Service {
         prompt: rawInput,
         optimized: true,
         retries: 0,
-        sections: this.sectionsOf(rawInput),
+        // C-4 修复：sectionsOf 按英文标题解析，中文标题（## 角色）输入不产出
+        // 空 sections——仅当英文标题齐全时才提供逐段内容。
+        ...(hasAllSections(rawInput) ? { sections: this.sectionsOf(rawInput) } : {}),
         outputTokens: this.estimateTextTokens(rawInput),
       }
     }
@@ -676,7 +660,10 @@ export class PromptOptimizerService extends Service {
       const baseSystem = buildOptimizeSystem(this.promptContext(metaLanguage, options.context), input, outputLanguage, undefined, profile)
       cacheKey = this.cacheKeyFor(
         preResolvedRoute,
-        this.withSenseNeeds(baseSystem, senseNeeds, metaLanguage),
+        // 缓存键必须覆盖"真正发给模型的内容"（C-1 修复）：dream 回填与 senseNeeds
+        // 都参与键——否则同 session 第二次调用会命中不含洞察的陈旧缓存，
+        // dreamInsightFeedback 回填失效。
+        this.withSenseNeeds(baseSystem, senseNeeds, metaLanguage) + this.dreamFeedbackFor(options.sessionId, metaLanguage),
         input,
         options.context,
         options.cacheScope,
@@ -717,6 +704,7 @@ export class PromptOptimizerService extends Service {
             metaLanguage,
           ),
           options.sessionId,
+          metaLanguage,
         ),
       rawInput,
       options,
@@ -733,6 +721,11 @@ export class PromptOptimizerService extends Service {
       const insights = this.extractDreamInsights(result.prompt)
       if (insights !== undefined) {
         this.dreamInsightRegistry.set(options.sessionId, { insights, ts: Date.now() })
+        // 容量上限（C-5 修复）：与 goalRegistry 对齐，超限逐出最旧条目。
+        if (this.dreamInsightRegistry.size > PromptOptimizerService.DREAM_REGISTRY_MAX) {
+          const [oldestKey] = this.dreamInsightRegistry.keys() as unknown as [string]
+          if (oldestKey !== undefined) this.dreamInsightRegistry.delete(oldestKey)
+        }
       }
     }
     this.emitCompleted('optimize', rawInput, result, Date.now() - startedAt)
@@ -781,7 +774,8 @@ export class PromptOptimizerService extends Service {
       const baseSystem = buildIterateSystem(this.promptContext(metaLanguage, options.context), last, next, outputLanguage, undefined, nextProfile, drift)
       cacheKey = this.cacheKeyFor(
         preResolvedRoute,
-        this.withSenseNeeds(baseSystem, senseNeeds, metaLanguage),
+        // C-1 修复（同 optimize）：dream 回填纳入缓存键，防止命中无洞察的陈旧结果。
+        this.withSenseNeeds(baseSystem, senseNeeds, metaLanguage) + this.dreamFeedbackFor(options.sessionId, metaLanguage),
         `${last}\u0000${next}`,
         options.context,
         options.cacheScope,
@@ -803,6 +797,7 @@ export class PromptOptimizerService extends Service {
             metaLanguage,
           ),
           options.sessionId,
+          metaLanguage,
         ),
       lastOptimized,
       options,
@@ -976,7 +971,8 @@ export class PromptOptimizerService extends Service {
       optimized: false,
       error: lastError?.message,
       errorCode: lastError instanceof OptimizeError ? lastError.code : OptimizeErrorCode.UNKNOWN,
-      retries: this.config.maxRetries,
+      // C-3 修复：返回实际校验失败次数（fast 档为 0），而非固定配置值。
+      retries: attempt,
     }
   }
 

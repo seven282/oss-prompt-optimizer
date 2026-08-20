@@ -27,8 +27,13 @@ export function finishToError(finish: FinishReason): Error | undefined {
       return undefined
     case 'error':
     case 'aborted': {
-      const error = new Error(`prompt-optimizer: ${finish.failure.message}`)
-      Object.assign(error, { code: finish.failure.code })
+      // C-2 修复：统一为 OptimizeError（可被 instanceof 识别、errorCode 归因不落
+      // UNKNOWN），harness 原始 code 经 detailCode 保留（message 含原文）。
+      const error = new OptimizeError(
+        OptimizeErrorCode.UNKNOWN,
+        `prompt-optimizer: ${finish.failure.message}`,
+      )
+      Object.assign(error, { detailCode: finish.failure.code })
       return error
     }
     case 'max-tokens':

@@ -56,7 +56,8 @@ export function hasAllSections(text: string): boolean {
 export function hasOptimizedSections(text: string): boolean {
   return REQUIRED_SECTIONS.every((section) =>
     SECTION_ALIASES[section].some((alias) =>
-      new RegExp(`^##\\s*${alias}(?:\\s*[:：]|\\s*$)`, 'm').test(text),
+      // C-6 修复：复用 getSectionPattern 缓存（原为每次 new RegExp）。
+      getSectionPattern(alias, false).test(text),
     ),
   )
 }

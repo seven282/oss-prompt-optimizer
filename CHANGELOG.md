@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.5.3] - 2026-08-21
+
+- **全量审查修复（正确性/设计/维护性 13 项）**：
+  - 🔴 C-1：**dream 回填纳入缓存键**——开启 `dreamInsightFeedback` 后，同 session
+    第二次相同调用此前命中不含洞察的陈旧缓存（回填失效 + 结果不一致）；现缓存键
+    覆盖 senseNeeds 块 + dream 回填文本，命中即真实携带洞察
+  - 🔴 M-1：`senseNeedsBlock` 英文版**完整翻译**（原为中文规则）+ `extractDreamInsights`
+    双语 marker 匹配 + dream 回填注入头双语
+  - 🟠 C-2：`finishToError` 的 error/aborted 分支统一为 `OptimizeError`（errorCode
+    归因稳定，不再落 UNKNOWN 丢失），harness 原始码经 `detailCode` 保留；
+    `/optimize` 命令对 UNKNOWN 码透传原始 message（含 provider 报错原文）
+  - 🟠 C-3：失败路径 `retries` 返回**实际校验失败次数**（原固定 maxRetries，fast 档失真）
+  - 🟠 C-4：skip 路径中文标题（## 角色）输入不再产出空 sections（仅英文标题提供）
+  - 🟠 C-5：`dreamInsightRegistry` 加容量上限（100）并纳入周期清理（与 goalRegistry 对齐）
+  - 🟠 D-1：`CONFIG_KEYS` 白名单改为从 Config schema 推导（`Config.dict`）——
+    消除 interface/schema/白名单三处手工同步的漂移源（1.4.6 曾因漏注册 114 测试失败）
+  - 🟠 D-2：config interface 注释与 schema 默认值对齐（earlyStop=false、
+    earlyStopTailChunks=16/Growth=24——1.4.5 改值未同步注释）
+  - 🟡 C-6：`hasOptimizedSections` 复用正则缓存（原每次 new RegExp ×12）
+  - 🟡 D-4：`/template` 场景模板占位符统一为中文（与主模板中英共用约定一致）
+  - 🟡 M-2/M-3：注释修正 + `OptimizeStats` 接口抽取
+- 测试 390 → 392（dream 缓存键回归、en dream 块/回填；2 处 retries 断言与
+  2 处 LlmError code 断言按新语义更新）
+
 ## [1.5.2] - 2026-08-21
 
 - **子类模板库补齐（覆盖断链修复 + 3 个高频场景，18 → 21 子类）**：

@@ -24,13 +24,17 @@ describe('finishToError', () => {
   it('translates an error finish with its code', () => {
     const error = finishToError({ kind: 'error', failure: { message: 'boom', code: 'RATE_LIMIT' } } as FinishReason)
     expect(error?.message).toBe('prompt-optimizer: boom')
-    expect((error as { code?: string }).code).toBe('RATE_LIMIT')
+    // 1.5.3（C-2）：统一 OptimizeError（errorCode 归因稳定），harness 原始码经 detailCode 保留。
+    expect(error).toBeInstanceOf(OptimizeError)
+    expect((error as OptimizeError).code).toBe(OptimizeErrorCode.UNKNOWN)
+    expect((error as { detailCode?: string }).detailCode).toBe('RATE_LIMIT')
   })
 
   it('translates an aborted finish with its code', () => {
     const error = finishToError({ kind: 'aborted', failure: { message: 'gone', code: 'AUTH' } } as FinishReason)
     expect(error?.message).toBe('prompt-optimizer: gone')
-    expect((error as { code?: string }).code).toBe('AUTH')
+    expect(error).toBeInstanceOf(OptimizeError)
+    expect((error as { detailCode?: string }).detailCode).toBe('AUTH')
   })
 
   it('rejects an unknown finish kind', () => {

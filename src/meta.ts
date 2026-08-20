@@ -224,13 +224,13 @@ const SUB_TOPIC_TEMPLATES: Record<TaskSubtype, { zh: string; en: string }> = {
  * Render a ready-to-fill four-section template for a subcategory (drives the
  * `/template <scene>` quick command — no model call). The scene skeleton is
  * quoted as reference, then a fillable Role/Task/Context/Format skeleton.
+ * D-4 修复：占位符与主模板（templates.ts）一致——中英共用中文占位符。
  */
 export function renderSceneTemplate(subtype: TaskSubtype, en: boolean): string {
   const skeleton = en ? SUB_TOPIC_TEMPLATES[subtype].en : SUB_TOPIC_TEMPLATES[subtype].zh
   const hint = en ? 'Scene skeleton reference: ' : '场景骨架参考：'
-  return en
-    ? `${hint}${skeleton}\n\n## Role\n{{role}}\n\n## Task\n{{task}}\n\n## Context\n{{background and constraints}}\n\n## Format\n{{output format}}\n`
-    : `${hint}${skeleton}\n\n## Role\n{{角色}}\n\n## Task\n{{任务}}\n\n## Context\n{{背景与约束}}\n\n## Format\n{{输出格式}}\n`
+  const fillable = `## Role\n{{角色}}\n\n## Task\n{{任务}}\n\n## Context\n{{背景与约束}}\n\n## Format\n{{输出格式}}\n`
+  return `${hint}${skeleton}\n\n${fillable}`
 }
 
 /**
@@ -440,9 +440,8 @@ function metaBlocks(
   const taskTypeBlock = taskType !== undefined && taskType !== 'other'
     ? `${en ? TASKTYPE_EN[taskType] : TASKTYPE_ZH[taskType]}\n`
     : ''
-  // `detectTaskSubtype` returns `undefined` for `'other'` and for unmatched
-  // inputs, so a defined subtype already implies a non-`'other'` task type —
-  // the extra `taskType` checks are redundant.
+  // `detectTaskSubtype` 仅在非 other 类型下命中，但 `taskType` 本身可能是
+  // `'other'`（子类为 undefined）——子类提示只在子类命中时注入即可。
   const subtypeBlock = subtype !== undefined
     ? (en
         ? `- Subtype hint: this instruction falls into the 【${subtypeLabel(subtype, true)}】 category.\n`

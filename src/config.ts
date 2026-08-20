@@ -197,11 +197,12 @@ export interface Config {
   optimizationProfile: 'balanced' | 'fast'
   /**
    * Early-stop the stream once the output is structurally valid and enters
-   * its tail (latency optimization P1-1). `true` (default) stops consuming
-   * tokens when the four sections (or plain content) pass validation and the
-   * stream keeps producing little new content — saves tail-token latency
-   * without touching the structural checks. `false` always consumes the
-   * full stream.
+   * its tail (latency optimization P1-1). `false` (default, since 1.4.5)
+   * always consumes the full stream — output completeness wins. `true`
+   * explicitly enables early-stop: once the four sections (or plain content)
+   * pass the hardened validation (≥40 chars per section, ≥120 total) and the
+   * stream keeps producing little new content, stop at a sentence boundary —
+   * saves tail-token latency without truncating mid-sentence.
    */
   earlyStop: boolean
   /**
@@ -242,9 +243,9 @@ export interface Config {
   provider?: string
   /** Optional explicit model id; provider and model must be set together. */
   model?: string
-  /** Stream early-stop: consecutive low-growth chunks threshold (default 12). */
+  /** Stream early-stop: consecutive low-growth chunks threshold (default 16, since 1.4.5). */
   earlyStopTailChunks?: number
-  /** Stream early-stop: single chunk growth threshold considered "tail" (default 48). */
+  /** Stream early-stop: single chunk growth threshold considered "tail" (default 24, since 1.4.5). */
   earlyStopTailGrowth?: number
 }
 
