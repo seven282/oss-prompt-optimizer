@@ -53,6 +53,8 @@ const DEFAULT_CONFIG: Config = {
   cacheTtlMs: 600000,
   provider: 'deepseek-official',
   model: 'deepseek-v4-flash',
+  earlyStopTailChunks: 12,
+  earlyStopTailGrowth: 48,
 }
 
 function textStream(text: string): AsyncIterable<StreamChunk> {

@@ -62,6 +62,8 @@ const DEFAULT_CONFIG: Config = {
   cacheTtlMs: 600000,
   provider: 'deepseek-official',
   model: 'deepseek-v4-flash',
+  earlyStopTailChunks: 12,
+  earlyStopTailGrowth: 48,
 }
 
 /** Build a text-only chunk stream (delta-only, tolerated by BlockAssembler). */

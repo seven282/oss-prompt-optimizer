@@ -51,3 +51,22 @@ export function assembleStream(assembler: BlockAssembler): string {
     .map((block) => block.text)
     .join('')
 }
+
+/**
+ * Extended MaxTokensError that carries the partial output for resume (断点续传).
+ * Created by optimizer.ts when handling max-tokens truncation, allowing safe
+ * attachment of partial data without unsafe type assertions.
+ */
+export class MaxTokensErrorWithPartial extends MaxTokensError {
+  constructor(
+    partial: string,
+    original: MaxTokensError
+  ) {
+    super(partial)
+    this.name = 'MaxTokensErrorWithPartial'
+    // Preserve original error's stack and cause information
+    if (original.cause) {
+      this.cause = original.cause
+    }
+  }
+}

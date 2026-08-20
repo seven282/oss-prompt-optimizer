@@ -2,7 +2,7 @@
 
 [简体中文](README.md) | English
 
-**prompt-optimizer** (a DeepSeek Harness plugin) turns a casually written sentence into a professional, ready-to-use prompt — the same experience as Qoder and Codex.
+**prompt-optimizer** turns a casually written sentence into a professional, ready-to-use prompt — the same experience as Qoder and Codex.
 
 By default the result is a heading-free plain-text prompt (`outputStyle: 'plain'`, fewer tokens); a four-section structured style (`outputStyle: 'sections'` — `## Role` / `## Task` / `## Context` / `## Format`) is configurable. The optimization is driven by a built-in meta-prompt and run through the harness `LLM` service — the plugin never calls any external API and never touches credentials.
 

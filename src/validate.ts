@@ -1,6 +1,32 @@
 /** The four required section headings, in canonical order. */
 export const REQUIRED_SECTIONS = ['Role', 'Task', 'Context', 'Format'] as const
 
+/** Maximum temperature value from OpenAI API constraints. */
+export const MAX_TEMPERATURE = 2.0
+
+/**
+ * Cache for compiled section patterns to avoid repeated RegExp creation.
+ * Performance optimization: pre-compile and reuse regex patterns.
+ */
+const SECTION_PATTERN_CACHE = new Map<string, RegExp>()
+
+/**
+ * Get a cached or newly compiled RegExp for a section heading.
+ * @param section - The section name (e.g., 'Role')
+ * @param allowColon - Whether to allow colon variations (: or ：)
+ * @returns Compiled RegExp with 'm' (multiline) flag
+ */
+function getSectionPattern(section: string, allowColon: boolean = true): RegExp {
+  const cacheKey = `${section}:${allowColon}`
+  if (!SECTION_PATTERN_CACHE.has(cacheKey)) {
+    const patternStr = allowColon
+      ? `^##\\s*${section}(?:\\s*[:：])?[^\\n]*(?:\\n|$)`
+      : `^##\\s*${section}(?:\\s*[:：]|\\s*$)`
+    SECTION_PATTERN_CACHE.set(cacheKey, new RegExp(patternStr, 'm'))
+  }
+  return SECTION_PATTERN_CACHE.get(cacheKey)!
+}
+
 /**
  * Headings a section may legitimately appear under — the canonical English
  * name plus common Chinese variants. Used by `hasOptimizedSections` to
@@ -16,7 +42,7 @@ const SECTION_ALIASES: Record<string, readonly string[]> = {
 /** Whether every required section heading appears in `text`. */
 export function hasAllSections(text: string): boolean {
   return REQUIRED_SECTIONS.every((section) =>
-    new RegExp(`^##\\s*${section}(?:\\s*[:：]|\\s*$)`, 'm').test(text),
+    getSectionPattern(section, false).test(text),
   )
 }
 
@@ -38,7 +64,7 @@ export function hasOptimizedSections(text: string): boolean {
 /** Whether any of the four section headings appears in `text`. */
 export function hasSectionHeadings(text: string): boolean {
   return REQUIRED_SECTIONS.some((section) =>
-    new RegExp(`^##\\s*${section}(?:\\s*[:：]|\\s*$)`, 'm').test(text),
+    getSectionPattern(section, false).test(text),
   )
 }
 
@@ -47,7 +73,7 @@ export function hasSectionHeadings(text: string): boolean {
  * heading or end), trimmed.
  */
 export function sectionBody(text: string, section: string): string {
-  const pattern = new RegExp(`^##\\s*${section}(?:\\s*[:：])?[^\\n]*(?:\\n|$)`, 'm')
+  const pattern = getSectionPattern(section, true)
   const match = pattern.exec(text)
   if (match === null) return ''
   const from = match.index + match[0].length
@@ -195,7 +221,7 @@ export function diagnoseSections(text: string, minChars: number): SectionDiagnos
   const missing: string[] = []
   const thin: { name: string; chars: number }[] = []
   for (const section of REQUIRED_SECTIONS) {
-    if (!new RegExp(`^##\\s*${section}(?:\\s*[:：]|\\s*$)`, 'm').test(text)) {
+    if (!getSectionPattern(section, false).test(text)) {
       missing.push(section)
       continue
     }

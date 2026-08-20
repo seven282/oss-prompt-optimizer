@@ -45,4 +45,4 @@ pnpm run build        # tsc -p tsconfig.build.json + node scripts/copy-client.mj
 
 - npm 发布由用户手动执行（npm login + publish，2FA OTP 需用户输入）；代理只负责：版本号/CHANGELOG/git 提交建议。
 - 插件市场描述走 GitHub PR（deepseek-harness 官方仓库，用户为 CONTRIBUTOR 无合并权，需 upstream 合并；PR #1265 待合）。
-- 当前 npm latest = 1.0.3；`MARKETPLACE.md` 是 gitignored 的内部上架文档。
+- 当前 npm latest = 1.3.6（2026-08-19 发布，一次性包含 1.1.8–1.3.6 特性）；`MARKETPLACE.md` 是 gitignored 的内部上架文档。

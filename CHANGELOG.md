@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.3.7] - 2026-08-20
+
+- **代码质量审查修复（审查驱动的重构收尾）**：
+  - 流式早停阈值配置化：`earlyStopTailChunks`（默认 12）/ `earlyStopTailGrowth`
+    （默认 48）替代硬编码常量（`getEarlyStopThresholds`）；配置为可选字段，
+    已注册 `CONFIG_KEYS` 白名单。
+  - 会话目标注册表内存泄漏保护：定期清理过期条目（5 分钟间隔，TTL 30 分钟）。
+  - 类型安全：`MaxTokensErrorWithPartial`（`llm.ts`）替代 `partial` 字段的类型
+    断言，断点续传路径不变。
+  - 正则性能：`validate.ts` 编译后的段落正则缓存（`getSectionPattern`，行为等价，
+    原正则逐字保留）。
+  - `meta.ts` 渲染：`PLACEHOLDER_MAP` 单遍替换（与原有替换顺序/语义一致），
+    未知占位符仅告警不阻断。
+  - 事件监听器异常改为 `logger.warn`（不静默吞错）；流式 chunk 边界防御。
+  - **修复回归中发现的两个 bug**：`finishToError` 的非 max-tokens 错误分支
+    漏 `throw`（RATE_LIMIT/TOOL_CALL 等 finish 错误被吞为 NO_TEXT——重构引入，
+    已恢复）；`extraInstructions` 默认值保持 `undefined`（撤销无收益的
+    `default('')` 改动）。
+  - 公共 API 保持兼容：`INCOMPLETE_SECTIONS_MESSAGE` 常量导出未变。
+  - README 引言采用去括号版（中文 `提示词优化插件，…` / 英文
+    `**prompt-optimizer** turns …`）；删除 `redundancy-report.md`（冗余重构
+    报告已存档于 git 历史）。
+- 测试 359 全绿（typecheck / test / build）。
+
 ## [1.3.6] - 2026-08-19
 
 - **优化时长（latency 方案 P0/P1，`optimizer.ts` + `config.ts`）**：

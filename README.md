@@ -2,7 +2,7 @@
 
 [English](README.en.md) | 简体中文
 
-提示词优化插件（DeepSeek Harness）能把一句随手写的话自动改写成专业、可直接使用的提示词，体验与 Qoder、Codex 一致。
+提示词优化插件，把一句随手写的话自动改写成专业、可直接使用的提示词，体验与 Qoder、Codex 一致。
 
 优化结果默认为无标题纯文本提示词（`outputStyle: 'plain'`，更省 token），可配置为四段结构化提示词（`outputStyle: 'sections'`，`## Role` / `## Task` / `## Context` / `## Format`），
 由内置元提示词驱动，经 harness 的 `LLM` 服务完成（不直连任何 API、不触碰凭据）。

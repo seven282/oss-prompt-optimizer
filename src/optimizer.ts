@@ -7,8 +7,8 @@ import {
 } from '@deepseek-ai/dsh-llm'
 import { deadline, timeoutOf } from '@deepseek-ai/dsh-timeout'
 import { Config, type Config as ConfigType } from './config.js'
-import { OptimizeError, OptimizeErrorCode } from './errors.js'
-import type { OptimizeErrorCode as OptimizeErrorCodeType } from './errors.js'
+import { OptimizeError, OptimizeErrorCode, type OptimizeErrorCode as OptimizeErrorCodeType } from './errors.js'
+import { MaxTokensErrorWithPartial } from './llm.js'
 import { PROMPT_OPTIMIZER_EVENTS, type OptimizeMethod } from './events.js'
 import { detectLanguage, type MetaLanguage } from './meta.js'
 import {
@@ -28,6 +28,7 @@ import {
   thinSectionsMessage,
   truncateByTokens,
   truncateInput,
+  MAX_TEMPERATURE,
 } from './validate.js'
 import { registerPromptOptimizeTool } from './tool.js'
 import { registerAutoOptimizeHook } from './hook.js'
@@ -43,11 +44,6 @@ export { MaxTokensError } from './llm.js'
 
 /** Stable capability-owned timeout reason code for optimization calls. */
 export const PROMPT_OPTIMIZER_TIMEOUT_CODE = 'PROMPT_OPTIMIZER_TIMEOUT'
-
-/** 流式早期终止（latency P1-1）：进入收尾期后，连续多少 chunk 增量低于阈值即停流。 */
-const EARLY_STOP_TAIL_CHUNKS = 12
-/** 收尾期判定：单 chunk 长度增量低于此值视为"凑字/收尾"。 */
-const EARLY_STOP_TAIL_GROWTH = 48
 
 /** Defensive copy of a result before it enters or leaves the cache, so a
  *  caller's mutation can never corrupt stored entries (nested sections too). */
@@ -89,6 +85,8 @@ const CONFIG_KEYS = new Set([
   'goalAlignmentRetry',
   'optimizationProfile',
   'earlyStop',
+  'earlyStopTailChunks',
+  'earlyStopTailGrowth',
   'metaPromptLanguage',
   'autoOptimize',
   'autoOptimizePrefix',
@@ -292,6 +290,16 @@ export class PromptOptimizerService extends Service {
     return { maxMessages: this.config.contextMaxMessages, maxTokens: this.config.contextMaxTokens }
   }
 
+  /**
+   * Get early-stop thresholds from config or use defaults.
+   */
+  private getEarlyStopThresholds(): { chunks: number; growth: number } {
+    return {
+      chunks: this.config.earlyStopTailChunks ?? 12,
+      growth: this.config.earlyStopTailGrowth ?? 48,
+    }
+  }
+
   /** The per-call prompt-build context (config fields + resolved language + optional context). */
   private promptContext(metaLanguage: MetaLanguage, context?: string): PromptBuildContext {
     return {
@@ -322,6 +330,25 @@ export class PromptOptimizerService extends Service {
   private static readonly GOAL_TTL_MS = 30 * 60 * 1000
   /** Cap on registered sessions; the oldest entry is evicted beyond it. */
   private static readonly GOAL_REGISTRY_MAX = 100
+  /** Clean interval for expired registry entries (5 minutes). */
+  private static readonly GOAL_REGISTRY_CLEAN_INTERVAL = 5 * 60 * 1000
+  /** Last time the registry was cleaned (for periodic cleanup). */
+  private lastRegistryClean = 0
+
+  /**
+   * Clean expired entries from the goal registry.
+   */
+  private cleanExpiredRegistry(now: number): void {
+    const expiredKeys: string[] = []
+    for (const [key, entry] of this.goalRegistry.entries()) {
+      if (now - entry.ts > PromptOptimizerService.GOAL_TTL_MS) {
+        expiredKeys.push(key)
+      }
+    }
+    for (const key of expiredKeys) {
+      this.goalRegistry.delete(key)
+    }
+  }
 
   /** Per-session registered goals: sessionId → goal + last-seen timestamp. */
   private readonly goalRegistry = new Map<string, { goal: GoalProfile; ts: number }>()
@@ -335,19 +362,41 @@ export class PromptOptimizerService extends Service {
    */
   private mergeSessionGoal(profile: SituationProfile, sessionId: string): SituationProfile {
     const now = Date.now()
-    const hit = this.goalRegistry.get(sessionId)
-    if (hit !== undefined && now - hit.ts > PromptOptimizerService.GOAL_TTL_MS) {
-      this.goalRegistry.delete(sessionId)
+
+    // Periodic cleanup of expired entries (memory leak protection)
+    if (now - this.lastRegistryClean > PromptOptimizerService.GOAL_REGISTRY_CLEAN_INTERVAL) {
+      this.cleanExpiredRegistry(now)
+      this.lastRegistryClean = now
     }
-    const registered = hit !== undefined && now - hit.ts <= PromptOptimizerService.GOAL_TTL_MS
-      ? hit.goal
-      : { primary: undefined, constraints: [] as string[], successCriteria: [] as string[] }
-    const goal = mergeGoals(registered, profile.goal)
-    this.goalRegistry.set(sessionId, { goal, ts: now })
+
+    // Atomic-like operation: read once, then update
+    const existing = this.goalRegistry.get(sessionId)
+    const isExpired = existing !== undefined && now - existing.ts > PromptOptimizerService.GOAL_TTL_MS
+
+    let registeredGoal: GoalProfile
+    if (isExpired || existing === undefined) {
+      // Expired or doesn't exist: use empty goal and delete old record
+      if (existing !== undefined) {
+        this.goalRegistry.delete(sessionId)
+      }
+      registeredGoal = { primary: undefined, constraints: [] as string[], successCriteria: [] as string[] }
+    } else {
+      // Valid: use registered goal
+      registeredGoal = existing.goal
+    }
+
+    const goal = mergeGoals(registeredGoal, profile.goal)
+    const newEntry = { goal, ts: now }
+    this.goalRegistry.set(sessionId, newEntry)
+
+    // Capacity management: atomic check and eviction
     if (this.goalRegistry.size > PromptOptimizerService.GOAL_REGISTRY_MAX) {
-      const oldest = this.goalRegistry.keys().next().value
-      if (oldest !== undefined) this.goalRegistry.delete(oldest)
+      const [oldestKey] = this.goalRegistry.keys() as unknown as [string]
+      if (oldestKey !== undefined) {
+        this.goalRegistry.delete(oldestKey)
+      }
     }
+
     return { ...profile, goal }
   }
 
@@ -372,8 +421,13 @@ export class PromptOptimizerService extends Service {
   private emitStart(method: OptimizeMethod, input: string, profile?: SituationProfile): void {
     try {
       this.ctx.emit(PROMPT_OPTIMIZER_EVENTS.start, { method, input, ...(profile !== undefined ? { profile } : {}) })
-    } catch {
-      // Observers are best-effort; ignore listener failures.
+    } catch (error) {
+      // Log but don't break the pipeline
+      this.ctx.logger?.warn?.('Observer failed on optimize:start event', {
+        error: error instanceof Error ? error.message : String(error),
+        method,
+        inputLength: input.length,
+      })
     }
   }
 
@@ -393,8 +447,14 @@ export class PromptOptimizerService extends Service {
         result.optimized ? PROMPT_OPTIMIZER_EVENTS.success : PROMPT_OPTIMIZER_EVENTS.failure,
         { method, input, result, durationMs },
       )
-    } catch {
-      // Observers are best-effort; ignore listener failures.
+    } catch (error) {
+      // Log but don't break the pipeline
+      this.ctx.logger?.warn?.('Observer failed on optimize:completed event', {
+        error: error instanceof Error ? error.message : String(error),
+        method,
+        optimized: result.optimized,
+        durationMs,
+      })
     }
   }
 
@@ -627,7 +687,7 @@ export class PromptOptimizerService extends Service {
         )
         break
       }
-      const temperature = Math.min(2, baseTemperature + this.config.retryTemperatureStep * attempt)
+      const temperature = Math.min(MAX_TEMPERATURE, baseTemperature + this.config.retryTemperatureStep * attempt)
       try {
         callCount++
         const prompt = await this.generateOnce(
@@ -817,8 +877,16 @@ export class PromptOptimizerService extends Service {
       let streamed = ''
       let tailChunks = 0
       let tailLen = -1
+      const { chunks: earlyStopTailChunks, growth: earlyStopTailGrowth } = this.getEarlyStopThresholds()
       for await (const chunk of this.ctx.llm.stream(options)) {
         budget.signal.throwIfAborted()
+
+        // Boundary condition check: validate chunk object
+        if (!chunk || typeof chunk !== 'object') {
+          this.ctx.logger?.warn?.('Invalid chunk received', { chunk })
+          continue
+        }
+
         assembler.push(chunk)
         if (chunk.type === 'text-delta' && typeof chunk.text === 'string' && chunk.text.length > 0) streamed += chunk.text
         if (earlyStop) {
@@ -827,9 +895,9 @@ export class PromptOptimizerService extends Service {
               tailLen = streamed.length
               tailChunks = 0
             }
-          } else if (streamed.length - tailLen < EARLY_STOP_TAIL_GROWTH) {
+          } else if (streamed.length - tailLen < earlyStopTailGrowth) {
             tailChunks++
-            if (tailChunks >= EARLY_STOP_TAIL_CHUNKS) break
+            if (tailChunks >= earlyStopTailChunks) break
           } else {
             tailChunks = 0
             tailLen = streamed.length
@@ -848,7 +916,11 @@ export class PromptOptimizerService extends Service {
         // Attach the text produced before truncation so the expansion path
         // can resume from it (断点续传).
         if (failure instanceof MaxTokensError) {
-          ;(failure as MaxTokensError & { partial: string }).partial = assembleStream(assembler)
+          const extendedError = new MaxTokensErrorWithPartial(
+            assembleStream(assembler),
+            failure
+          )
+          throw extendedError
         }
         throw failure
       }

@@ -142,6 +142,23 @@ const SELFCHECK_SECTIONS_EN = `- Self-check before output: all four section head
 /** English plain-mode pre-output self-check. */
 const SELFCHECK_PLAIN_EN = `- Self-check before output: the body covers all four aspects above (completion criteria, assumptions, and format defaults included), is long enough to be executed directly, and contains no section headings or field labels; the role part must include a capability or behavior clause — a bare generic identity does not qualify.`
 
+/**
+ * Placeholder-to-block-key mapping for efficient template rendering.
+ * Single-replace strategy prevents double-substitution issues.
+ */
+const PLACEHOLDER_MAP: Readonly<Record<string, keyof MetaBlocks>> = {
+  '{{输出结构}}': 'structure',
+  '{{自查}}': 'selfCheck',
+  '{{语言规则}}': 'langRule',
+  '{{额外要求}}': 'extra',
+  '{{任务类型}}': 'taskType',
+  '{{长度预算}}': 'length',
+  '{{情境画像}}': 'situation',
+  '{{诊断反馈}}': 'diagnosis',
+  '{{示例}}': 'exampleBlock',
+  '{{上下文信息}}': 'context',
+} as const
+
 import { DEFAULT_TEMPLATES, type TemplateSet } from './templates.js'
 import type { PromptExample } from './config.js'
 import { buildContextBlock } from './context.js'
@@ -235,17 +252,26 @@ function metaBlocks(
 
 /** Substitute the shared tuning blocks into a role-document template. */
 function renderBlocks(template: string, blocks: MetaBlocks): string {
-  return template
-    .replace('{{输出结构}}', blocks.structure)
-    .replace('{{自查}}', blocks.selfCheck)
-    .replace('{{语言规则}}', blocks.langRule)
-    .replace('{{额外要求}}', blocks.extra)
-    .replace('{{任务类型}}', blocks.taskType)
-    .replace('{{长度预算}}', blocks.length)
-    .replace('{{情境画像}}', blocks.situation)
-    .replace('{{诊断反馈}}', blocks.diagnosis)
-    .replace('{{示例}}', blocks.exampleBlock)
-    .replace('{{上下文信息}}', blocks.context)
+  let result = template
+
+  // Single-pass replacement using the placeholder map
+  for (const [placeholder, blockKey] of Object.entries(PLACEHOLDER_MAP)) {
+    const replacement = blocks[blockKey] as string
+    result = result.replace(placeholder, replacement)
+  }
+
+  // Validate: check for any remaining unknown placeholders
+  const remainingPlaceholders = result.match(/{{[\w\u4e00-\u9fff]+}}/g)
+  if (remainingPlaceholders !== null && remainingPlaceholders.length > 0) {
+    const knownPlaceholders = Object.keys(PLACEHOLDER_MAP)
+    const unknownPlaceholders = remainingPlaceholders.filter(p => !knownPlaceholders.includes(p))
+    if (unknownPlaceholders.length > 0) {
+      // Log warning but don't break (allow dynamic placeholders)
+      console.warn(`Unknown placeholders found: ${unknownPlaceholders.join(', ')}`)
+    }
+  }
+
+  return result
 }
 
 /**

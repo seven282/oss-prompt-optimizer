@@ -204,6 +204,10 @@ export interface Config {
   provider?: string
   /** Optional explicit model id; provider and model must be set together. */
   model?: string
+  /** Stream early-stop: consecutive low-growth chunks threshold (default 12). */
+  earlyStopTailChunks?: number
+  /** Stream early-stop: single chunk growth threshold considered "tail" (default 48). */
+  earlyStopTailGrowth?: number
 }
 
 /**
@@ -256,4 +260,6 @@ export const Config: z<Config> = z.object({
   }),
   provider: z.string(),
   model: z.string(),
+  earlyStopTailChunks: z.number().step(1).min(1).max(100).default(12),
+  earlyStopTailGrowth: z.number().step(1).min(1).max(200).default(48),
 })

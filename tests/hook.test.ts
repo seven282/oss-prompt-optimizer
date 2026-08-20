@@ -43,6 +43,8 @@ const BASE_CONFIG: Config = {
   cacheEnabled: true,
   cacheMaxEntries: 200,
   cacheTtlMs: 600000,
+  earlyStopTailChunks: 12,
+  earlyStopTailGrowth: 48,
 }
 
 const FOUR_SECTIONS = `## Role
