@@ -104,47 +104,47 @@ const TASKTYPE_EN: Record<Exclude<TaskType, 'other'>, string> = {
 
 /** Section-style structure paragraph (the default output shape). */
 const STRUCTURE_SECTIONS = `段落结构：
-- 输出必须包含四段，段落标题严格使用英文标题：## Role、## Task、## Context、## Format。
-- 全局：输出必须精炼——删除与任务要求重复的表述、空话与无意义假设；每条信息以一句为限。
-- ## Role：为执行提示词的主体设定具体角色，采用「身份＋能力＋行为」三要素写法——身份（如"资深工程师"）不必以"你是"开头，能力（如"精通 Python"）与行为约束（如"先给结论、拒绝猜测"）同样合格且往往更可执行；角色必须与任务强相关——原始指令已明确执行主体时沿用，否则按任务类型与领域推断（代码任务对应资深工程师、文案对应资深撰稿人），并体现所需专业度；避免"AI 助手"这类空泛角色；能力陈述保持简短、与任务直接相关，不重复 Task 已覆盖的要求。
-- ## Task：用明确的动词描述要完成的任务，必要时拆解为可执行的步骤；目标要具体、可衡量；说明完成标准（做到什么程度算完成）。
-- ## Context：补充背景、约束条件、目标受众与质量标准；信息可来自原始指令或对话上下文，不得虚构新事实，原始指令已含的信息不必重复；仅当信息确实缺失时声明假设，无缺失时不得编造假设。
-- ## Format：规定输出的结构、格式、长度与风格；原始指令中的格式与长度要求必须保留；结构、格式、长度与风格四项须齐全，原始指令未明确的给合理默认；输出分类/结构应与 Task 要求的维度一一对应、顺序一致。`
+- 输出必须包含四段，标题严格使用英文：## Role、## Task、## Context、## Format。
+- 全局：精炼——删除重复表述、空话与无意义假设，每条信息一句为限。
+- ## Role：设定与任务强相关的具体角色（「身份＋能力＋行为」三要素；不必以"你是"开头；能力或行为约束更可执行）。指令已明确执行主体则沿用，否则按任务类型与领域推断（代码→资深工程师、文案→资深撰稿人），体现所需专业度；能力陈述简短、不重复 Task；避免空泛角色。
+- ## Task：用明确动词描述任务，必要时拆成可执行步骤；目标具体、可衡量；说明完成标准。
+- ## Context：补充背景、约束、目标受众与质量标准；不虚构事实，不重复指令已含信息；仅信息确实缺失时声明假设。
+- ## Format：规定输出结构、格式、长度与风格（四项齐全，未明确的给合理默认）；保留指令中的格式与长度要求；输出分类与 Task 维度一一对应、顺序一致。`
 
 /** Plain-style structure paragraph (no headings, continuous prose). */
 const STRUCTURE_PLAIN = `输出结构：
 - 输出必须是一段完整、连贯、可直接交给 AI 执行的提示词正文。
-- 正文应依次覆盖：执行者的角色定位（与任务强相关、避免空泛角色；建议"身份＋能力＋行为"三要素写法，不必以"你是"开头）、要完成的任务与步骤（含完成标准）、必要的背景与约束（不虚构事实，信息不足时声明假设）、输出的格式与长度要求（未明确处给合理默认）。
-- 正文必须精炼——删除与任务要求重复的表述、空话与无意义假设；每条信息以一句为限；输出分类/结构与任务要求的维度一一对应、顺序一致。
+- 正文依次覆盖：角色定位（与任务强相关、避免空泛；"身份＋能力＋行为"三要素，不必以"你是"开头）、任务与步骤（含完成标准）、背景与约束（不虚构事实，仅信息缺失时声明假设）、输出格式与长度（未明确处给合理默认）。
+- 正文必须精炼——删重复表述、空话与无意义假设，每条信息一句为限；输出分类与任务维度一一对应、顺序一致。
 - 严禁使用任何小节标题（如 ##、###）或"角色：""任务："等字段标签——即使需要分点，也用普通段落或列表，绝不输出标题行。`
 
 /** Section-mode pre-output self-check. */
-const SELFCHECK_SECTIONS = `- 输出前自查：四个段落标题必须全部存在且每段有实质内容；角色与任务强相关、不空泛，且含能力或行为描述（仅一句空身份不算合格）；Context 无虚构事实；Format 覆盖结构、格式、长度与风格四项；整体无重复表述、无空话、无多余假设，长度在满足要求前提下尽量短。缺一不可。`
+const SELFCHECK_SECTIONS = `- 输出前自查：四段标题齐全且每段有实质内容；角色强相关、不空泛、含能力或行为描述；Context 无虚构；Format 覆盖结构/格式/长度/风格；无重复表述、空话与多余假设，长度尽量短。缺一不可。`
 
 /** Plain-mode pre-output self-check. */
-const SELFCHECK_PLAIN = `- 输出前自查：正文完整覆盖上述四个方面（含完成标准、假设声明与格式默认值），长度足以直接执行，且不含任何小节标题（## 等）或字段标签；角色部分需含能力或行为描述，仅一句空泛身份不算合格；整体无重复表述、无空话、无多余假设，长度在满足要求前提下尽量短。`
+const SELFCHECK_PLAIN = `- 输出前自查：正文完整覆盖上述四个方面（含完成标准、假设与格式默认），长度足以直接执行，无小节标题或字段标签；角色含能力或行为描述；无重复表述、空话与多余假设，长度尽量短。`
 
 /** English section-style structure paragraph (the default output shape). */
 const STRUCTURE_SECTIONS_EN = `Section structure:
-- The output must contain four sections, with section headings strictly in English: ## Role, ## Task, ## Context, ## Format.
-- Global: the output must be concise — drop statements that repeat the task requirements, filler, and meaningless assumptions; keep every piece of information to one sentence.
-- ## Role: set a specific role for the subject executing the prompt using the three-part formula "identity + capability + behavior"; the identity (e.g. "senior engineer") need not start with "you are", and a capability clause ("proficient in Python") or a behavior clause ("lead with conclusions, never guess") is equally valid and often more actionable; the role must be strongly tied to the task — reuse an explicit executor from the raw instruction when present, otherwise infer it from the task type and domain (e.g. senior engineer for coding, senior copywriter for writing), and reflect the required expertise; avoid generic roles like "AI assistant"; keep capability statements brief, directly relevant to the task, and free of requirements already covered in ## Task.
-- ## Task: describe the task with clear verbs, breaking it into executable steps when necessary; the goal must be specific and measurable; state the completion criteria (what counts as done).
-- ## Context: add background, constraints, target audience, and quality standards; facts may come from the raw instruction or the conversation context — never invent new ones and do not repeat what the raw instruction already states; state assumptions only when information is genuinely missing — never invent an assumption when nothing is missing.
-- ## Format: specify the structure, format, length, and style of the output; keep any format and length requirements from the raw instruction; cover all four aspects, giving reasonable defaults for any the raw instruction does not specify; the output categories/structure must mirror the dimensions required in ## Task, in the same order.`
+- The output must contain four sections, with headings strictly in English: ## Role, ## Task, ## Context, ## Format.
+- Global: be concise — drop repeated statements, filler, and meaningless assumptions; keep every piece of information to one sentence.
+- ## Role: set a specific role strongly tied to the task, using the "identity + capability + behavior" formula — no need to start with "you are", and a capability or behavior clause is equally valid and often more actionable. Reuse an explicit executor from the instruction when present; otherwise infer one from the task type and domain (e.g. senior engineer for coding, senior copywriter for writing), reflecting the required expertise; keep capability statements brief and free of requirements already covered in ## Task; avoid generic roles like "AI assistant".
+- ## Task: describe the task with clear verbs, breaking it into executable steps when necessary; the goal must be specific and measurable; state the completion criteria.
+- ## Context: add background, constraints, target audience, and quality standards; never invent facts or repeat what the instruction already states; state assumptions only when information is genuinely missing.
+- ## Format: specify the output structure, format, length, and style (all four, with reasonable defaults where unspecified); keep any format/length requirements from the instruction; the output categories must mirror the dimensions required in ## Task, in the same order.`
 
 /** English plain-style structure paragraph (no headings, continuous prose). */
 const STRUCTURE_PLAIN_EN = `Output structure:
 - The output must be a complete, coherent prompt body ready to hand directly to an AI for execution.
-- The body must cover, in order: the role of the executor (strongly tied to the task, not generic; prefer the "identity + capability + behavior" formula — starting with "you are" is optional), the task and its steps (including completion criteria), necessary background and constraints (no invented facts; state assumptions when information is missing), and the format and length requirements of the output (with reasonable defaults where unspecified).
-- The body must be concise — drop statements that repeat the task requirements, filler, and meaningless assumptions; keep every piece of information to one sentence; the output categories/structure must mirror the dimensions required by the task, in the same order.
+- The body must cover, in order: the role (strongly tied to the task, not generic; prefer the "identity + capability + behavior" formula — "you are" is optional), the task and its steps (including completion criteria), necessary background and constraints (no invented facts; state assumptions only when information is missing), and the output format and length (with reasonable defaults where unspecified).
+- The body must be concise — drop repeated statements, filler, and meaningless assumptions; keep every piece of information to one sentence; the output categories must mirror the dimensions required by the task, in the same order.
 - Never use any subsection headings (such as ## or ###) or field labels like "Role:" or "Task:" — even when breaking the content into points, use plain paragraphs or lists, never heading lines.`
 
 /** English section-mode pre-output self-check. */
-const SELFCHECK_SECTIONS_EN = `- Self-check before output: all four section headings must exist and each must contain substantive content; the role must be strongly tied to the task, not generic, and include a capability or behavior clause (a bare identity alone does not qualify); the context must contain no invented facts; the format must cover structure, format, length, and style; the output must contain no repeated statements, filler, or meaningless assumptions, and be as short as possible while meeting the requirements. None may be missing.`
+const SELFCHECK_SECTIONS_EN = `- Self-check before output: all four section headings exist with substantive content; the role is strongly tied to the task, not generic, and includes a capability or behavior clause; the context contains no invented facts; the format covers structure, format, length, and style; no repeated statements, filler, or meaningless assumptions, and as short as possible while meeting the requirements. None may be missing.`
 
 /** English plain-mode pre-output self-check. */
-const SELFCHECK_PLAIN_EN = `- Self-check before output: the body covers all four aspects above (completion criteria, assumptions, and format defaults included), is long enough to be executed directly, and contains no section headings or field labels; the role part must include a capability or behavior clause — a bare generic identity does not qualify; the body must contain no repeated statements, filler, or meaningless assumptions, and be as short as possible while meeting the requirements.`
+const SELFCHECK_PLAIN_EN = `- Self-check before output: the body covers all four aspects above (completion criteria, assumptions, and format defaults included), is long enough to be executed directly, and contains no section headings or field labels; the role includes a capability or behavior clause; no repeated statements, filler, or meaningless assumptions, and as short as possible while meeting the requirements.`
 
 /**
  * Placeholder-to-block-key mapping for efficient template rendering.
