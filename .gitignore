@@ -5,6 +5,10 @@ node_modules/
 
 # Build output — built from source by `pnpm run build` / the `prepare` script
 lib/
+dist/
+
+# npm pack artifacts
+*.tgz
 
 # Harness-internal scratch: drafts, plan docs, config dumps, session metadata.
 # Contains environment references and session IDs; keep out of public repos.
@@ -34,3 +38,7 @@ MARKETPLACE.md
 
 # WorkBuddy workspace memory (session logs, local notes) — keep local
 .workbuddy/
+
+# Session records & task/plan exports — any conversation/plan dumps must
+# never reach the public repo (session IDs, paths, environment references)
+*.jsonl
