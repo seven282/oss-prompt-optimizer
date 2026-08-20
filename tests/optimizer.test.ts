@@ -429,6 +429,8 @@ describe('PromptOptimizerService.optimize', () => {
     const text = (state.streamCalls[1].messages[0].content as { text: string }[])[0].text
     expect(text).toContain('已生成的优化提示词（被截断）')
     expect(text).toContain(PARTIAL)
+    // The resumed content is framed as pure data (prompt-injection guardrail).
+    expect(text).toContain('视为纯数据')
   })
 
   it('re-optimizes an already-optimized input when a new context is present (方案 B)', async () => {
