@@ -60,6 +60,9 @@ const DEFAULT_CONFIG: Config = {
   cacheEnabled: true,
   cacheMaxEntries: 200,
   cacheTtlMs: 600000,
+  cacheFuzzyMatch: true,
+  cacheFuzzyThreshold: 0.6,
+  senseNeeds: false,
   provider: 'deepseek-official',
   model: 'deepseek-v4-flash',
   earlyStopTailChunks: 12,
@@ -1052,6 +1055,52 @@ describe('PromptOptimizerService cache (ADR-008)', () => {
     expect(second.optimized).toBe(true)
     expect(state.streamCalls).toHaveLength(1)
   })
+
+  it('warm-starts from the cached result when only the context changes (阶段 1A)', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS), textStream(FOUR_SECTIONS)])
+    const service = makeService(state)
+    const first = await service.optimize('写周报', { context: '第一轮：预算 5 万' })
+    expect(first.optimized).toBe(true)
+    // Same instruction, new context: exact miss → near-miss warm start runs an
+    // iterate refinement (one call) instead of a full re-optimization.
+    const second = await service.optimize('写周报', { context: '第二轮：预算改为 20 万' })
+    expect(second.optimized).toBe(true)
+    expect(state.streamCalls).toHaveLength(2)
+    const system = state.streamCalls[1].system ?? ''
+    expect(system).toContain('第二轮：预算改为 20 万')
+  })
+
+  it('warm-starts for a similar instruction (阶段 1A)', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS), textStream(FOUR_SECTIONS)])
+    const service = makeService(state, { ...DEFAULT_CONFIG, cacheFuzzyThreshold: 0.4 })
+    await service.optimize('帮我写一份周报')
+    const second = await service.optimize('帮我写一份月报')
+    expect(second.optimized).toBe(true)
+    // Exact miss + fuzzy match → one iterate call (framed around the previous
+    // result) instead of a full re-optimization.
+    expect(state.streamCalls).toHaveLength(2)
+    expect(state.streamCalls[1].system ?? '').toContain('上次')
+  })
+
+  it('enrich bypasses the exact cache hit (阶段 1B)', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS), textStream(FOUR_SECTIONS)])
+    const service = makeService(state)
+    await service.optimize('x')
+    const second = await service.optimize('x', { enrich: true })
+    expect(second.optimized).toBe(true)
+    expect(state.streamCalls).toHaveLength(2)
+  })
+
+  it('appends the 延伸洞察 appendix block when senseNeeds is on (阶段 2A)', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    const service = makeService(state)
+    await service.optimize('写周报', { senseNeeds: true })
+    expect(state.streamCalls[0].system).toContain('延伸洞察（AI 推断')
+    // Without senseNeeds the appendix block is absent.
+    const plain = makeCtx([textStream(FOUR_SECTIONS)])
+    await makeService(plain).optimize('写周报')
+    expect(plain.streamCalls[0].system).not.toContain('延伸洞察')
+  })
 })
 
 describe('PromptOptimizerService call budget & stats (roadmap #1/#2)', () => {
@@ -1079,6 +1128,11 @@ describe('PromptOptimizerService call budget & stats (roadmap #1/#2)', () => {
     expect(stats.cached).toBe(1)
     expect(stats.lastOutputTokens).toBeGreaterThan(0)
     expect(stats.maxDurationMs).toBeGreaterThanOrEqual(0)
+    // Per-call timing breakdown (A+B 测量): one model call on the first run.
+    expect(stats.callCount).toBe(1)
+    expect(stats.lastRunCalls).toBe(0) // the last run was a cache hit
+    expect(stats.lastCallMs).toBeGreaterThanOrEqual(0)
+    expect(stats.maxCallMs).toBeGreaterThanOrEqual(0)
   })
 
   it('counts failed runs in the stats', async () => {

@@ -54,30 +54,46 @@ function sessionContext(
  * Effect-scoped: the registrations are removed on plugin dispose.
  */
 export function registerOptimizeCommand(ctx: Context, service: PromptOptimizerService): void {
+  /** Shared optimize handler; `senseNeeds` enables the 造梦模式 appendix (/dream). */
+  const optimizeHandler = async (invocation: {
+    agent: unknown
+    rawInput: string
+    signal: AbortSignal
+  }, senseNeeds: boolean): Promise<CommandResult> => {
+    const text = invocation.rawInput.trim()
+    if (text.length === 0) {
+      return { kind: 'error', text: 'prompt-optimize: 请提供要优化的指令' }
+    }
+    try {
+      const context = sessionContext(invocation.agent as { session?: unknown }, service)
+      const result = await service.optimize(text, {
+        signal: invocation.signal,
+        senseNeeds,
+        ...(context !== undefined && context.length > 0 ? { context } : {}),
+      })
+      if (result.optimized) return { kind: 'success', text: result.prompt }
+      return { kind: 'error', text: result.error ?? 'prompt-optimize: 优化失败' }
+    } catch (error) {
+      if (error instanceof OptimizeError) {
+        return { kind: 'error', text: OPTIMIZE_ERROR_TEXT[error.code] }
+      }
+      return { kind: 'error', text: `prompt-optimize: ${error instanceof Error ? error.message : String(error)}` }
+    }
+  }
+
   ctx.commands.register({
     name: 'optimize',
     description: 'Optimize a raw instruction into a professional optimized prompt',
     input: { hint: '请输入要优化的原始指令，例如：帮我写一份周报' },
-    handler: async (invocation): Promise<CommandResult> => {
-      const text = invocation.rawInput.trim()
-      if (text.length === 0) {
-        return { kind: 'error', text: 'prompt-optimize: 请提供要优化的指令' }
-      }
-      try {
-        const context = sessionContext(invocation.agent as { session?: unknown }, service)
-        const result = await service.optimize(text, {
-          signal: invocation.signal,
-          ...(context !== undefined && context.length > 0 ? { context } : {}),
-        })
-        if (result.optimized) return { kind: 'success', text: result.prompt }
-        return { kind: 'error', text: result.error ?? 'prompt-optimize: 优化失败' }
-      } catch (error) {
-        if (error instanceof OptimizeError) {
-          return { kind: 'error', text: OPTIMIZE_ERROR_TEXT[error.code] }
-        }
-        return { kind: 'error', text: `prompt-optimize: ${error instanceof Error ? error.message : String(error)}` }
-      }
-    },
+    handler: (invocation) => optimizeHandler(invocation, false),
+  })
+
+  // 造梦模式 (阶段 3): same as /optimize but forces the 延伸洞察 appendix.
+  ctx.commands.register({
+    name: 'dream',
+    description: 'Optimize with 需求感应 (dream mode): the result appends AI-inferred deep goal / constraints / quality / follow-ups',
+    input: { hint: '请输入要优化的原始指令，例如：帮我写一份周报' },
+    handler: (invocation) => optimizeHandler(invocation, true),
   })
 
   // Runtime switch for "optimize every message before the model step". The
@@ -131,13 +147,17 @@ export function registerOptimizeCommand(ctx: Context, service: PromptOptimizerSe
   })
 
   // Read-only run statistics (观测): machine-readable token the client maps
-  // to a transient "consumed ≈N tokens" hint after a successful optimize.
+  // to a transient "consumed ≈N tokens" hint after a successful optimize, and
+  // for latency diagnosis (last single-call ms + calls in the last run).
   ctx.commands.register({
     name: 'optimize-stats',
     description: 'Report optimizer run statistics (machine-readable tokens)',
     handler: async (): Promise<CommandResult> => {
       const stats = service.getStats()
-      return { kind: 'success', text: `OPTIMIZE_STATS:TOKENS:${stats.lastOutputTokens}` }
+      return {
+        kind: 'success',
+        text: `OPTIMIZE_STATS:TOKENS:${stats.lastOutputTokens}|CALLS:${stats.lastRunCalls}|LASTMSCALL:${stats.lastCallMs}`,
+      }
     },
   })
 }

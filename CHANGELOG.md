@@ -1,5 +1,32 @@
 # Changelog
 
+## [1.4.4] - 2026-08-20
+
+- **耗时测量分解（A+B 观测）**：`stats` 新增 per-call 计时——`lastCallMs` /
+  `totalCallMs` / `maxCallMs` / `callCount` / `lastRunCalls`（`generateOnce`
+  计时、`runPipeline` 计数、缓存命中记 0 次调用）；`/optimize-stats` 返回
+  `OPTIMIZE_STATS:TOKENS:<t>|CALLS:<c>|LASTMSCALL:<ms>`——一眼定位瓶颈是
+  模型延迟还是多次调用
+- **README 快速档（目标 3–5s，保质量）**：`optimizationProfile: 'fast'` +
+  `maxCalls: 3`（质量护栏：首次仍过结构校验、保留 2 次扩容预算）preset 与
+  质量/前提说明（flash 级模型单次 1.5–4s；缓存命中 <100ms）
+- 测试：371 用例全绿（stats 计时字段、/optimize-stats token 扩展）
+
+## [1.4.3] - 2026-08-20
+
+- **近失配热启动（阶段 1A，`cacheFuzzyMatch` 默认开）**：精确缓存未命中时，相似
+  缓存指令（bigram-Jaccard ≥ `cacheFuzzyThreshold`，默认 0.6）或同指令新上下文
+  以缓存结果为起点走 `iterate` 精修——**旧结果 + 新输入融合**，比从零优化省时省
+  token（`bigramJaccard` 纯函数；缓存条目携带 input/context 元数据 + `entries()`）
+- **enrich 显式绕过（阶段 1B）**：`OptimizeOptions.enrich = true` 跳过精确命中与
+  热启动，强制全新运行（要新鲜感时用）
+- **需求感应 / 造梦模式（阶段 2A，`senseNeeds` 默认关）**：开启后优化结果末尾追加
+  明确标注的 `--- 延伸洞察（AI 推断，供你选用，非事实）---` 附录（深层目标/隐含
+  约束/质量标准/可能的后续）——推断**永不混入提示词正文**；输出契约仅在开启时分叉
+- **`/dream` 命令（阶段 3）**：= `/optimize` + `senseNeeds: true`（客户端 ✨ 保持标准）
+- 测试：371 用例全绿（bigramJaccard、entries、热启动×2、enrich、senseNeeds、
+  /dream 注册、config 校验）
+
 ## [1.4.2] - 2026-08-20
 
 - **安全加固（审计收尾）**：

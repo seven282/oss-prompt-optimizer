@@ -51,6 +51,9 @@ const DEFAULT_CONFIG: Config = {
   cacheEnabled: true,
   cacheMaxEntries: 200,
   cacheTtlMs: 600000,
+  cacheFuzzyMatch: true,
+  cacheFuzzyThreshold: 0.6,
+  senseNeeds: false,
   provider: 'deepseek-official',
   model: 'deepseek-v4-flash',
   earlyStopTailChunks: 12,
@@ -96,7 +99,7 @@ const invocation = (rawInput: string) => ({
 describe('registerOptimizeCommand', () => {
   it('registers the /optimize, /auto-optimize, /optimizer-language and /optimize-stats commands', () => {
     const { commands } = makeService(() => textStream(FOUR_SECTIONS))
-    expect(commands.map((c) => c.name)).toEqual(['optimize', 'auto-optimize', 'optimizer-language', 'optimize-stats'])
+    expect(commands.map((c) => c.name)).toEqual(['optimize', 'dream', 'auto-optimize', 'optimizer-language', 'optimize-stats'])
     const optimize = commands.find((c) => c.name === 'optimize')!
     expect(optimize.description).toContain('professional')
     expect(optimize.input?.hint).toBeTruthy()
@@ -288,12 +291,13 @@ describe('/optimize-stats command', () => {
 
   it('reports the last run output tokens as a machine token', async () => {
     const { commands } = makeService(() => textStream(FOUR_SECTIONS))
-    // Before any run the token count is 0.
-    expect(await stats(commands).handler(invocation(''))).toMatchObject({ kind: 'success', text: 'OPTIMIZE_STATS:TOKENS:0' })
+    // Before any run the counters are zero.
+    expect(await stats(commands).handler(invocation(''))).toMatchObject({ kind: 'success', text: 'OPTIMIZE_STATS:TOKENS:0|CALLS:0|LASTMSCALL:0' })
     const optimize = commands.find((c) => c.name === 'optimize')!
     await optimize.handler(invocation('帮我写周报'))
     const result = await stats(commands).handler(invocation(''))
     expect(result).toMatchObject({ kind: 'success' })
-    expect((result as { text: string }).text).toMatch(/OPTIMIZE_STATS:TOKENS:\d+/)
+    const text = (result as { text: string }).text
+    expect(text).toMatch(/OPTIMIZE_STATS:TOKENS:\d+\|CALLS:1\|LASTMSCALL:\d+/)
   })
 })

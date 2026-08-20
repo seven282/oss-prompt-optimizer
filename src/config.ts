@@ -130,6 +130,23 @@ export interface Config {
   /** Cache TTL in milliseconds; `0` disables expiry. */
   cacheTtlMs: number
   /**
+   * Near-miss warm start (阶段 1A): on an exact cache miss, a similar cached
+   * instruction (or the same instruction with a different context) seeds an
+   * `iterate` refinement instead of optimizing from scratch — cheaper, faster,
+   * and the result reflects the NEW input.
+   */
+  cacheFuzzyMatch: boolean
+  /** Bigram-Jaccard similarity threshold for the near-miss warm start (0..1). */
+  cacheFuzzyThreshold: number
+  /**
+   * 需求感应 / 造梦模式 (阶段 2A, default off): when enabled, the optimizer
+   * also infers the user's deeper needs — deep goal, implicit constraints,
+   * quality criteria, likely follow-ups — and appends them as a clearly
+   * marked `--- 延伸洞察（AI 推断）---` appendix after the optimized prompt.
+   * Inferred content never mixes into the four-section body.
+   */
+  senseNeeds: boolean
+  /**
    * When true, optimization includes recent conversation context (the
    * messages before the instruction, injected as the `{{上下文信息}}` block
    * with the pure-data guardrail). `true` (default) keeps the optimizer aware
@@ -243,6 +260,9 @@ export const Config: z<Config> = z.object({
   cacheEnabled: z.boolean().default(true),
   cacheMaxEntries: z.number().step(1).min(0).max(10000).default(200),
   cacheTtlMs: z.number().step(1).min(0).max(MAX_TIMER_DELAY_MS).default(600000),
+  cacheFuzzyMatch: z.boolean().default(true),
+  cacheFuzzyThreshold: z.number().min(0).max(1).default(0.6),
+  senseNeeds: z.boolean().default(false),
   contextAware: z.boolean().default(true),
   contextMaxMessages: z.number().step(1).min(0).max(100).default(6),
   contextMaxTokens: z.number().step(1).min(0).max(200000).default(800),

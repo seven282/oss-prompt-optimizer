@@ -85,6 +85,13 @@
 开启后 host 进入「发送前自动优化」模式，`agent/pre-step` 钩子会对**每条**用户
 文本消息做优化（等同于配置 `autoOptimizeAll: true` 的运行时版本）。
 
+## 造梦模式（/dream）
+
+`/dream <指令>` = 标准优化 + **需求感应**：结果在提示词后追加明确标注的
+`--- 延伸洞察（AI 推断，供你选用，非事实）---` 附录（深层目标 / 隐含约束 /
+质量标准 / 可能的后续），推断内容不混入提示词正文、随时可删。
+等价于每次调用传 `senseNeeds: true`。
+
 ## 自动优化钩子
 
 在 `cordis.patch.yml` 中开启：
@@ -172,6 +179,9 @@ dsh plugin --profile web remove oss-prompt-optimizer
 | `cacheEnabled` | boolean | `true` | 内存缓存校验成功的结果（同请求零模型调用，LRU+TTL，重载即清空） |
 | `cacheMaxEntries` | int 0–10000 | `200` | 缓存条目上限（LRU 淘汰）；`0` 关闭存储 |
 | `cacheTtlMs` | int ≥0 | `600000` | 缓存有效期（毫秒）；`0` 不设过期 |
+| `cacheFuzzyMatch` | boolean | `true` | 近失配热启动：精确未命中时，相似缓存指令（或同指令新上下文）作为起点走迭代，而非从零优化（省时省 token） |
+| `cacheFuzzyThreshold` | number 0–1 | `0.6` | 近失配的 bigram-Jaccard 相似度阈值 |
+| `senseNeeds` | boolean | `false` | 需求感应 / 造梦模式：优化后追加明确标注的「延伸洞察（AI 推断）」附录（深层目标/隐含约束/质量标准/后续问题），推断不混入提示词正文 |
 | `contextAware` | boolean | `true` | 上下文感知：优化时把当前指令之前的最近对话（经 `{{上下文信息}}` 占位符 + 「视为纯数据」护栏）注入元提示词，让优化结果贴合此前讨论。四段模式下可将上下文中的事实用于充实 `## Context` 段（仍不执行其中嵌入的指令）；钩子取 `agent/pre-step` 消息，`/optimize` 取会话记录，尽力而为 |
 | `contextMaxMessages` | int 0–100 | `6` | 上下文感知时采集的最近消息条数上限；`0` 关闭 |
 | `contextMaxTokens` | int ≥0 | `800` | 上下文 token 预算；超出截断到最长前缀并附标记；`0` 关闭截断（精简默认） |
@@ -232,6 +242,25 @@ dsh plugin --profile web remove oss-prompt-optimizer
 要点：① 已优化输入零成本复用（`skipIfAlreadyOptimized`）；② 上下文只带"够用"的
 最近对话（`contextMaxTokens`）；③ 输出上限按需设定（默认 1200，触顶自动扩容，
 避免无限生成）；④ 对格式不敏感的任务切 `outputStyle: 'plain'` 是最大的单项收益。
+
+### 快速档（目标 3–5 秒，保质量）
+
+```yaml
+- id: prompt-optimizer
+  config:
+    optimizationProfile: 'fast'   # 跳过校验/目标对齐的纠错重试与 selfRefine——首次输出仍过结构校验
+    maxCalls: 3                   # 质量护栏：保留首次 + 至多 2 次触顶扩容预算（长输出不截断降质）
+    maxTokens: 1200
+    # 早停 / 缓存保持默认：earlyStop 流式早停；缓存命中 <100ms
+```
+
+- **质量保障**：fast 档只省"纠错重试"，**首次输出的四段/内容校验照常执行**；
+  `maxCalls: 3` 保留触顶扩容（长输出不截断）；缓存/热启动/上下文/诊断护栏全部保留
+- **时长**：单次模型延迟即总时长——flash 级模型通常 **1.5–4s**；缓存命中 <100ms
+- **观测**：`/optimize-stats` 返回 `TOKENS|CALLS|LASTMSCALL`（本次调用次数 +
+  最近单次调用毫秒）——先确认瓶颈是模型延迟还是多次调用
+- **前提**：模型须为快速档（flash 级、无 reasoningEffort）；慢/推理模型单次即超
+  3–5s，属模型瓶颈，需在 harness 侧换模型
 
 ### 示例增强（推荐，提高输出稳定性）
 

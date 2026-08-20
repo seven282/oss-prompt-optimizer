@@ -43,6 +43,9 @@ const BASE_CONFIG: Config = {
   cacheEnabled: true,
   cacheMaxEntries: 200,
   cacheTtlMs: 600000,
+  cacheFuzzyMatch: true,
+  cacheFuzzyThreshold: 0.6,
+  senseNeeds: false,
   earlyStopTailChunks: 12,
   earlyStopTailGrowth: 48,
 }

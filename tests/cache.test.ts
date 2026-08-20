@@ -1,11 +1,27 @@
 import { describe, expect, it } from 'vitest'
-import { createOptimizeCache, fnv1a } from '../src/cache.js'
+import { bigramJaccard, createOptimizeCache, fnv1a } from '../src/cache.js'
 
 describe('fnv1a', () => {
   it('is deterministic and stable', () => {
     expect(fnv1a('hello')).toBe(fnv1a('hello'))
     expect(fnv1a('hello')).not.toBe(fnv1a('hellp'))
     expect(fnv1a('')).toBe('811c9dc5') // FNV-1a offset basis
+  })
+})
+
+describe('bigramJaccard', () => {
+  it('scores identical and empty inputs', () => {
+    expect(bigramJaccard('写周报', '写周报')).toBe(1)
+    expect(bigramJaccard('', '')).toBe(1)
+    expect(bigramJaccard('abc', '')).toBe(0)
+  })
+
+  it('scores similar CJK instructions above different ones', () => {
+    const similar = bigramJaccard('帮我写一份周报', '帮我写一份月报')
+    const different = bigramJaccard('帮我写一份周报', '部署服务到服务器')
+    expect(similar).toBeGreaterThanOrEqual(0.5)
+    expect(similar).toBeGreaterThan(different)
+    expect(different).toBeLessThan(0.5)
   })
 })
 
@@ -60,6 +76,16 @@ describe('createOptimizeCache', () => {
     cache.set('a', '1')
     expect(cache.size).toBe(0)
     expect(cache.get('a')).toBeUndefined()
+  })
+
+  it('exposes live entries for near-miss scanning', () => {
+    const cache = createOptimizeCache<string>({ maxEntries: 10, ttlMs: 0 })
+    cache.set('k1', 'v1')
+    cache.set('k2', 'v2')
+    const entries = cache.entries()
+    expect(entries).toEqual([['k1', 'v1'], ['k2', 'v2']])
+    entries.length = 0
+    expect(cache.size).toBe(2)
   })
 
   it('clears all entries', () => {

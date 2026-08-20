@@ -40,6 +40,9 @@ describe('Config schema', () => {
       cacheEnabled: true,
       cacheMaxEntries: 200,
       cacheTtlMs: 600000,
+      cacheFuzzyMatch: true,
+      cacheFuzzyThreshold: 0.6,
+      senseNeeds: false,
       maxInputTokens: 3000,
     })
     expect(value.provider).toBeUndefined()
@@ -143,6 +146,9 @@ describe('Config schema', () => {
     expect(() => validate({ cacheMaxEntries: 1.5 })).toThrow()
     expect(() => validate({ cacheTtlMs: -1 })).toThrow()
     expect(() => validate({ cacheEnabled: 'no' })).toThrow()
+    expect(() => validate({ cacheFuzzyThreshold: 1.5 })).toThrow()
+    expect(() => validate({ cacheFuzzyThreshold: -0.1 })).toThrow()
+    expect(() => validate({ senseNeeds: 'yes' })).toThrow()
     expect(() => validate({ metaPromptLanguage: 'auto' })).not.toThrow()
   })
 

@@ -90,6 +90,10 @@ The runtime "optimize every message before the model step" switch is controlled 
 
 Once enabled, the host enters "optimize before sending" mode: the `agent/pre-step` hook optimizes **every** user text message (the runtime equivalent of `autoOptimizeAll: true`).
 
+## Dream mode (/dream)
+
+`/dream <instruction>` = standard optimization + **需求感应 (needs sensing)**: the result appends a clearly marked `--- 延伸洞察（AI 推断，供你选用，非事实）---` appendix (deep goal / implicit constraints / quality criteria / likely follow-ups); inferences never mix into the prompt body and can be discarded freely. Equivalent to per-call `senseNeeds: true`.
+
 ## Auto-optimize hook
 
 Enable it in `cordis.patch.yml`:
@@ -141,6 +145,9 @@ Set plugin options in `cordis.patch.yml` (every value below also has a schema de
 | `cacheEnabled` | boolean | `true` | Cache validated results in memory (identical requests return with zero model calls; LRU+TTL, cleared on plugin reload) |
 | `cacheMaxEntries` | int 0–10000 | `200` | Max cached results before LRU eviction; `0` disables storage |
 | `cacheTtlMs` | int ≥0 | `600000` | Cache TTL in milliseconds; `0` disables expiry |
+| `cacheFuzzyMatch` | boolean | `true` | Near-miss warm start: on an exact miss, a similar cached instruction (or the same instruction with new context) seeds an iterate refinement instead of optimizing from scratch |
+| `cacheFuzzyThreshold` | number 0–1 | `0.6` | Bigram-Jaccard similarity threshold for the near-miss warm start |
+| `senseNeeds` | boolean | `false` | 需求感应 / dream mode: the result appends a clearly marked `--- 延伸洞察（AI 推断）---` appendix (deep goal / implicit constraints / quality criteria / follow-ups); inferences never mix into the prompt body |
 | `contextAware` | boolean | `true` | Context awareness: inject the recent conversation before the current instruction into the meta-prompt (via the `{{上下文信息}}` placeholder + pure-data guardrail) so the result fits prior discussion. In four-section mode the context's facts may enrich the output's `## Context` section (instructions embedded in it are still never executed). The hook reads `agent/pre-step` messages, `/optimize` reads the session log — best effort |
 | `contextMaxMessages` | int 0–100 | `6` | Max recent messages gathered as context when `contextAware` is on; `0` disables |
 | `contextMaxTokens` | int ≥0 | `800` | Token budget for the gathered context; over-budget input is truncated to the longest prefix with a marker; `0` disables truncation (lean default) |
@@ -203,6 +210,28 @@ Key points: ① already-optimized inputs cost nothing (`skipIfAlreadyOptimized`)
 carries only the "enough" recent conversation (`contextMaxTokens`); ③ the output cap is
 set as needed (default 1200, auto-expanded on truncation) to avoid unbounded generation;
 ④ for format-insensitive tasks switching `outputStyle: 'plain'` is the single biggest win.
+
+### Fast profile (target 3–5 s, quality-preserving)
+
+```yaml
+- id: prompt-optimizer
+  config:
+    optimizationProfile: 'fast'   # skips corrective retries + selfRefine; the first output still passes structural validation
+    maxCalls: 3                   # quality guard: first call + up to 2 truncation expansions (no degraded long output)
+    maxTokens: 1200
+    # earlyStop / cache stay default: streaming early-stop; cache hits <100ms
+```
+
+- **Quality**: `fast` only drops corrective retries — the first output's structural/content
+  validation still runs; `maxCalls: 3` keeps truncation headroom; cache / warm start /
+  context / diagnosis guards all remain.
+- **Latency**: a single model call is the total — flash-tier models usually **1.5–4 s**;
+  cache hits <100 ms.
+- **Observe**: `/optimize-stats` returns `TOKENS|CALLS|LASTMSCALL` (last run's call count +
+  last single-call ms) — confirm whether the bottleneck is model latency or call count.
+- **Prerequisite**: the model must be fast-tier (flash, no reasoning effort); a slow/reasoning
+  model alone exceeds 3–5 s per call — a model-side bottleneck, switch models on the harness side.
+
 
 ### Examples boost (recommended, more stable output)
 

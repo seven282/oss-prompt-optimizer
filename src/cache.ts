@@ -18,6 +18,35 @@ export function fnv1a(text: string): string {
   return (hash >>> 0).toString(16).padStart(8, '0')
 }
 
+/**
+ * Jaccard similarity over character bigrams (0..1). Works well for both CJK
+ * and Latin text; used by the near-miss warm start (阶段 1A): when an exact
+ * cache hit is impossible, a similar cached instruction can seed the
+ * re-optimization instead of starting from scratch.
+ */
+export function bigramJaccard(a: string, b: string): number {
+  const norm = (s: string) => s.replace(/\s+/g, '').toLowerCase()
+  const x = norm(a)
+  const y = norm(b)
+  if (x.length === 0 && y.length === 0) return 1
+  if (x.length === 0 || y.length === 0) return 0
+  const grams = (s: string) => {
+    const set = new Set<string>()
+    if (s.length === 1) {
+      set.add(s)
+      return set
+    }
+    for (let i = 0; i < s.length - 1; i++) set.add(s.slice(i, i + 2))
+    return set
+  }
+  const gx = grams(x)
+  const gy = grams(y)
+  let overlap = 0
+  for (const g of gx) if (gy.has(g)) overlap++
+  const union = gx.size + gy.size - overlap
+  return union === 0 ? 0 : overlap / union
+}
+
 /** One stored entry. */
 interface OptimizeCacheEntry<T> {
   value: T
@@ -36,6 +65,8 @@ export interface OptimizeCache<T> {
   readonly size: number
   /** Read a live entry (LRU refresh on hit); `undefined` on miss/expiry. */
   get(key: string): T | undefined
+  /** Snapshot of all live entries (for near-miss warm-start scanning). */
+  entries(): [string, T][]
   /** Store an entry, evicting the least-recently-used one beyond `maxEntries`. */
   set(key: string, value: T): void
   /** Drop all entries. */
@@ -66,6 +97,17 @@ export function createOptimizeCache<T>(options: OptimizeCacheOptions): OptimizeC
       map.delete(key)
       map.set(key, entry)
       return entry.value
+    },
+    entries() {
+      const out: [string, T][] = []
+      for (const [key, entry] of map) {
+        if (ttlMs > 0 && Date.now() > entry.expiresAt) {
+          map.delete(key)
+          continue
+        }
+        out.push([key, entry.value])
+      }
+      return out
     },
     set(key, value) {
       if (maxEntries <= 0) return
