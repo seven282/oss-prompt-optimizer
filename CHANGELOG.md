@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.4.8] - 2026-08-20
+
+- **情境感知启发式增强（阶段一，situation.ts 纯函数）**：
+  - `normalizeInstruction`：全角→半角、小写、折叠空白（`detectTaskSubtype` /
+    `detectMeasurable` 匹配前归一，提升英文/混合输入命中率）。
+  - `extractMainVerbObject`：保守主谓宾抽取（中英动词表、可选礼貌前缀、
+    宾语截断到标点；低置信返回 undefined）——填充 `TaskProfile` 预留的
+    `mainVerb`/`object` 字段；`renderSituationBlock` 在有其他画像信号时注入
+    「核心动作」（**保持 ADR-009 零注入原则**：generic 指令仍不渲染）。
+  - TASK_SUBTYPES 关键词同义词扩充（bugfix/feature 类补"出错/故障/开发"等）。
+  - 背景：对应 situation.md「主谓宾抽取、同义词归一」可优化方向（阶段一），
+    阶段二（LLM 深度分类）仍需 ADR-011。
+- 测试 374 → 380（normalize/extract/同义词/核心动作注入）。
+
 ## [1.4.7] - 2026-08-20
 
 - **四区块详略动态调配（C-1 + B-1，meta.ts 模板文案，中英同步）**：

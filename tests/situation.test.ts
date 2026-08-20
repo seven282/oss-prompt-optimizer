@@ -4,10 +4,12 @@ import {
   buildSituationProfile,
   detectMeasurable,
   detectTaskSubtype,
+  extractMainVerbObject,
   goalAlignment,
   goalAnchors,
   goalDrift,
   mergeGoals,
+  normalizeInstruction,
   renderSituationBlock,
   SITUATION_PROFILE_VERSION,
   subtypeLabel,
@@ -128,6 +130,12 @@ describe('detectTaskSubtype (two-level classification)', () => {
     expect(detectTaskSubtype('实现用户注册新功能', 'code')).toBe('code-feature')
     expect(detectTaskSubtype('重构订单模块', 'code')).toBe('code-refactor')
     expect(detectTaskSubtype('帮我写个批量处理脚本', 'code')).toBe('code-script')
+  })
+
+  it('classifies with added synonyms and normalization (1.4.8)', () => {
+    expect(detectTaskSubtype('程序出错了，帮忙看看', 'code')).toBe('code-bugfix')
+    expect(detectTaskSubtype('开发一个订单导出功能', 'code')).toBe('code-feature')
+    expect(detectTaskSubtype('写一篇周报', 'writing')).toBe('writing-report')
   })
 
   it('classifies writing subcategories', () => {
@@ -315,5 +323,32 @@ describe('renderSituationBlock level gate (P2 situationProfileLevel)', () => {
 
   it('renders nothing at off', () => {
     expect(renderSituationBlock(roleProfile, false, undefined, 'off')).toBe('')
+  })
+})
+
+describe('normalizeInstruction + extractMainVerbObject (1.4.8)', () => {
+  it('normalizes full-width and case', () => {
+    expect(normalizeInstruction('Ｗｒｉｔｅ  Ａ　Ｂｏｏｋ')).toBe('write a book')
+  })
+
+  it('extracts verb + object (zh)', () => {
+    expect(extractMainVerbObject('帮我写一份周报')).toEqual({ verb: '写', object: '一份周报' })
+    expect(extractMainVerbObject('请翻译这段文字')).toEqual({ verb: '翻译', object: '这段文字' })
+  })
+
+  it('extracts verb + object (en)', () => {
+    expect(extractMainVerbObject('Write a Python script to parse CSV')).toEqual({ verb: 'write', object: 'a python script to parse csv' })
+  })
+
+  it('stays empty for low-confidence inputs (no known verb)', () => {
+    expect(extractMainVerbObject('今天天气怎么样')).toBeUndefined()
+  })
+
+  it('injects the core action only alongside other signals', () => {
+    const profile = buildSituationProfile('目标是生成一份周报，请帮我写一份')
+    const block = renderSituationBlock(profile, false)
+    expect(block).toContain('核心动作：写')
+    // 无角色/目标信号的 generic 指令仍不渲染（ADR-009 零注入）
+    expect(renderSituationBlock(buildSituationProfile('周报'), false)).toBe('')
   })
 })

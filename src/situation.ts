@@ -190,8 +190,8 @@ export type TaskSubtype =
 /** Subtype definitions: zh/en labels + matching keywords per category. */
 const TASK_SUBTYPES: Record<Exclude<TaskType, 'other'>, readonly { key: TaskSubtype; zh: string; en: string; keywords: readonly string[] }[]> = {
   code: [
-    { key: 'code-bugfix', zh: 'bug 修复', en: 'bug fix', keywords: ['bug', '修复', '报错', '错误', '异常', '崩溃', '不工作', '问题'] },
-    { key: 'code-feature', zh: '新功能开发', en: 'feature development', keywords: ['新功能', '功能', '实现', '新增', '做一个', '添加'] },
+    { key: 'code-bugfix', zh: 'bug 修复', en: 'bug fix', keywords: ['bug', '修复', '报错', '错误', '异常', '崩溃', '不工作', '问题', '出错', '故障', 'crash'] },
+    { key: 'code-feature', zh: '新功能开发', en: 'feature development', keywords: ['新功能', '功能', '实现', '新增', '做一个', '添加', '开发'] },
     { key: 'code-refactor', zh: '重构', en: 'refactoring', keywords: ['重构', '优化', '简化', '清理', '重写', 'refactor'] },
     { key: 'code-review', zh: '代码审查', en: 'code review', keywords: ['审查', 'review', '走查', '检查代码'] },
     { key: 'code-script', zh: '脚本/工具', en: 'script/tool', keywords: ['脚本', '工具', '自动化', '批处理', 'script'] },
@@ -217,10 +217,50 @@ const TASK_SUBTYPES: Record<Exclude<TaskType, 'other'>, readonly { key: TaskSubt
   ],
 }
 
+/**
+ * Normalize an instruction for matching: full-width → half-width, lowercase,
+ * collapse whitespace. Pure (1.4.8, stage-1 heuristic enhancement).
+ */
+export function normalizeInstruction(input: string): string {
+  return input
+    .replace(/[\uFF01-\uFF5E]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+    .replace(/\u3000/g, ' ')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/** Chinese main verbs for conservative verb-object extraction (longer first). */
+const MAIN_VERBS_ZH = ['撰写', '编写', '开发', '实现', '修复', '重构', '优化', '审查', '部署', '调试', '分析', '统计', '评估', '对比', '预测', '研究', '检查', '创建', '设计', '转换', '翻译', '提取', '汇总', '总结', '安排', '规划', '起草', '生成', '创作', '制作', '整理', '写', '做']
+/** English main verbs (longer first). */
+const MAIN_VERBS_EN = ['implement', 'develop', 'generate', 'summarize', 'analyze', 'translate', 'convert', 'refactor', 'optimize', 'troubleshoot', 'deploy', 'review', 'design', 'create', 'extract', 'compare', 'build', 'debug', 'write', 'fix', 'test']
+/** Object phrase stop characters (end of the object slot). */
+const OBJ_STOP = /[，。；！？、,.!?;:\n]/
+
+/**
+ * Conservatively extract the main verb + object of an instruction (P1
+ * reserved fields `mainVerb`/`object`). Returns `undefined` unless a known
+ * verb directly follows an optional polite prefix — low-confidence inputs
+ * stay empty so the injection gate never fires on noise.
+ */
+export function extractMainVerbObject(input: string): { verb: string; object: string } | undefined {
+  const text = normalizeInstruction(input)
+  const verbs = /[\u4e00-\u9fff]/.test(text) ? MAIN_VERBS_ZH : MAIN_VERBS_EN
+  for (const verb of verbs) {
+    const re = new RegExp(`(?:^|请|帮我|麻烦|给我|用|把|将|please|kindly|can you|would you|help me|to)\\s*${verb}([^，。；！？、,.!?;:\\n]{1,30})`)
+    const m = re.exec(text)
+    if (m !== null) {
+      const object = m[1].trim()
+      if (object.length > 0) return { verb, object }
+    }
+  }
+  return undefined
+}
+
 /** Detect the two-level subcategory of an instruction (given its coarse type). */
 export function detectTaskSubtype(input: string, type: TaskType): TaskSubtype | undefined {
   if (type === 'other') return undefined
-  const { item, score } = bestScoreByKeywords(TASK_SUBTYPES[type], input.toLowerCase())
+  const { item, score } = bestScoreByKeywords(TASK_SUBTYPES[type], normalizeInstruction(input))
   return score > 0 ? item?.key : undefined
 }
 
@@ -238,7 +278,7 @@ const MEASURABLE_RE = /(?:\d+(?:\.\d+)?\s*(?:个|条|页|字|份|次|秒|分钟|
 
 /** Whether the instruction carries measurable signals (quantity/deadline). */
 export function detectMeasurable(input: string): boolean {
-  return MEASURABLE_RE.test(input)
+  return MEASURABLE_RE.test(normalizeInstruction(input))
 }
 
 /** The four goal-drift states between two iterations. */
@@ -446,6 +486,12 @@ export function buildSituationProfile(input: string, context?: string): Situatio
   const task: TaskProfile = { type: taskType }
   if (subtype !== undefined) task.subtype = subtype
   if (detectMeasurable(input)) task.measurable = true
+  // 主谓宾抽取（1.4.8，阶段一）：保守命中才填充，供「核心动作」注入。
+  const mainAction = extractMainVerbObject(input)
+  if (mainAction !== undefined) {
+    task.mainVerb = mainAction.verb
+    task.object = mainAction.object
+  }
   return cacheProfile(cacheKey, { version: SITUATION_PROFILE_VERSION, role, task, goal: buildGoalProfile(input) })
 }
 
@@ -539,6 +585,12 @@ export function renderSituationBlock(
   if (goal.primary !== undefined) parts.push(en ? `Goal: ${goal.primary}` : `目标：${goal.primary}`)
   if (goal.constraints.length > 0) {
     parts.push(en ? `Constraints: ${goal.constraints.join('; ')}` : `约束：${goal.constraints.join('；')}`)
+  }
+  // 核心动作（1.4.8）：主谓宾抽取保守命中时注入——但仅作为已有画像信号的
+  // 补充（ADR-009 零注入原则：generic 指令无任何信号时仍不渲染）。
+  const task = profile.task
+  if (level !== 'minimal' && parts.length > 0 && task.mainVerb !== undefined && task.object !== undefined) {
+    parts.push(en ? `Core action: ${task.mainVerb} ${task.object}` : `核心动作：${task.mainVerb}${task.object}`)
   }
   if (drift !== undefined && drift !== 'unchanged') parts.push(driftLine(drift, en))
   if (parts.length === 0) return ''
