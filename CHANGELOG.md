@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.4.6] - 2026-08-20
+
+- **输入侧成本可观测 + 内置示例开关（省 token 定向优化）**：
+  - `/optimize-stats` 扩展 `INPUT:<n>`（`stats.lastInputTokens`，`generateOnce` 用
+    `estimateTextTokens(system)` 记录）——输出 token 低不代表总成本低，输入侧
+    （模板/情境/示例/上下文）才是大头，现在一眼可见。
+  - 新增 `builtinExamples` 配置（默认 `true`）：`false` 时未显式配置 `examples`
+    也不注入内置示例——短指令场景每次省 ~200 输入 token。`builtinExamples` 经
+    `PromptBuildContext` → `buildOptimizeSystem/IterateSystem` →
+    `buildOptimizePrompt/IteratePrompt` → `metaBlocks` 穿透（可选参数，向后兼容）。
+  - 测试 372 → 374（builtinExamples 关闭不注入示例、INPUT 统计 > 0）。
+- 测试 374 全绿（typecheck / test / build）。
+
 ## [1.4.5] - 2026-08-20
 
 - **流式早停修复（默认关闭 + 加固，防半句截断）**：

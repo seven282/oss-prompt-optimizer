@@ -156,7 +156,7 @@ export function registerOptimizeCommand(ctx: Context, service: PromptOptimizerSe
       const stats = service.getStats()
       return {
         kind: 'success',
-        text: `OPTIMIZE_STATS:TOKENS:${stats.lastOutputTokens}|CALLS:${stats.lastRunCalls}|LASTMSCALL:${stats.lastCallMs}`,
+        text: `OPTIMIZE_STATS:TOKENS:${stats.lastOutputTokens}|INPUT:${stats.lastInputTokens}|CALLS:${stats.lastRunCalls}|LASTMSCALL:${stats.lastCallMs}`,
       }
     },
   })

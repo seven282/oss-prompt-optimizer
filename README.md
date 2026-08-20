@@ -167,6 +167,7 @@ dsh plugin --profile web remove oss-prompt-optimizer
 | `metaPromptLanguage` | `'auto'` \| `'中文'` \| `'英文'` | `'auto'` | 优化器角色文档（元提示词）的语言；`'auto'` 按指令语言自动检测（汉字占比 ≥30% 用中文文档，否则英文），`'中文'`/`'英文'` 固定。输出语言仍由 `outputLanguage` 独立控制。运行时可用 `/optimizer-language auto\|中文\|英文` 固定或恢复自动 |
 | `extraInstructions` | string | 无 | 追加到元提示词的部署自定义规则（如领域要求/风格） |
 | `examples` | array | 内置回退 | few-shot 示例对 `[{input, output}]`，注入元提示词示范（仅 `sections` 模式注入）；未配置时按任务类型 + 角色文档语言自动注入 1 对内置示例（code/writing/analysis/ops，中英各 4 对，`other` 回落文案类），显式配置覆盖内置 |
+| `builtinExamples` | boolean | `true` | 未配置 `examples` 时是否注入内置示例；`false` 完全关闭（短指令场景省 ~200 token/次输入） |
 | `minSectionChars` | int ≥0 | `10` | 每段正文最少有效字符；`0` 关闭内容校验（仅查标题） |
 | `maxTokenRetryFactor` | number 1–3 | `2` | 输出触顶时按该倍数跳档扩容（1200→2400→4800…），扩容不消耗重试次数、从截断处续写；`1` 关闭 |
 | `maxTokensCap` | int 1–128000 | `8000` | 自动扩容的上限；`<= maxTokens` 关闭扩容（扩容不消耗重试次数） |
@@ -258,8 +259,9 @@ dsh plugin --profile web remove oss-prompt-optimizer
 - **质量保障**：fast 档只省"纠错重试"，**首次输出的四段/内容校验照常执行**；
   `maxCalls: 3` 保留触顶扩容（长输出不截断）；缓存/热启动/上下文/诊断护栏全部保留
 - **时长**：单次模型延迟即总时长——flash 级模型通常 **1.5–4s**；缓存命中 <100ms
-- **观测**：`/optimize-stats` 返回 `TOKENS|CALLS|LASTMSCALL`（本次调用次数 +
-  最近单次调用毫秒）——先确认瓶颈是模型延迟还是多次调用
+- **观测**：`/optimize-stats` 返回 `TOKENS|INPUT|CALLS|LASTMSCALL`（本次输出 token +
+  输入侧 prompt token + 调用次数 + 末次调用耗时）——先确认瓶颈是模型延迟、输入侧
+  成本还是多次调用
 - **前提**：模型须为快速档（flash 级、无 reasoningEffort）；慢/推理模型单次即超
   3–5s，属模型瓶颈，需在 harness 侧换模型
 

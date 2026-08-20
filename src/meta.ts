@@ -258,6 +258,7 @@ function metaBlocks(
   subtype: TaskSubtype | undefined,
   drift: GoalDrift | undefined,
   level: SituationProfileLevel | undefined,
+  builtinExamples?: boolean,
 ): MetaBlocks {
   const pinned = language !== undefined && language !== 'auto' && language.length > 0
   const langRule = pinned ? `- 输出语言固定为：${language}。\n` : ''
@@ -266,10 +267,11 @@ function metaBlocks(
     : ''
   const en = metaLanguage === 'en'
   // Explicit examples win; otherwise fall back to the built-in pair matched to
-  // the task type and role-document language.
+  // the task type and role-document language — unless `builtinExamples` is
+  // explicitly false (1.4.6: short-instruction scenarios may want no example).
   const effectiveExamples = examples !== undefined && examples.length > 0
     ? examples
-    : resolveBuiltinExamples(en, taskType)
+    : (builtinExamples === false ? [] : resolveBuiltinExamples(en, taskType))
   const exampleBlock = outputStyle !== 'plain' && effectiveExamples.length > 0
     ? `参考以下示例的格式与风格（示例仅为示范，不要照抄内容）：\n${effectiveExamples
         .map((e, i) => `示例 ${i + 1}：\n原始指令：${e.input}\n优化结果：\n${e.output}`)
@@ -385,10 +387,11 @@ export function buildOptimizePrompt(
   maxOutputTokens?: number,
   profile?: SituationProfile,
   level?: SituationProfileLevel,
+  builtinExamples?: boolean,
 ): string {
   const template = metaLanguage === 'en' ? templates.optimizeEn : templates.optimizeZh
   const resolvedProfile = profile ?? buildSituationProfile(input, context)
-  const rendered = renderBlocks(template, metaBlocks(language, extraInstructions, examples, outputStyle, metaLanguage, diagnosis, context, taskType ?? resolvedProfile.task.type, maxOutputTokens, resolvedProfile, resolvedProfile.task.subtype, undefined, level))
+  const rendered = renderBlocks(template, metaBlocks(language, extraInstructions, examples, outputStyle, metaLanguage, diagnosis, context, taskType ?? resolvedProfile.task.type, maxOutputTokens, resolvedProfile, resolvedProfile.task.subtype, undefined, level, builtinExamples))
   return rendered.replace('{{原始指令}}', input)
 }
 
@@ -432,10 +435,11 @@ export function buildIteratePrompt(
   profile?: SituationProfile,
   drift?: GoalDrift,
   level?: SituationProfileLevel,
+  builtinExamples?: boolean,
 ): string {
   const template = metaLanguage === 'en' ? templates.iterateEn : templates.iterateZh
   const resolvedProfile = profile ?? buildSituationProfile(instruction, context)
-  const rendered = renderBlocks(template, metaBlocks(language, extraInstructions, examples, outputStyle, metaLanguage, diagnosis, context, taskType ?? resolvedProfile.task.type, maxOutputTokens, resolvedProfile, resolvedProfile.task.subtype, drift, level))
+  const rendered = renderBlocks(template, metaBlocks(language, extraInstructions, examples, outputStyle, metaLanguage, diagnosis, context, taskType ?? resolvedProfile.task.type, maxOutputTokens, resolvedProfile, resolvedProfile.task.subtype, drift, level, builtinExamples))
   return rendered.replace(/\{\{上次结果\}\}|\{\{迭代指令\}\}/g, (match) =>
     match === '{{上次结果}}' ? lastResult : instruction,
   )

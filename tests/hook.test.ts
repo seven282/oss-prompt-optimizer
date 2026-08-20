@@ -48,6 +48,7 @@ const BASE_CONFIG: Config = {
   senseNeeds: false,
   earlyStopTailChunks: 12,
   earlyStopTailGrowth: 48,
+  builtinExamples: true,
 }
 
 const FOUR_SECTIONS = `## Role

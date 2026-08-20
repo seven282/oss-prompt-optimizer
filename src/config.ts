@@ -205,6 +205,13 @@ export interface Config {
    */
   earlyStop: boolean
   /**
+   * Whether to inject the built-in few-shot example pair when no explicit
+   * `examples` are configured (1.4.0+). `false` disables the built-ins —
+   * useful for short instructions where the example pair would dominate the
+   * prompt-side token budget (1.4.6). Explicit `examples` always win.
+   */
+  builtinExamples: boolean
+  /**
    * Template set id for the optimizer role documents. `'default'` (the only
    * built-in) uses the shipped skeletons; unknown ids fail the load loudly.
    * Custom skeletons come from `metaPromptTemplate`.
@@ -271,6 +278,7 @@ export const Config: z<Config> = z.object({
   goalAlignmentRetry: z.boolean().default(true),
   optimizationProfile: z.union(['balanced', 'fast']).default('balanced'),
   earlyStop: z.boolean().default(false),
+  builtinExamples: z.boolean().default(true),
   templateId: z.string().default('default'),
   metaPromptTemplate: z.object({
     optimizeZh: z.string(),

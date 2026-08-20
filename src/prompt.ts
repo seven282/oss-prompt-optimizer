@@ -20,6 +20,9 @@ export interface PromptBuildContext {
   maxOutputTokens?: number
   /** Situation-profile injection budget (`situationProfileLevel`). */
   situationProfileLevel?: SituationProfileLevel
+  /** Whether to inject the built-in example pair when no explicit examples
+   *  are configured (`builtinExamples`; undefined = on). */
+  builtinExamples?: boolean
 }
 
 /** Build the system prompt for one `optimize` model call. Pure function. */
@@ -44,6 +47,7 @@ export function buildOptimizeSystem(
     ctx.maxOutputTokens,
     profile,
     ctx.situationProfileLevel,
+    ctx.builtinExamples,
   )
 }
 
@@ -73,5 +77,6 @@ export function buildIterateSystem(
     profile,
     drift,
     ctx.situationProfileLevel,
+    ctx.builtinExamples,
   )
 }

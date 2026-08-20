@@ -67,6 +67,7 @@ const DEFAULT_CONFIG: Config = {
   model: 'deepseek-v4-flash',
   earlyStopTailChunks: 12,
   earlyStopTailGrowth: 48,
+  builtinExamples: true,
 }
 
 /** Build a text-only chunk stream (delta-only, tolerated by BlockAssembler). */
@@ -565,8 +566,22 @@ Markdown 文档，不超过 500 字。`
     expect(result.prompt).toContain('尾'.repeat(80))
   })
 
-  it('injects the goal-drift line into an iterate system prompt', async () => {
-    // The previous prompt carries a constraint the new instruction drops,
+  it('skips built-in examples when builtinExamples is false (1.4.6)', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    const service = makeService(state, { ...DEFAULT_CONFIG, builtinExamples: false })
+    const result = await service.optimize('x')
+    expect(result.optimized).toBe(true)
+    expect(state.streamCalls[0].system).not.toContain('示例 1')
+  })
+
+  it('reports the prompt-side input tokens of the last call (1.4.6)', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    const service = makeService(state, { ...DEFAULT_CONFIG })
+    await service.optimize('x')
+    expect(service.getStats().lastInputTokens).toBeGreaterThan(0)
+  })
+
+  it('injects the goal-drift line into an iterate system prompt', async () => {    // The previous prompt carries a constraint the new instruction drops,
     // so the iterate system must tell the model what changed. The first
     // output misses the new goal anchor (周报), triggering a retry whose
     // second output carries it.

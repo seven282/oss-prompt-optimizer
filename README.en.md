@@ -132,6 +132,7 @@ Set plugin options in `cordis.patch.yml` (every value below also has a schema de
 | `metaPromptLanguage` | `'auto'` \| `'中文'` \| `'英文'` | `'auto'` | Language of the optimizer role document (meta-prompt). `'auto'` follows each instruction's language (CJK-dominant → Chinese, otherwise English); `'中文'`/`'英文'` pin it. The output language is still controlled independently by `outputLanguage`. Pin-able at runtime via `/optimizer-language auto\|中文\|英文` |
 | `extraInstructions` | string | none | Deployment-specific rules appended to the meta-prompt |
 | `examples` | array | built-in fallback | Few-shot pairs `[{input, output}]` injected into the meta-prompt (`sections` style only); when unset, one built-in pair matched to the task type and role-document language is injected automatically (code/writing/analysis/ops × zh/en; `other` falls back to writing); explicit config overrides the built-ins |
+| `builtinExamples` | boolean | `true` | Whether to inject the built-in example pair when no explicit `examples` are set; `false` disables them (saves ~200 prompt-side tokens per call for short instructions) |
 | `minSectionChars` | int ≥0 | `10` | Minimum meaningful characters per section body; `0` disables the content check |
 | `maxTokenRetryFactor` | number 1–3 | `2` | Jump-expansion multiplier when the output hits `maxTokens` (1200→2400→4800…); expansion does not consume the retry budget and resumes from the truncated prefix; `1` disables |
 | `maxTokensCap` | int 1–128000 | `8000` | Hard cap for auto-expanded `maxTokens`; `<= maxTokens` disables expansion (expansion does not consume the retry budget) |
@@ -227,8 +228,7 @@ set as needed (default 1200, auto-expanded on truncation) to avoid unbounded gen
   context / diagnosis guards all remain.
 - **Latency**: a single model call is the total — flash-tier models usually **1.5–4 s**;
   cache hits <100 ms.
-- **Observe**: `/optimize-stats` returns `TOKENS|CALLS|LASTMSCALL` (last run's call count +
-  last single-call ms) — confirm whether the bottleneck is model latency or call count.
+- **Observe**: `/optimize-stats` returns `TOKENS|INPUT|CALLS|LASTMSCALL` (last run's output tokens + prompt-side input tokens + call count + last single-call ms) — confirm whether the bottleneck is model latency, input-side cost, or call count.
 - **Prerequisite**: the model must be fast-tier (flash, no reasoning effort); a slow/reasoning
   model alone exceeds 3–5 s per call — a model-side bottleneck, switch models on the harness side.
 
