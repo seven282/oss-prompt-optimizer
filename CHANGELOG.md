@@ -1,8 +1,19 @@
 # Changelog
 
+## [1.4.1] - 2026-08-20
+
+- **输出按句断行规则（`meta.ts`，中英 × 结构/自查 8 处）**：
+  - 结构/自查增"正文按句断行——每句或每个要点独占一行，段落间空一行；避免
+    超长单行"（sections/plain + 英文同步）。
+  - 背景：优化结果常为超长单行，composer/聊天/终端各场景显示不佳；文本层自带
+    `\n` 后三场景通吃，显示层零改动。
+  - P1 已评估：composer 输入框折行属宿主 UI 域，client.js 不注入侵入式样式，
+    超长单行由宿主 CSS 兜底（P0 后长单行已大幅减少）。
+- 测试 364 全绿（typecheck / test / build）。
+
 ## [1.4.0] - 2026-08-20
 
-- **内置默认示例集（`meta.ts`，对标 Workbuddy"带示例"体验）**：
+- **内置默认示例集**：
   - 新增 `BUILTIN_EXAMPLES`：中英 × 4 任务类型（code/writing/analysis/ops）共
     8 对高质量四段示例；`resolveBuiltinExamples` 按角色文档语言 + `detectTaskType`
     匹配注入 1 对（`other` 回落 writing）。
