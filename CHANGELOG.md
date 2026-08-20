@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.5.1] - 2026-08-20
+
+- **子类模板库 + 快速模板命令（P0+P1）**：
+  - P0 `SUB_TOPIC_TEMPLATES`（meta.ts）：18 个子类各一"Role/Task/Format 场景
+    骨架"（中英），`detectTaskSubtype` 命中时随 `{{任务类型}}` 注入——模型直接
+    填充骨架，不再自造结构（ADR-009 内容级门控：仅命中时注入）。
+  - P1 `/template <场景>` 命令（command.ts）：按场景名/关键词匹配子类
+    （`matchScene`，复用 `subtypeKeywords`），返回可填四段模板
+    （`renderSceneTemplate`，含占位符）——**不调模型、零延迟零 token**；
+    覆盖 18 场景，支持中英场景名。
+  - README 两版新增「快速场景模板（/template）」小节。
+- 测试 387 → 389（template 命中返回四段、未知/空场景报错）。
+
 ## [1.5.0] - 2026-08-20
 
 - **并行线 B：ADR-011 步 1-2 落地（可替换分类器接口 + 配置）**：

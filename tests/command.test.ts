@@ -102,7 +102,7 @@ const invocation = (rawInput: string) => ({
 describe('registerOptimizeCommand', () => {
   it('registers the /optimize, /auto-optimize, /optimizer-language and /optimize-stats commands', () => {
     const { commands } = makeService(() => textStream(FOUR_SECTIONS))
-    expect(commands.map((c) => c.name)).toEqual(['optimize', 'dream', 'auto-optimize', 'optimizer-language', 'optimize-stats'])
+    expect(commands.map((c) => c.name)).toEqual(['optimize', 'dream', 'auto-optimize', 'optimizer-language', 'optimize-stats', 'template'])
     const optimize = commands.find((c) => c.name === 'optimize')!
     expect(optimize.description).toContain('professional')
     expect(optimize.input?.hint).toBeTruthy()
@@ -302,5 +302,28 @@ describe('/optimize-stats command', () => {
     expect(result).toMatchObject({ kind: 'success' })
     const text = (result as { text: string }).text
     expect(text).toMatch(/OPTIMIZE_STATS:TOKENS:\d+\|INPUT:\d+\|CALLS:1\|LASTMSCALL:\d+/)
+  })
+})
+
+describe('/template quick command (1.5.1)', () => {
+  it('returns a fillable scene template for a matched scene', async () => {
+    const { commands } = makeService(() => textStream(FOUR_SECTIONS))
+    const tmpl = commands.find((c) => c.name === 'template')!
+    const res = (await tmpl.handler(invocation('周报'))) as { kind: string; text: string }
+    expect(res.kind).toBe('success')
+    const text = res.text
+    expect(text).toContain('## Role')
+    expect(text).toContain('## Task')
+    expect(text).toContain('## Format')
+    expect(text).toContain('场景骨架')
+  })
+
+  it('errors on an unknown scene and on an empty argument', async () => {
+    const { commands } = makeService(() => textStream(FOUR_SECTIONS))
+    const tmpl = commands.find((c) => c.name === 'template')!
+    const a = (await tmpl.handler(invocation('不存在的场景xyz'))) as { kind: string }
+    const b = (await tmpl.handler(invocation(''))) as { kind: string }
+    expect(a.kind).toBe('error')
+    expect(b.kind).toBe('error')
   })
 })

@@ -2,6 +2,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { CommandResult } from '@deepseek-ai/dsh-commands'
 import { OptimizeError, OPTIMIZE_ERROR_TEXT } from './errors.js'
 import { gatherConversationContext, type ContextMessage } from './context.js'
+import { matchScene, renderSceneTemplate } from './meta.js'
 import type { PromptOptimizerService } from './optimizer.js'
 
 /** Stable machine-readable token for the current role-document language mode. */
@@ -158,6 +159,26 @@ export function registerOptimizeCommand(ctx: Context, service: PromptOptimizerSe
         kind: 'success',
         text: `OPTIMIZE_STATS:TOKENS:${stats.lastOutputTokens}|INPUT:${stats.lastInputTokens}|CALLS:${stats.lastRunCalls}|LASTMSCALL:${stats.lastCallMs}`,
       }
+    },
+  })
+
+  // Quick scene template (1.5.1): `/template <场景>` returns a ready-to-fill
+  // four-section template for a detected subcategory — no model call, zero
+  // latency/cost. The client renders it as-is.
+  ctx.commands.register({
+    name: 'template',
+    description: 'Return a ready-to-fill scene template (no model call)',
+    handler: async (invocation): Promise<CommandResult> => {
+      const arg = invocation.rawInput.trim()
+      if (arg.length === 0) {
+        return { kind: 'error', text: 'prompt-optimize: 用法 /template <场景>（如：周报、邮件、数据分析、部署…）' }
+      }
+      const subtype = matchScene(arg)
+      if (subtype === undefined) {
+        return { kind: 'error', text: `prompt-optimize: 未识别场景 "${arg}"；支持：周报/邮件/文案/翻译/创作/数据分析/研究/评估/预测/bug修复/新功能/重构/审查/脚本/部署/安装/排查/运维` }
+      }
+      const en = service.getMetaPromptLanguage() === 'en'
+      return { kind: 'success', text: renderSceneTemplate(subtype, en) }
     },
   })
 }

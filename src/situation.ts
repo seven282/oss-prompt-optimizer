@@ -306,6 +306,15 @@ export function subtypeLabel(key: TaskSubtype, en: boolean): string {
   return key
 }
 
+/** Keywords of a subcategory (scene matching, e.g. `/template`, 1.5.1). */
+export function subtypeKeywords(key: TaskSubtype): readonly string[] {
+  for (const defs of Object.values(TASK_SUBTYPES)) {
+    const def = defs.find((d) => d.key === key)
+    if (def !== undefined) return def.keywords
+  }
+  return []
+}
+
 /** Measurable-signal markers: quantities with units, range verbs, deadlines. */
 const MEASURABLE_RE = /(?:\d+(?:\.\d+)?\s*(?:个|条|页|字|份|次|秒|分钟|小时|天|周|月|年|%|人|篇|words?|pages?|items?|minutes?|hours?|days?|percent))|(?:至少|不超过|不少于|多于|少于|最多|截止|今天|明天|本周|下周|月底)|\b(?:within|at\s+least|at\s+most|no\s+more\s+than|no\s+fewer\s+than|deadline)\b/i
 

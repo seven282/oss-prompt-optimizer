@@ -94,6 +94,10 @@ Once enabled, the host enters "optimize before sending" mode: the `agent/pre-ste
 
 `/dream <instruction>` = standard optimization + **需求感应 (needs sensing)**: the result appends a clearly marked `--- 延伸洞察（AI 推断，供你选用，非事实）---` appendix (deep goal / implicit constraints / quality criteria / likely follow-ups); inferences never mix into the prompt body and can be discarded freely. Equivalent to per-call `senseNeeds: true`.
 
+## Quick scene templates (/template)
+
+`/template <scene>` returns a ready-to-fill four-section template (Role / Task / Context / Format skeleton with placeholders) — **no model call, zero latency/cost** — for common scenes like a weekly report, email, copy, translation, data analysis, deployment checklist, etc. Covers all 18 subcategories (zh/en scene names and keywords matched); for personalized needs use `/optimize` (1.5.1).
+
 ## Auto-optimize hook
 
 Enable it in `cordis.patch.yml`:

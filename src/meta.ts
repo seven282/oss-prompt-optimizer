@@ -127,6 +127,124 @@ const ROLE_LIBRARY: Record<Exclude<TaskType, 'other'>, { zh: string; en: string 
   },
 }
 
+/**
+ * Scene-template library (1.5.1): one compact Role/Task/Format skeleton per
+ * subcategory. Injected into the `{{任务类型}}` block when the subtype is
+ * detected — the model fills in the specifics instead of inventing a shape.
+ * Also drives the `/template <scene>` quick command (no model call).
+ */
+const SUB_TOPIC_TEMPLATES: Record<TaskSubtype, { zh: string; en: string }> = {
+  'code-bugfix': {
+    zh: '场景骨架：Role 资深工程师；Task 定位根因→最小修复→回归验证；Format 根因分析 + 改动点 + 测试结果。',
+    en: 'Scene skeleton: Role senior engineer; Task root-cause → minimal fix → regression check; Format root cause + changes + test results.',
+  },
+  'code-feature': {
+    zh: '场景骨架：Role 资深工程师；Task 明确需求→方案→实现→测试；Format 功能说明 + 关键实现 + 使用示例。',
+    en: 'Scene skeleton: Role senior engineer; Task requirements → design → implementation → tests; Format feature notes + key code + usage example.',
+  },
+  'code-refactor': {
+    zh: '场景骨架：Role 资深工程师；Task 保持行为等价→改进结构/可读性；Format 前后对比 + 行为不变说明。',
+    en: 'Scene skeleton: Role senior engineer; Task keep behavior identical while improving structure; Format before/after + behavior-preserved note.',
+  },
+  'code-review': {
+    zh: '场景骨架：Role 资深工程师；Task 按可读性/安全/性能/测试覆盖审查；Format 逐条问题 + 严重度 + 建议。',
+    en: 'Scene skeleton: Role senior engineer; Task review readability/security/perf/test coverage; Format itemized issues + severity + suggestions.',
+  },
+  'code-script': {
+    zh: '场景骨架：Role 工程师；Task 明确输入输出→处理异常；Format 可运行代码 + 用法/依赖说明。',
+    en: 'Scene skeleton: Role engineer; Task define I/O and handle errors; Format runnable code + usage/deps.',
+  },
+  'writing-report': {
+    zh: '场景骨架：Role 资深撰稿人；Task 结论先行→要点支撑；Format 标题 + 结构 + 字数限制。',
+    en: 'Scene skeleton: Role senior writer; Task lead with the conclusion, back with points; Format headline + structure + length cap.',
+  },
+  'writing-email': {
+    zh: '场景骨架：Role 商务沟通者；Task 目的→称呼→正文→结尾；Format 语气 + 篇幅 + 附件说明。',
+    en: 'Scene skeleton: Role business communicator; Task purpose → greeting → body → sign-off; Format tone + length + attachments.',
+  },
+  'writing-copy': {
+    zh: '场景骨架：Role 品牌文案；Task 核心卖点→行动号召；Format 标题 + 正文 + 备选标题。',
+    en: 'Scene skeleton: Role brand copywriter; Task key selling points → call to action; Format headline + body + alternatives.',
+  },
+  'writing-translate': {
+    zh: '场景骨架：Role 专业译者；Task 保义→通顺→术语一致；Format 译文 + 关键术语表。',
+    en: 'Scene skeleton: Role professional translator; Task faithful → fluent → consistent terms; Format translation + glossary.',
+  },
+  'writing-creative': {
+    zh: '场景骨架：Role 创作者；Task 题材→风格→结构；Format 篇幅 + 分节。',
+    en: 'Scene skeleton: Role writer; Task genre → style → structure; Format length + sections.',
+  },
+  'analysis-data': {
+    zh: '场景骨架：Role 数据分析师；Task 清洗→指标→趋势→结论；Format 结论先行 + 图表/数据支撑。',
+    en: 'Scene skeleton: Role data analyst; Task clean → metrics → trends → conclusion; Format conclusion first + charts/data.',
+  },
+  'analysis-research': {
+    zh: '场景骨架：Role 研究员；Task 资料→框架→论证→结论；Format 引用来源 + 局限性。',
+    en: 'Scene skeleton: Role researcher; Task sources → framework → argument → conclusion; Format citations + limitations.',
+  },
+  'analysis-review': {
+    zh: '场景骨架：Role 评估者；Task 明确标准→逐项对比→结论；Format 评分表 + 依据。',
+    en: 'Scene skeleton: Role evaluator; Task criteria → compare → verdict; Format scorecard + evidence.',
+  },
+  'analysis-forecast': {
+    zh: '场景骨架：Role 预测分析师；Task 依据→模型→区间；Format 结论 + 置信度 + 风险。',
+    en: 'Scene skeleton: Role forecast analyst; Task evidence → model → range; Format conclusion + confidence + risks.',
+  },
+  'ops-deploy': {
+    zh: '场景骨架：Role 运维工程师；Task 环境→步骤→验证；Format 命令 + 预期输出 + 回滚。',
+    en: 'Scene skeleton: Role ops engineer; Task environment → steps → verify; Format commands + expected output + rollback.',
+  },
+  'ops-install': {
+    zh: '场景骨架：Role 运维工程师；Task 环境检查→安装→验证；Format 命令 + 注意事项。',
+    en: 'Scene skeleton: Role ops engineer; Task check env → install → verify; Format commands + caveats.',
+  },
+  'ops-troubleshoot': {
+    zh: '场景骨架：Role 排查专家；Task 定位→根因→解决；Format 排查步骤 + 证据 + 修复。',
+    en: 'Scene skeleton: Role troubleshooter; Task locate → root cause → resolve; Format steps + evidence + fix.',
+  },
+  'ops-maintain': {
+    zh: '场景骨架：Role 运维工程师；Task 巡检→备份→告警处理；Format 检查清单 + 计划。',
+    en: 'Scene skeleton: Role ops engineer; Task inspect → backup → alert handling; Format checklist + schedule.',
+  },
+}
+
+/**
+ * Render a ready-to-fill four-section template for a subcategory (drives the
+ * `/template <scene>` quick command — no model call). The scene skeleton is
+ * quoted as reference, then a fillable Role/Task/Context/Format skeleton.
+ */
+export function renderSceneTemplate(subtype: TaskSubtype, en: boolean): string {
+  const skeleton = en ? SUB_TOPIC_TEMPLATES[subtype].en : SUB_TOPIC_TEMPLATES[subtype].zh
+  const hint = en ? 'Scene skeleton reference: ' : '场景骨架参考：'
+  return en
+    ? `${hint}${skeleton}\n\n## Role\n{{role}}\n\n## Task\n{{task}}\n\n## Context\n{{background and constraints}}\n\n## Format\n{{output format}}\n`
+    : `${hint}${skeleton}\n\n## Role\n{{角色}}\n\n## Task\n{{任务}}\n\n## Context\n{{背景与约束}}\n\n## Format\n{{输出格式}}\n`
+}
+
+/**
+ * Match a `/template` query against subcategory keys and their zh/en labels.
+ * Returns the best-matching subcategory or `undefined`.
+ */
+export function matchScene(query: string): TaskSubtype | undefined {
+  const q = query.trim().toLowerCase()
+  if (q.length === 0) return undefined
+  let best: TaskSubtype | undefined
+  let bestScore = 0
+  for (const subtype of Object.keys(SUB_TOPIC_TEMPLATES) as TaskSubtype[]) {
+    const zh = subtypeLabel(subtype, false)
+    const en = subtypeLabel(subtype, true)
+    let score = 0
+    if (subtype.includes(q)) score = 3
+    else if (en.includes(q) || zh.toLowerCase().includes(q)) score = 2
+    else if (subtypeKeywords(subtype).some((k) => k.toLowerCase().includes(q) || q.includes(k.toLowerCase()))) score = 1
+    if (score > bestScore) {
+      bestScore = score
+      best = subtype
+    }
+  }
+  return best
+}
+
 /** Section-style structure paragraph (the default output shape). */
 const STRUCTURE_SECTIONS = `段落结构：
 - 输出必须包含四段，标题严格使用英文：## Role、## Task、## Context、## Format。
@@ -195,7 +313,7 @@ const PLACEHOLDER_MAP: Readonly<Record<string, keyof MetaBlocks>> = {
 import { DEFAULT_TEMPLATES, type TemplateSet } from './templates.js'
 import type { PromptExample } from './config.js'
 import { buildContextBlock } from './context.js'
-import { buildSituationProfile, renderSituationBlock, subtypeLabel, type GoalDrift, type SituationProfile, type SituationProfileLevel, type TaskSubtype } from './situation.js'
+import { buildSituationProfile, renderSituationBlock, subtypeKeywords, subtypeLabel, type GoalDrift, type SituationProfile, type SituationProfileLevel, type TaskSubtype } from './situation.js'
 
 /**
  * Built-in few-shot examples (1 pair per task type × language). Injected when
@@ -318,6 +436,11 @@ function metaBlocks(
         ? `- Subtype hint: this instruction falls into the 【${subtypeLabel(subtype, true)}】 category.\n`
         : `- 子类提示：该指令属于【${subtypeLabel(subtype, false)}】类任务。\n`)
     : ''
+  // 场景骨架（1.5.1）：子类命中时注入 SUB_TOPIC_TEMPLATES，给模型一个可直接
+  // 填充的 Role/Task/Format 骨架（ADR-009 内容级门控——仅命中时注入）。
+  const sceneBlock = subtype !== undefined
+    ? `${en ? SUB_TOPIC_TEMPLATES[subtype].en : SUB_TOPIC_TEMPLATES[subtype].zh}\n`
+    : ''
   // 角色参考（1.4.9）：画像无显式角色（低置信）时给模型一个可直接采用的角色
   // 三要素参考——与任务类型提示并列注入，不进情境画像。
   const roleLibraryBlock = taskType !== undefined && taskType !== 'other'
@@ -341,7 +464,7 @@ function metaBlocks(
     exampleBlock,
     diagnosis: diagnosisBlock,
     context: buildContextBlock(context ?? '', metaLanguage, outputStyle),
-    taskType: `${taskTypeBlock}${subtypeBlock}${roleLibraryBlock}`,
+    taskType: `${taskTypeBlock}${subtypeBlock}${roleLibraryBlock}${sceneBlock}`,
     length: lengthBlock,
     situation: situationBlock,
   }
