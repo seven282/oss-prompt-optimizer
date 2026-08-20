@@ -98,6 +98,38 @@ describe('buildOptimizePrompt', () => {
     expect(buildOptimizePrompt(INPUT, 'auto', undefined, [])).not.toContain('{{示例}}')
   })
 
+  it('injects a built-in example matched to the task type by default', () => {
+    // INPUT（周报）is a writing task (中文) → the zh/writing pair is injected.
+    const prompt = buildOptimizePrompt(INPUT)
+    expect(prompt).toContain('示例 1')
+    expect(prompt).toContain('原始指令：写一份新产品发布公告')
+    expect(prompt).not.toContain('{{示例}}')
+  })
+
+  it('matches the built-in example to a coding task', () => {
+    const prompt = buildOptimizePrompt('帮我写个 Python 脚本处理 Excel')
+    expect(prompt).toContain('原始指令：写一个 Python 脚本读取 CSV 并按指定列求和')
+  })
+
+  it('switches the built-in example by meta-prompt language', () => {
+    const prompt = buildOptimizePrompt(INPUT, 'auto', undefined, undefined, 'sections', 'en')
+    expect(prompt).toContain('Write a product launch announcement')
+  })
+
+  it('explicit examples override the built-in ones', () => {
+    const prompt = buildOptimizePrompt(INPUT, 'auto', undefined, [
+      { input: '写一首诗', output: '## Role\n诗人\n\n## Task\n写诗\n\n## Context\n背景\n\n## Format\n四行' },
+    ])
+    expect(prompt).toContain('原始指令：写一首诗')
+    expect(prompt).not.toContain('写一个 Python 脚本')
+  })
+
+  it('does not inject built-in examples into the plain style', () => {
+    const prompt = buildOptimizePrompt(INPUT, 'auto', undefined, undefined, 'plain')
+    expect(prompt).not.toContain('示例 1')
+    expect(prompt).not.toContain('{{示例}}')
+  })
+
   it('substitutes the structure and self-check placeholders', () => {
     const prompt = buildOptimizePrompt(INPUT)
     expect(prompt).not.toContain('{{输出结构}}')

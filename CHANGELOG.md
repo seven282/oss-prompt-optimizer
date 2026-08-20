@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.10] - 2026-08-20
+
+- **内置默认示例集（`meta.ts`，对标 Workbuddy"带示例"体验）**：
+  - 新增 `BUILTIN_EXAMPLES`：中英 × 4 任务类型（code/writing/analysis/ops）共
+    8 对高质量四段示例；`resolveBuiltinExamples` 按角色文档语言 + `detectTaskType`
+    匹配注入 1 对（`other` 回落 writing）。
+  - 未配置 `examples` 时自动注入（仅 sections 模式，行为与显式示例一致）；
+    显式配置始终覆盖内置；plain 模式不注入。
+  - 每次优化调用新增 ~150–250 token 输入，换取输出稳定性与专业性显著提升。
+- 测试 359 → 364（meta +5：默认注入、code 类型匹配、语言切换、显式覆盖、plain 不注入）。
+
 ## [1.3.9] - 2026-08-20
 
 - **模板文案精简（`meta.ts`，中英 × 结构/自查 8 条）**：去除冗余修饰与重复表述，

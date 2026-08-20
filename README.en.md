@@ -127,7 +127,7 @@ Set plugin options in `cordis.patch.yml` (every value below also has a schema de
 | `outputStyle` | `'sections'` \| `'plain'` | `'plain'` | Heading-free continuous prose (default, fewer tokens) or four-section headings |
 | `metaPromptLanguage` | `'auto'` \| `'中文'` \| `'英文'` | `'auto'` | Language of the optimizer role document (meta-prompt). `'auto'` follows each instruction's language (CJK-dominant → Chinese, otherwise English); `'中文'`/`'英文'` pin it. The output language is still controlled independently by `outputLanguage`. Pin-able at runtime via `/optimizer-language auto\|中文\|英文` |
 | `extraInstructions` | string | none | Deployment-specific rules appended to the meta-prompt |
-| `examples` | array | `[]` | Few-shot pairs `[{input, output}]` injected into the meta-prompt (`sections` style only) |
+| `examples` | array | built-in fallback | Few-shot pairs `[{input, output}]` injected into the meta-prompt (`sections` style only); when unset, one built-in pair matched to the task type and role-document language is injected automatically (code/writing/analysis/ops × zh/en; `other` falls back to writing); explicit config overrides the built-ins |
 | `minSectionChars` | int ≥0 | `10` | Minimum meaningful characters per section body; `0` disables the content check |
 | `maxTokenRetryFactor` | number 1–3 | `2` | Jump-expansion multiplier when the output hits `maxTokens` (1200→2400→4800…); expansion does not consume the retry budget and resumes from the truncated prefix; `1` disables |
 | `maxTokensCap` | int 1–128000 | `8000` | Hard cap for auto-expanded `maxTokens`; `<= maxTokens` disables expansion (expansion does not consume the retry budget) |
@@ -206,7 +206,7 @@ set as needed (default 1200, auto-expanded on truncation) to avoid unbounded gen
 
 ### Examples boost (recommended, more stable output)
 
-`examples` are few-shot demonstrations (default `[]`, injected in `sections` style only).
+`examples` are few-shot demonstrations (injected in `sections` style only; **when unset, the plugin injects one built-in example matched to the task type and language** — explicit config overrides the built-ins).
 Adding 1–2 high-quality pairs (one per task type) noticeably improves output stability
 and professionalism — especially for recurring scenes like coding / copywriting / analysis:
 

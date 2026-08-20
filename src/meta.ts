@@ -168,6 +168,58 @@ import type { PromptExample } from './config.js'
 import { buildContextBlock } from './context.js'
 import { buildSituationProfile, renderSituationBlock, subtypeLabel, type GoalDrift, type SituationProfile, type SituationProfileLevel, type TaskSubtype } from './situation.js'
 
+/**
+ * Built-in few-shot examples (1 pair per task type × language). Injected when
+ * the caller provides no explicit `examples` — the matched task-type pair is
+ * shown so the model has a concrete shape to follow (Workbuddy-style
+ * "with example" experience). Explicit `examples` always win over these.
+ */
+const BUILTIN_EXAMPLES: Record<MetaLanguage, Record<Exclude<TaskType, 'other'>, PromptExample>> = {
+  zh: {
+    code: {
+      input: '写一个 Python 脚本读取 CSV 并按指定列求和',
+      output: '## Role\n资深 Python 工程师，擅长 pandas。\n\n## Task\n编写脚本读取 CSV 并按指定列求和，输出结果文件；脚本须可直接运行并处理缺失值。\n\n## Context\n输入 CSV 路径；输出结果 CSV；不修改原文件。\n\n## Format\n完整可运行的 .py 代码 + 顶部使用说明（依赖、运行命令），不超过 200 行。',
+    },
+    writing: {
+      input: '写一份新产品发布公告',
+      output: '## Role\n资深品牌文案撰稿人。\n\n## Task\n写一份 200 字内的新产品发布公告，突出核心卖点并给出行动号召。\n\n## Context\n面向潜在用户；语气专业热情；不夸大功能。\n\n## Format\n标题 + 正文段落，附 3 个备选标题。',
+    },
+    analysis: {
+      input: '分析这份销售数据的趋势',
+      output: '## Role\n数据分析师，擅长趋势解读。\n\n## Task\n分析给定销售数据：识别整体趋势、显著波动及其可能原因，并给出结论。\n\n## Context\n只基于数据说话，不臆测；结论先行。\n\n## Format\n结论先行 + 支撑数据点 + 风险提示，200 字内。',
+    },
+    ops: {
+      input: '帮我部署这个服务到服务器',
+      output: '## Role\n资深运维工程师，熟悉 Linux 与 Nginx。\n\n## Task\n给出部署步骤：环境准备、代码上传、服务配置与启动验证；按顺序执行，每步含验证命令。\n\n## Context\n目标服务器为 Ubuntu；服务基于 Node.js；不做未说明的改动。\n\n## Format\n分步清单（每步：命令 + 预期输出），附回滚方案。',
+    },
+  },
+  en: {
+    code: {
+      input: 'Write a Python script to read a CSV and sum by a given column',
+      output: '## Role\nSenior Python engineer, proficient in pandas.\n\n## Task\nWrite a script that reads a CSV, sums by the given column, and writes a result file; the script must run as-is and handle missing values.\n\n## Context\nInput: local CSV path; output: result CSV; never modify the original file.\n\n## Format\nA complete runnable .py file plus a short header (dependencies, run command), under 200 lines.',
+    },
+    writing: {
+      input: 'Write a product launch announcement',
+      output: '## Role\nSenior brand copywriter.\n\n## Task\nWrite a launch announcement within 200 words that highlights the key selling points and ends with a call to action.\n\n## Context\nFor potential customers; professional yet warm tone; no exaggerated claims.\n\n## Format\nHeadline + body paragraphs, plus 3 alternative headlines.',
+    },
+    analysis: {
+      input: 'Analyze the trend in this sales data',
+      output: '## Role\nData analyst skilled at trend interpretation.\n\n## Task\nAnalyze the provided sales data: identify the overall trend, notable swings and their likely causes, and state the conclusion.\n\n## Context\nBase every claim on the data; no speculation; lead with the conclusion.\n\n## Format\nConclusion first, then supporting data points and caveats, within 200 words.',
+    },
+    ops: {
+      input: 'Deploy this service to the server',
+      output: '## Role\nSenior DevOps engineer, familiar with Linux and Nginx.\n\n## Task\nProvide deployment steps: environment prep, code upload, service config, and startup verification; execute in order, each step with a verification command.\n\n## Context\nTarget: Ubuntu server; the service is Node.js based; make no changes beyond what is stated.\n\n## Format\nA step-by-step checklist (command + expected output per step), with a rollback plan.',
+    },
+  },
+}
+
+/** Pick the built-in example pair for a language + task type (`other` falls back to writing). */
+function resolveBuiltinExamples(en: boolean, taskType: TaskType | undefined): readonly PromptExample[] {
+  const set = en ? BUILTIN_EXAMPLES.en : BUILTIN_EXAMPLES.zh
+  const key = taskType !== undefined && taskType !== 'other' ? taskType : 'writing'
+  return [set[key]]
+}
+
 // The role-document skeletons live in templates.ts (the data layer); they are
 // re-exported here so the public module surface stays `meta.js`.
 export { DEFAULT_TEMPLATES, META_ITERATE, META_ITERATE_EN, META_PROMPT, META_PROMPT_EN, validateTemplateSet } from './templates.js'
@@ -208,12 +260,17 @@ function metaBlocks(
   const extra = extraInstructions !== undefined && extraInstructions.trim().length > 0
     ? `${extraInstructions.trim()}\n`
     : ''
-  const exampleBlock = outputStyle !== 'plain' && examples !== undefined && examples.length > 0
-    ? `参考以下示例的格式与风格（示例仅为示范，不要照抄内容）：\n${examples
+  const en = metaLanguage === 'en'
+  // Explicit examples win; otherwise fall back to the built-in pair matched to
+  // the task type and role-document language.
+  const effectiveExamples = examples !== undefined && examples.length > 0
+    ? examples
+    : resolveBuiltinExamples(en, taskType)
+  const exampleBlock = outputStyle !== 'plain' && effectiveExamples.length > 0
+    ? `参考以下示例的格式与风格（示例仅为示范，不要照抄内容）：\n${effectiveExamples
         .map((e, i) => `示例 ${i + 1}：\n原始指令：${e.input}\n优化结果：\n${e.output}`)
         .join('\n\n')}\n`
     : ''
-  const en = metaLanguage === 'en'
   const diagnosisBlock = diagnosis !== undefined && diagnosis.trim().length > 0
     ? (en
         ? `- The previous output had the following problems; this output must fix them: ${diagnosis.trim()}\n`

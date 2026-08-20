@@ -158,7 +158,7 @@ dsh plugin --profile web remove oss-prompt-optimizer
 | `outputStyle` | `'sections'` \| `'plain'` | `'plain'` | 输出风格：无标题连贯正文（默认，更省 token）或四段标题 |
 | `metaPromptLanguage` | `'auto'` \| `'中文'` \| `'英文'` | `'auto'` | 优化器角色文档（元提示词）的语言；`'auto'` 按指令语言自动检测（汉字占比 ≥30% 用中文文档，否则英文），`'中文'`/`'英文'` 固定。输出语言仍由 `outputLanguage` 独立控制。运行时可用 `/optimizer-language auto\|中文\|英文` 固定或恢复自动 |
 | `extraInstructions` | string | 无 | 追加到元提示词的部署自定义规则（如领域要求/风格） |
-| `examples` | array | `[]` | few-shot 示例对 `[{input, output}]`，注入元提示词示范（仅 `sections` 模式注入） |
+| `examples` | array | 内置回退 | few-shot 示例对 `[{input, output}]`，注入元提示词示范（仅 `sections` 模式注入）；未配置时按任务类型 + 角色文档语言自动注入 1 对内置示例（code/writing/analysis/ops，中英各 4 对，`other` 回落文案类），显式配置覆盖内置 |
 | `minSectionChars` | int ≥0 | `10` | 每段正文最少有效字符；`0` 关闭内容校验（仅查标题） |
 | `maxTokenRetryFactor` | number 1–3 | `2` | 输出触顶时按该倍数跳档扩容（1200→2400→4800…），扩容不消耗重试次数、从截断处续写；`1` 关闭 |
 | `maxTokensCap` | int 1–128000 | `8000` | 自动扩容的上限；`<= maxTokens` 关闭扩容（扩容不消耗重试次数） |
@@ -235,7 +235,8 @@ dsh plugin --profile web remove oss-prompt-optimizer
 
 ### 示例增强（推荐，提高输出稳定性）
 
-`examples` 是 few-shot 示范（默认 `[]`，仅 `sections` 模式注入）。贴上 1–2 对
+`examples` 是 few-shot 示范（仅 `sections` 模式注入；**未配置时插件会自动注入
+按任务类型 + 语言匹配的内置示例**，显式配置覆盖内置）。贴上 1–2 对
 高质量示例（不同任务类型各一对），可显著提升输出稳定性与专业性——尤其适合
 "写代码 / 写文案 / 分析"这类高频场景：
 
