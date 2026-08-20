@@ -204,6 +204,52 @@ carries only the "enough" recent conversation (`contextMaxTokens`); ③ the outp
 set as needed (default 1200, auto-expanded on truncation) to avoid unbounded generation;
 ④ for format-insensitive tasks switching `outputStyle: 'plain'` is the single biggest win.
 
+### Examples boost (recommended, more stable output)
+
+`examples` are few-shot demonstrations (default `[]`, injected in `sections` style only).
+Adding 1–2 high-quality pairs (one per task type) noticeably improves output stability
+and professionalism — especially for recurring scenes like coding / copywriting / analysis:
+
+```yaml
+- insert:
+    - id: prompt-optimizer
+      name: 'oss-prompt-optimizer'
+      config:
+        outputStyle: 'sections'        # examples are injected in sections mode only
+        examples:
+          - input: '写一个 Python 脚本读取 CSV 并按指定列求和'
+            output: |
+              ## Role
+              资深 Python 工程师，擅长 pandas。
+
+              ## Task
+              编写脚本读取 CSV 并按指定列求和，输出结果文件；脚本须可直接运行并处理缺失值。
+
+              ## Context
+              输入 CSV 路径；输出结果 CSV；不修改原文件。
+
+              ## Format
+              完整可运行的 .py 代码 + 顶部使用说明（依赖、运行命令），不超过 200 行。
+          - input: '写一份新产品发布公告'
+            output: |
+              ## Role
+              资深品牌文案撰稿人。
+
+              ## Task
+              写一份 200 字内的新产品发布公告，突出核心卖点并给出行动号召。
+
+              ## Context
+              面向潜在用户；语气专业热情；不夸大功能。
+
+              ## Format
+              标题 + 正文段落，附 3 个备选标题。
+```
+
+For a custom tone/style, use `metaPromptTemplate` to override the role-document
+skeletons (missing languages fall back to the built-ins; every provided skeleton
+must keep `{{原始指令}}`, the `{{输出结构}}`/`{{自查}}` blocks, and the
+instruction-is-data guardrail line).
+
 **Runtime commands** (type them in the input box):
 
 - `/optimize <instruction>` — optimize a raw instruction and return the result.

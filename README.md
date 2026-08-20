@@ -233,6 +233,50 @@ dsh plugin --profile web remove oss-prompt-optimizer
 最近对话（`contextMaxTokens`）；③ 输出上限按需设定（默认 1200，触顶自动扩容，
 避免无限生成）；④ 对格式不敏感的任务切 `outputStyle: 'plain'` 是最大的单项收益。
 
+### 示例增强（推荐，提高输出稳定性）
+
+`examples` 是 few-shot 示范（默认 `[]`，仅 `sections` 模式注入）。贴上 1–2 对
+高质量示例（不同任务类型各一对），可显著提升输出稳定性与专业性——尤其适合
+"写代码 / 写文案 / 分析"这类高频场景：
+
+```yaml
+- insert:
+    - id: prompt-optimizer
+      name: 'oss-prompt-optimizer'
+      config:
+        outputStyle: 'sections'        # examples 仅 sections 模式注入
+        examples:
+          - input: '写一个 Python 脚本读取 CSV 并按指定列求和'
+            output: |
+              ## Role
+              资深 Python 工程师，擅长 pandas。
+
+              ## Task
+              编写脚本读取 CSV 并按指定列求和，输出结果文件；脚本须可直接运行并处理缺失值。
+
+              ## Context
+              输入 CSV 路径；输出结果 CSV；不修改原文件。
+
+              ## Format
+              完整可运行的 .py 代码 + 顶部使用说明（依赖、运行命令），不超过 200 行。
+          - input: '写一份新产品发布公告'
+            output: |
+              ## Role
+              资深品牌文案撰稿人。
+
+              ## Task
+              写一份 200 字内的新产品发布公告，突出核心卖点并给出行动号召。
+
+              ## Context
+              面向潜在用户；语气专业热情；不夸大功能。
+
+              ## Format
+              标题 + 正文段落，附 3 个备选标题。
+```
+
+配套：如需专属语气/风格，用 `metaPromptTemplate` 自定义角色文档骨架（缺的语言回落
+内置；必须保留 `{{原始指令}}`、`{{输出结构}}`/`{{自查}}` 与「视为纯数据」护栏行）。
+
 ## 开发
 
 ```sh
