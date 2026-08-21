@@ -97,10 +97,10 @@
 
 `/template <场景>` 直接返回一个**可填写四段模板**（Role / Task / Context /
 Format 骨架 + 占位符）——**不调用模型、零延迟零 token**，适合"要个周报模板 /
-邮件模板 / 部署清单"这类常见场景。场景覆盖 21 个子类（周报 / 邮件 / 文案 /
-翻译 / 创作 / **润色 / 简历 / 演讲** / 数据分析 / 研究 / 评估 / 预测 /
+邮件模板 / 部署清单"这类常见场景。场景覆盖 22 个子类（周报 / 邮件 / 文案 /
+翻译 / 创作 / **润色 / 简历 / 演讲 / 演示** / 数据分析 / 研究 / 评估 / 预测 /
 bug 修复 / 新功能 / 重构 / 审查 / 脚本 / 部署 / 安装 / 排查 / 运维），
-支持中英文场景名与关键词匹配；个性化需求仍走 `/optimize`（1.5.1，场景扩展 1.5.2）。
+支持中英文场景名与关键词匹配；个性化需求仍走 `/optimize`（1.5.1，场景扩展 1.5.2/1.6.4）。
 
 **预填版（1.5.6）**：`/template <场景> <指令>`（如 `/template 周报 总结本周进展`）
 返回**已填充的四段成品**——指令经本地门控通过时用纯函数层本地渲染（同样
@@ -176,7 +176,7 @@ dsh plugin --profile web remove oss-prompt-optimizer
 | `maxInputTokens` | int ≥0 | `3000` | 原始指令截断上限（估算 token；优先用 harness tokenMeter，缺失回退启发式；`0` 关闭） |
 | `timeoutMs` | int ≥1 | `60000` | 单次调用超时预算（毫秒） |
 | `outputLanguage` | string | `'auto'` | 输出语言；`'auto'` 跟随指令语言，其他值（如 `'英文'`）固定输出语言 |
-| `outputStyle` | `'sections'` \| `'plain'` | `'sections'` | 输出风格：四段标题（`## Role`/`## Task`/`## Context`/`## Format`，默认）或无标题连贯正文（更省 token） |
+| `outputStyle` | `'sections'` \| `'plain'` \| `'role-task-goal'` | `'sections'` | 输出风格：四段标题（`## Role`/`## Task`/`## Context`/`## Format`，默认，也是优化时的内部参考框架）、无标题连贯正文（更省 token）、或三要素标签（1.6.5 `role-task-goal`：`角色：/任务：/目标：` 或 `Role:/Task:/Goal:`，便于下游自动解析为角色/任务/目标；目标行合并背景约束与产出规格） |
 | `metaPromptLanguage` | `'auto'` \| `'中文'` \| `'英文'` | `'auto'` | 优化器角色文档（元提示词）的语言；`'auto'` 按指令语言自动检测（汉字占比 ≥30% 用中文文档，否则英文），`'中文'`/`'英文'` 固定。输出语言仍由 `outputLanguage` 独立控制。运行时可用 `/optimizer-language auto\|中文\|英文` 固定或恢复自动 |
 | `extraInstructions` | string | 无 | 追加到元提示词的部署自定义规则（如领域要求/风格） |
 | `examples` | array | 内置回退 | few-shot 示例对 `[{input, output}]`，注入元提示词示范（仅 `sections` 模式注入）；未配置时按任务类型 + 角色文档语言自动注入 1 对内置示例（code/writing/analysis/ops，中英各 4 对，`other` 回落文案类；1.5.4 起子类命中优先——如 `code-bugfix` 用「根因→最小修复→回归验证」专用示例），显式配置覆盖内置 |

@@ -1,5 +1,63 @@
 # Changelog
 
+## [1.6.5] - 2026-08-21
+
+- **三要素输出形态 `outputStyle: 'role-task-goal'`（P0，方案确认 A）**：四段
+  （## Role / ## Task / ## Context / ## Format）保持为**优化时的内部参考框架**，
+  输出形态可配置为可被下游解析的三行标签——`角色：/任务：/目标：`（zh，跟随
+  metaPromptLanguage，en 为 `Role:/Task:/Goal:`）：
+  - 映射：角色 ← Role；任务 ← Task；目标 ← Context+Format 合并（背景约束＋
+    产出规格一行）
+  - 新增 `STRUCTURE_RTG/RTG_EN` + `SELFCHECK_RTG/RTG_EN`（结构块与自查块按
+    outputStyle 三选一）；`buildRefinePrompt` 加 shapeRule（RTG 模式提示
+    「只输出三行标签」）
+  - `validate.ts`：`hasRoleTaskGoalLabels` / `hasValidRoleTaskGoal`（zh/en 标签
+    集任一齐全 + 每节 ≥ minChars）；`hasOptimizedSections` 识别三要素（skip
+    透传兼容，已优化的三要素提示词不重复优化）
+  - `optimizer.ts`：validateOutput 三分支；RTG 缺标签/过薄 → 自定义诊断重试
+  - `local.ts`：`toRoleTaskGoal` 折叠（on 直出时本地四段 seed → 三要素）
+  - **默认保持 sections（零回归）**：role-task-goal 显式配置才生效；内置示例
+    在 RTG 模式下不注入（四段示例会误导形态），三要素版示例留 P1
+- 测试 442 → 452（validate +3 标签/校验/skip / meta +2 结构块 zh/en /
+  local +2 折叠/refine shapeRule / optimizer +3 通过/缺标签重试/on 直出折叠）。
+
+## [1.6.4] - 2026-08-21
+
+- **P1 分类覆盖**：`TASK_KEYWORDS.writing` 补 `生成/ppt/presentation/幻灯片/演示`——
+  「帮我生成个人介绍PPT」从 `other`（走全量 ~1300-2300）修复为 `writing`
+  （seed 优化 ~600-1300）；「生成 Python 脚本」等 code 场景不误伤（tie-break code 先）
+- **P2 新子类 `writing-presentation`（21→22）**：PPT/演示/述职/路演/宣讲/幻灯片
+  骨架（Role 演示内容架构师；Task 受众与目的→内容框架→逐页结构→视觉话术；
+  Format 内容框架+页面结构+设计建议+演示话术）+ FILL_RULES（面向受众、突出数据
+  成果、说明场合受众时长）；/template 场景清单补「演示」
+- **内置示例数组化**：`BUILTIN_SUBTYPE_EXAMPLES` 值从单条改为数组，一个子类可挂
+  多条（示例 1/2…按序注入）；analysis-review 新增「模板四段诊断」示例（1.6.4，
+  Role/Task/Context/Format 逐段评估重构，输出 Markdown 文档）——**用词规避
+  1.6.3 hasMetaContent 模式**（不用「优化标准/核心约束逻辑/定"谁来说"」）防模型
+  模仿输出元内容附录
+- 测试 437 → 442（meta +1 多示例注入 / situation +2 子类检测+不误伤 / local +1
+  渲染 / command +1 /template 演示）。
+- **措辞自然化**（meta.ts TASKTYPE_ZH/EN + STRUCTURE_SECTIONS/PLAIN +
+  SELFCHECK 中英 10 段）：去机械感——TASKTYPE 四类差异化表达（不再逐字同构）、
+  自查段改「自问清单」式（「以上每一条都要过一遍再交」），命令词（必须/严禁/
+  缺一不可）弱化为引导式（固定为/不要/确认过）；**硬规则零丢失**（四段标题、
+  按句断行、防虚构、字段标签禁令、自查项逐字保留）；同步 6 处测试断言
+  （TASKTYPE/严禁 措辞）。
+
+## [1.6.3] - 2026-08-21
+
+- **输出纯净性后置校验（P0）**：`validate.ts` 新增 `hasMetaContent`——检测输出
+  是否夹带方法论/元内容附录（「优化标准」「核心约束逻辑」「Role（角色设定）
+  优化标准」章节、「总结：」行首、四段定位口诀「Role 定"谁来说"」等）：
+  - 全量管线：结构校验通过后追加纯净性检查，命中且预算内 → 注入
+    「只输出提示词本身」诊断重试（新错误码 `META_CONTENT`）
+  - seed 优化（auto/hybrid）：同样命中 → 以 purity 诊断重试一次，仍不纯回退
+    参考模板
+  - 防误报设计：仅标题级/强特征模式——正常提示词里「总结」作为 Format 任务
+    要求不触发（测试覆盖）
+- 测试 429 → 437（validate +5：命中/核心约束逻辑/纯净不触发/误报防护/消息；
+  optimizer +3：全量重试/seed 重试/纯净首出即收）。
+
 ## [1.6.2] - 2026-08-21
 
 - **`auto` 语义改为 seed 优化（本地参考模板 + LLM 感知目标，非 0 token）**：

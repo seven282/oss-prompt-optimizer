@@ -88,7 +88,7 @@ export function gatherConversationContext(
  * context's facts to enrich the output's `## Context` section (方案 A) — this
  * is what makes the four-section result actually reflect the conversation.
  */
-export function buildContextBlock(context: string, metaLanguage: 'zh' | 'en', outputStyle?: 'sections' | 'plain'): string {
+export function buildContextBlock(context: string, metaLanguage: 'zh' | 'en', outputStyle?: 'sections' | 'plain' | 'role-task-goal'): string {
   const text = context.trim()
   if (text.length === 0) return ''
   const sectionsRule = outputStyle === 'sections'

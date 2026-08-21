@@ -355,3 +355,13 @@ describe('/template quick command (1.5.1)', () => {
     expect(res.text).toContain('未识别可本地填充的信号')
   })
 })
+
+describe('/template presentation scene (1.6.4)', () => {
+  it('matches the 演示 scene and renders the presentation skeleton', async () => {
+    const { commands } = makeService(() => textStream(FOUR_SECTIONS))
+    const tmpl = commands.find((c) => c.name === 'template')!
+    const r = (await tmpl.handler(invocation('演示'))) as { kind: string; text: string }
+    expect(r.kind).toBe('success')
+    expect(r.text).toContain('明确受众与目的')
+  })
+})

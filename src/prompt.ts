@@ -9,7 +9,7 @@ import type { GoalDrift, SituationProfile, SituationProfileLevel } from './situa
  * refine) from each re-translating config fields into builder arguments.
  */
 export interface PromptBuildContext {
-  outputStyle: 'sections' | 'plain'
+  outputStyle: 'sections' | 'plain' | 'role-task-goal'
   extraInstructions: string | undefined
   examples: PromptExample[] | undefined
   metaLanguage: MetaLanguage

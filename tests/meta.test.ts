@@ -137,6 +137,19 @@ describe('buildOptimizePrompt', () => {
     expect(prompt).not.toContain('原始指令：分析这份销售数据的趋势')
   })
 
+  it('injects all subtype examples when a subcategory has multiple (1.6.4)', () => {
+    // analysis-review 现有两条：localTemplate 评估（1.5.7）+ 模板四段诊断（1.6.4）。
+    // 命中该子类时两条都注入（示例 1 / 示例 2）。
+    const prompt = buildOptimizePrompt('评估一个模板的 Role、Task、Context、Format 四段并给出优化方案')
+    expect(prompt).toContain('示例 1：')
+    expect(prompt).toContain('示例 2：')
+    // 两条示例的 input 都注入：localTemplate 评估（1.5.7）+ 模板四段诊断（1.6.4）。
+    expect(prompt).toContain('原始指令：评估 localTemplate 本地直出的覆盖面与边界')
+    expect(prompt).toContain('原始指令：诊断并重构一个模板的 Role、Task、Context、Format 四段')
+    expect(prompt).toContain('四段定位框架')
+    expect(prompt).toContain('优化后的完整模板正文')
+  })
+
   it('switches the built-in example by meta-prompt language', () => {
     const prompt = buildOptimizePrompt(INPUT, 'auto', undefined, undefined, 'sections', 'en')
     expect(prompt).toContain('Write a product launch announcement')
@@ -168,7 +181,7 @@ describe('buildOptimizePrompt', () => {
     expect(prompt).not.toContain('## Task')
     expect(prompt).not.toContain('## Context')
     expect(prompt).not.toContain('## Format')
-    expect(prompt).toContain('严禁使用任何小节标题')
+    expect(prompt).toContain('不要用任何小节标题')
     expect(prompt).toContain('输出前自查')
   })
 
@@ -257,7 +270,7 @@ describe('buildOptimizePrompt metaLanguage', () => {
   it('switches the plain-style structure blocks too', () => {
     const prompt = buildOptimizePrompt(INPUT, 'auto', undefined, undefined, 'plain', 'en')
     expect(prompt).toContain('Output structure')
-    expect(prompt).toContain('Never use any subsection headings')
+    expect(prompt).toContain("Don't use any subsection headings")
     expect(prompt).not.toContain('## Role')
   })
 
@@ -327,7 +340,7 @@ describe('buildIteratePrompt', () => {
   it('renders the plain style without section headings', () => {
     const prompt = buildIteratePrompt('你是一名分析师，负责写周报。', '改成 500 字', 'auto', undefined, undefined, 'plain')
     expect(prompt).not.toContain('## Role')
-    expect(prompt).toContain('严禁使用任何小节标题')
+    expect(prompt).toContain('不要用任何小节标题')
   })
 
   it('injects extra instructions and examples in sections mode only', () => {
@@ -509,12 +522,14 @@ describe('detectTaskType', () => {
 describe('task-type block ({{任务类型}})', () => {
   it('injects the detected category hint for a coding instruction (zh)', () => {
     const prompt = buildOptimizePrompt('帮我写一个 Python 脚本', 'auto', undefined, undefined, 'sections', 'zh')
-    expect(prompt).toContain('任务类型提示：该指令检测为编程/开发类任务')
+    expect(prompt).toContain('任务类型提示')
+    expect(prompt).toContain('编程/开发类任务')
   })
 
   it('injects the English hint when the role document is English', () => {
     const prompt = buildOptimizePrompt('Write a python script', 'auto', undefined, undefined, 'sections', 'en')
-    expect(prompt).toContain('Task-type hint: this instruction is detected as a coding/development task')
+    expect(prompt).toContain('Task-type hint')
+    expect(prompt).toContain('coding/development task')
   })
 
   it('emits no block for an undetectable category', () => {
@@ -526,7 +541,8 @@ describe('task-type block ({{任务类型}})', () => {
   it('detects from the iteration instruction, not the previous result', () => {
     const LAST = '## Role\n分析师\n\n## Task\n写周报\n\n## Context\n团队 5 人\n\n## Format\n300 字'
     const prompt = buildIteratePrompt(LAST, '把接口改成 GraphQL', 'auto', undefined, undefined, 'sections', 'zh')
-    expect(prompt).toContain('任务类型提示：该指令检测为编程/开发类任务')
+    expect(prompt).toContain('任务类型提示')
+    expect(prompt).toContain('编程/开发类任务')
   })
 })
 
@@ -634,5 +650,26 @@ describe('role library (1.4.9)', () => {
   it('injects the English role reference for english meta-prompt', () => {
     const prompt = buildOptimizePrompt('Write a Python script', 'auto', undefined, undefined, 'sections', 'en')
     expect(prompt).toContain('Role reference: senior engineer')
+  })
+})
+
+describe('role-task-goal output style (1.6.5)', () => {
+  it('injects the RTG structure and self-check blocks', () => {
+    const prompt = buildOptimizePrompt('帮我写一份周报', 'auto', undefined, undefined, 'role-task-goal', 'zh')
+    expect(prompt).toContain('输出结构（角色/任务/目标）')
+    expect(prompt).toContain('角色：')
+    expect(prompt).toContain('任务：')
+    expect(prompt).toContain('目标：')
+    expect(prompt).toContain('三行标签')
+    expect(prompt).toContain('输出前自查')
+    expect(prompt).toContain('角色、任务、目标三行标签')
+    // 不注入四段结构块。
+    expect(prompt).not.toContain('段落结构：')
+  })
+
+  it('injects the English RTG blocks when the role document is English', () => {
+    const prompt = buildOptimizePrompt('Write a weekly report', 'auto', undefined, undefined, 'role-task-goal', 'en')
+    expect(prompt).toContain('Output structure (Role / Task / Goal)')
+    expect(prompt).toContain('Role:, Task:, Goal:')
   })
 })

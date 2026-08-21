@@ -16,11 +16,15 @@ import {
   diagnoseSections,
   estimateTokens,
   hasAllSections,
+  hasMetaContent,
   hasOptimizedSections,
   hasPlainOutput,
+  hasRoleTaskGoalLabels,
   hasSectionHeadings,
+  hasValidRoleTaskGoal,
   hasValidSections,
   INCOMPLETE_SECTIONS_MESSAGE,
+  metaContentMessage,
   plainHeadingsMessage,
   REQUIRED_SECTIONS,
   sectionBody,
@@ -39,7 +43,7 @@ import { buildDiagnosis, refineInstruction } from './diagnose.js'
 import { buildIterateSystem, buildOptimizeSystem, type PromptBuildContext } from './prompt.js'
 import { buildSituationProfile, goalAlignment, goalDrift, mergeGoals, type GoalProfile, type SituationProfile } from './situation.js'
 import { bigramJaccard, createOptimizeCache, fnv1a, type OptimizeCache } from './cache.js'
-import { buildLocalTemplate, buildRefinePrompt, goalAnchorsScore, localTemplateGate, type LocalTemplateMode } from './local.js'
+import { buildLocalTemplate, buildRefinePrompt, goalAnchorsScore, localTemplateGate, toRoleTaskGoal, type LocalTemplateMode } from './local.js'
 
 export { MaxTokensError } from './llm.js'
 
@@ -81,12 +85,14 @@ function senseNeedsBlock(metaLanguage: MetaLanguage): string {
  * implementation guarantees both paths apply the SAME rules (the refinement
  * round used to skip the plain-style heading check).
  */
-function validateOutput(text: string, outputStyle: 'sections' | 'plain', minSectionChars: number): boolean {
+function validateOutput(text: string, outputStyle: 'sections' | 'plain' | 'role-task-goal', minSectionChars: number): boolean {
   return outputStyle === 'plain'
     ? hasPlainOutput(text, minSectionChars)
-    : minSectionChars > 0
-      ? hasValidSections(text, minSectionChars)
-      : hasAllSections(text)
+    : outputStyle === 'role-task-goal'
+      ? hasValidRoleTaskGoal(text, minSectionChars)
+      : minSectionChars > 0
+        ? hasValidSections(text, minSectionChars)
+        : hasAllSections(text)
 }
 
 /**
@@ -384,6 +390,13 @@ export class PromptOptimizerService extends Service {
     return language === 'en'
       ? `The output dropped the following goal/constraint: ${names}. Keep the raw instruction's goal and constraints intact.`
       : `输出丢失了以下目标/约束：${names}。请确保输出完整保留原始指令的目标与约束。`
+  }
+
+  /** Purity-gate diagnosis (1.6.3): the output carried meta/methodology content. */
+  private metaContentDiagnosis(language: MetaLanguage): string {
+    return language === 'en'
+      ? 'The output contains explanatory or methodology content (such as optimization criteria, "core constraint logic", or a summary). Output only the optimized prompt itself — the four sections — with no afterwords, explanations, or meta text.'
+      : '输出包含解释性或方法论内容（如「优化标准」「核心约束逻辑」或「总结：」章节）。请只输出优化后的提示词本身（四个段落），不得附加任何解释、说明或元内容。'
   }
 
   /** TTL for a session's registered goal (P2 会话级目标注册表). */
@@ -684,14 +697,18 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
         const profile = buildSituationProfile(rawInput, options.context)
         const align = goalAnchorsScore(profile)
         if (localMode === 'on' || (localMode === 'hybrid' && align >= this.config.hybridAlignThreshold)) {
-          this.emitCompleted('optimize', rawInput, { prompt: seed, optimized: true, retries: 0, local: true, outputTokens: this.estimateTextTokens(seed) }, 0)
+          // role-task-goal（1.6.5）：本地直出也按三要素形态输出（四段 seed 折叠）。
+          const out = this.config.outputStyle === 'role-task-goal'
+            ? toRoleTaskGoal(seed, metaLanguage === 'en')
+            : seed
+          this.emitCompleted('optimize', rawInput, { prompt: out, optimized: true, retries: 0, local: true, outputTokens: this.estimateTextTokens(out) }, 0)
           return {
-            prompt: seed,
+            prompt: out,
             optimized: true,
             retries: 0,
             local: true,
-            sections: this.sectionsOf(seed),
-            outputTokens: this.estimateTextTokens(seed),
+            sections: this.sectionsOf(out),
+            outputTokens: this.estimateTextTokens(out),
           }
         }
         const refinedStartedAt = Date.now()
@@ -940,6 +957,10 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
         const full = resumed.length > 0 ? resumed + prompt : prompt
         const valid = validateOutput(full, this.config.outputStyle, this.config.minSectionChars)
         if (valid) {
+          // 纯净性（1.6.3 P0）：结构通过，但输出可能夹带元内容/方法论附录
+          // （「优化标准」「核心约束逻辑」「总结：」等）——不是可执行提示词。
+          // 命中且预算内 → 注入纯净性诊断重试；最后一次接受（与结构同属软门）。
+          const meta = hasMetaContent(full)
           // 情境感知（P0）: the structure passed, but the output may have
           // dropped the instruction's goal or a constraint. When retry budget
           // remains, fold the misalignment into the diagnosis and retry (the
@@ -951,7 +972,12 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
             : { missing: [] as string[], aligned: true }
           // `fast` 档或 `goalAlignmentRetry: false`（latency P0-2/P1-2）：目标
           // 未对齐直接接受，不消耗重试调用。
-          if (!goalCheck.aligned && !fast && this.config.goalAlignmentRetry && attempt < this.config.maxRetries) {
+          const metaFirst = meta && !fast && attempt < this.config.maxRetries
+          const goalRetry = !metaFirst && !goalCheck.aligned && !fast && this.config.goalAlignmentRetry && attempt < this.config.maxRetries
+          if (metaFirst) {
+            lastError = new OptimizeError(OptimizeErrorCode.META_CONTENT, metaContentMessage())
+            lastDiagnosis = this.metaContentDiagnosis(metaLanguage)
+          } else if (goalRetry) {
             lastError = new OptimizeError(OptimizeErrorCode.GOAL_MISALIGNED, goalCheck.missing.join('；'))
             lastDiagnosis = this.goalDiagnosis(goalCheck.missing, metaLanguage)
           } else {
@@ -973,30 +999,44 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
           // missing/thin sections (sections style) or headings/thinness
           // (plain style). The heading scan runs once, not twice.
           const headings = hasSectionHeadings(full)
+          // role-task-goal（1.6.5）：三要素标签缺失 → MISSING；有标签但过短 → THIN。
+          const rtgLabels = hasRoleTaskGoalLabels(full)
           const failureCode = this.config.outputStyle === 'plain'
             ? headings
               ? OptimizeErrorCode.HEADINGS_IN_PLAIN
               : OptimizeErrorCode.THIN_OUTPUT
-            : diagnoseSections(full, this.config.minSectionChars).missing.length > 0
-              ? OptimizeErrorCode.MISSING_SECTIONS
-              : OptimizeErrorCode.THIN_SECTIONS
+            : this.config.outputStyle === 'role-task-goal'
+              ? (rtgLabels
+                  ? OptimizeErrorCode.THIN_SECTIONS
+                  : OptimizeErrorCode.MISSING_SECTIONS)
+              : diagnoseSections(full, this.config.minSectionChars).missing.length > 0
+                ? OptimizeErrorCode.MISSING_SECTIONS
+                : OptimizeErrorCode.THIN_SECTIONS
           lastError = new OptimizeError(
             failureCode,
             this.config.outputStyle === 'plain'
               ? headings
                 ? plainHeadingsMessage()
                 : thinOutputMessage(this.config.minSectionChars)
-              : this.config.minSectionChars > 0
-                ? `${INCOMPLETE_SECTIONS_MESSAGE}; ${thinSectionsMessage(this.config.minSectionChars)}`
-                : INCOMPLETE_SECTIONS_MESSAGE,
+              : this.config.outputStyle === 'role-task-goal'
+                ? (rtgLabels
+                    ? `${INCOMPLETE_SECTIONS_MESSAGE}; ${thinSectionsMessage(this.config.minSectionChars)}`
+                    : 'optimized prompt is missing the 角色：/任务：/目标： labels')
+                : this.config.minSectionChars > 0
+                  ? `${INCOMPLETE_SECTIONS_MESSAGE}; ${thinSectionsMessage(this.config.minSectionChars)}`
+                  : INCOMPLETE_SECTIONS_MESSAGE,
           )
-          lastDiagnosis = buildDiagnosis({
-            outputStyle: this.config.outputStyle,
-            minSectionChars: this.config.minSectionChars,
-            language: metaLanguage,
-            prompt: full,
-            failureCode,
-          })
+          lastDiagnosis = this.config.outputStyle === 'role-task-goal'
+            ? (metaLanguage === 'en'
+                ? 'The output is missing the Role:, Task:, Goal: labels, or one of them is too thin. Output exactly three labeled lines — Role:, Task:, Goal: — each with substantive content.'
+                : '输出缺少「角色：/任务：/目标：」三行标签，或某节内容过薄。请严格按三行标签输出：角色：、任务：、目标：，每节都有实质内容。')
+            : buildDiagnosis({
+                outputStyle: this.config.outputStyle,
+                minSectionChars: this.config.minSectionChars,
+                language: metaLanguage,
+                prompt: full,
+                failureCode,
+              })
         }
       } catch (error) {
         if (error instanceof MaxTokensError && this.config.maxTokenRetryFactor > 1) {
@@ -1103,7 +1143,7 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
     const signal = options.signal
     const temperature = this.config.temperature
     const attempt = (diagnosis?: string): Promise<string> =>
-      this.generateOnce(buildRefinePrompt(localPrompt, input, en, profile, diagnosis), route, signal, temperature, this.config.maxTokens)
+      this.generateOnce(buildRefinePrompt(localPrompt, input, en, profile, diagnosis, this.config.outputStyle), route, signal, temperature, this.config.maxTokens)
     let text: string
     try {
       text = await attempt()
@@ -1121,11 +1161,23 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
       }
     }
     let valid = validateOutput(text, this.config.outputStyle, this.config.minSectionChars)
+    // 纯净性（1.6.3）：seed 优化输出同样可能夹带元内容/方法论附录——命中则
+    // 以「只输出提示词本身」诊断重试一次（至多一次，防 token 失控）。
+    let meta = hasMetaContent(text)
+    if (valid && meta) {
+      try {
+        text = await attempt('purity')
+      } catch {
+        // 保留首次结果
+      }
+      valid = validateOutput(text, this.config.outputStyle, this.config.minSectionChars)
+      meta = hasMetaContent(text)
+    }
     // 目标对齐校验（1.6.2）：输出必须体现原指令的目标/约束/受众——未对齐且
     // 开启对齐重试时，注入缺失项为诊断重试一次（与全量管线的 GOAL_MISALIGNED
     // 闭环同源，但 seed 路径至多一次以免 token 失控）。
     let goalCheck = goalAlignment(profile.goal, text)
-    if (valid && !goalCheck.aligned && this.config.goalAlignmentRetry) {
+    if (valid && !meta && !goalCheck.aligned && this.config.goalAlignmentRetry) {
       const diagnosis = goalCheck.missing.join('、')
       try {
         text = await attempt(`missing: ${diagnosis}`)
@@ -1136,7 +1188,7 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
       goalCheck = goalAlignment(profile.goal, text)
     }
     this.stats.refined++
-    const out = valid ? text : localPrompt
+    const out = valid && !meta ? text : localPrompt
     return {
       prompt: out,
       optimized: true,

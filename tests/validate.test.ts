@@ -4,12 +4,16 @@ import {
   diagnoseSections,
   estimateTokens,
   hasAllSections,
+  hasMetaContent,
   hasOptimizedSections,
   hasPlainOutput,
+  hasRoleTaskGoalLabels,
   hasSectionHeadings,
   hasSubstantialContent,
+  hasValidRoleTaskGoal,
   hasValidSections,
   INCOMPLETE_SECTIONS_MESSAGE,
+  metaContentMessage,
   plainHeadingsMessage,
   REQUIRED_SECTIONS,
   sectionBody,
@@ -297,5 +301,85 @@ describe('diagnoseSections', () => {
 
   it('ignores thin sections when minChars is zero', () => {
     expect(diagnoseSections('## Role\n\n## Task\n\n## Context\n\n## Format\n', 0)).toEqual({ missing: [], thin: [] })
+  })
+})
+
+describe('hasMetaContent (1.6.3 purity gate)', () => {
+  it('flags methodology appendices like "优化标准" sections', () => {
+    const polluted = `## Role
+数据分析师。
+
+## Task
+生成个人介绍PPT。
+
+## Context
+用户项目经历。
+
+## Format
+内容框架。
+
+Role（角色设定）优化标准
+- 身份明确：角色名称具体
+Task（任务描述）优化标准
+- 动作可执行：用动词开头
+总结：四个段落的核心约束逻辑是 Role 定"谁来说"，Task 定"说什么"。`
+    expect(hasMetaContent(polluted)).toBe(true)
+  })
+
+  it('flags "核心约束逻辑" and line-start "总结："', () => {
+    expect(hasMetaContent('## Role\nx\n\n## Task\ny\n核心约束逻辑：每段优化的本质是转化')).toBe(true)
+    expect(hasMetaContent('## Format\n输出表格\n\n总结：以上是优化方法论')).toBe(true)
+  })
+
+  it('does not flag a clean four-section prompt', () => {
+    expect(hasMetaContent(FOUR_SECTIONS)).toBe(false)
+  })
+
+  it('does not flag a prompt that merely mentions a word in content', () => {
+    // 「总结」作为 Format 的任务要求（非元章节）不应误报。
+    const legit = `## Role
+资深编辑。
+
+## Task
+改写这段文案，最后输出一个总结。
+
+## Context
+面向用户。
+
+## Format
+正文 + 总结段落。`
+    expect(hasMetaContent(legit)).toBe(false)
+  })
+
+  it('exposes a stable failure message', () => {
+    expect(metaContentMessage()).toContain('meta/methodology')
+  })
+})
+
+describe('Role/Task/Goal form (1.6.5)', () => {
+  const rtg = `角色：资深数据分析师，结论先行。
+任务：分析销售数据趋势并输出报告。
+目标：面向业务决策者，不超过 500 字。`
+  const rtgEn = `Role: Senior data analyst.
+Task: Analyze sales trends and output a report.
+Goal: For business decision-makers, under 500 words.`
+
+  it('detects the zh or en label sets', () => {
+    expect(hasRoleTaskGoalLabels(rtg)).toBe(true)
+    expect(hasRoleTaskGoalLabels(rtgEn)).toBe(true)
+    expect(hasRoleTaskGoalLabels(FOUR_SECTIONS)).toBe(false)
+    expect(hasRoleTaskGoalLabels('角色：x\n目标：y')).toBe(false) // 缺任务
+  })
+
+  it('validates all three parts with a content floor', () => {
+    expect(hasValidRoleTaskGoal(rtg, 4)).toBe(true)
+    expect(hasValidRoleTaskGoal(rtgEn, 4)).toBe(true)
+    expect(hasValidRoleTaskGoal('角色：x\n任务：y\n目标：z', 4)).toBe(false) // 过薄
+    expect(hasValidRoleTaskGoal('角色：x\n任务：y', 0)).toBe(false) // 缺目标
+  })
+
+  it('treats the labeled form as already optimized (skip pass-through)', () => {
+    expect(hasOptimizedSections(rtg)).toBe(true)
+    expect(hasOptimizedSections(rtgEn)).toBe(true)
   })
 })

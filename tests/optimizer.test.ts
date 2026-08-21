@@ -298,7 +298,7 @@ describe('PromptOptimizerService.optimize', () => {
     expect(result.prompt).toBe(PLAIN)
     expect(result.sections).toBeUndefined()
     const system = state.streamCalls[0].system ?? ''
-    expect(system).toContain('严禁使用任何小节标题')
+    expect(system).toContain('不要用任何小节标题')
     expect(system).not.toContain('## Role')
   })
 
@@ -1413,5 +1413,89 @@ describe('seed optimization goal alignment (1.6.2)', () => {
     expect(result.optimized).toBe(true)
     expect(result.refined).toBe(true)
     expect(state.streamCalls).toHaveLength(1) // 对齐 → 无重试
+  })
+})
+
+describe('output purity gate (1.6.3)', () => {
+  it('retries the full pipeline when the output carries meta content', async () => {
+    // 首次输出四段 + 「优化标准」方法论附录 → 纯净性校验失败 → 注入诊断重试。
+    const polluted = `${FOUR_SECTIONS}
+
+Role（角色设定）优化标准
+- 身份明确：角色名称具体
+Task（任务描述）优化标准
+- 动作可执行：用动词开头
+总结：核心约束逻辑是 Role 定"谁来说"。`
+    const state = makeCtx([textStream(polluted), textStream(FOUR_SECTIONS)])
+    const service = makeService(state, { ...DEFAULT_CONFIG, localTemplate: 'off' })
+    const result = await service.optimize('帮我写一份 PRD', { signal: new AbortController().signal })
+    expect(result.optimized).toBe(true)
+    expect(result.errorCode).toBeUndefined()
+    expect(result.prompt).toContain('## Role')
+    expect(result.prompt).not.toContain('优化标准') // 重试后的输出纯净
+    expect(state.streamCalls).toHaveLength(2)
+    const secondSystem = state.streamCalls[1]?.system ?? ''
+    expect(secondSystem).toContain('只输出优化后的提示词本身')
+  })
+
+  it('retries the seed-optimization path when the output carries meta content', async () => {
+    const polluted = `${FOUR_SECTIONS}
+
+总结：以上是提示词优化方法论。`
+    const state = makeCtx([textStream(polluted), textStream(FOUR_SECTIONS)])
+    const service = makeService(state, { ...DEFAULT_CONFIG, localTemplate: 'auto' })
+    const result = await service.optimize('写一份周报，总结本周进展和下周计划', { signal: new AbortController().signal })
+    expect(result.optimized).toBe(true)
+    expect(result.refined).toBe(true)
+    expect(result.prompt).not.toContain('方法论')
+    expect(state.streamCalls).toHaveLength(2)
+    const secondSystem = state.streamCalls[1]?.system ?? ''
+    expect(secondSystem).toContain('purity')
+  })
+
+  it('accepts a clean first output without retrying', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    const service = makeService(state, { ...DEFAULT_CONFIG, localTemplate: 'off' })
+    const result = await service.optimize('帮我写一份 PRD', { signal: new AbortController().signal })
+    expect(result.optimized).toBe(true)
+    expect(state.streamCalls).toHaveLength(1) // 无元内容 → 无重试
+  })
+})
+
+describe('role-task-goal pipeline (1.6.5)', () => {
+  it('accepts a three-label output and returns it', async () => {
+    const rtg = `角色：资深数据分析师，结论先行。
+任务：分析销售数据趋势并输出报告。
+目标：面向业务决策者，不超过 500 字。`
+    const state = makeCtx([textStream(rtg)])
+    const service = makeService(state, { ...DEFAULT_CONFIG, outputStyle: 'role-task-goal' })
+    const result = await service.optimize('帮我写一份周报', { signal: new AbortController().signal })
+    expect(result.optimized).toBe(true)
+    expect(result.prompt).toContain('角色：')
+    expect(result.prompt).toContain('目标：')
+    expect(state.streamCalls).toHaveLength(1)
+  })
+
+  it('retries when the RTG labels are missing', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS), textStream(`角色：资深数据分析师，擅长趋势解读与因果分析。\n任务：分析销售数据趋势，输出完整分析报告。\n目标：面向业务决策者，结论先行，不超过 500 字。`)])
+    const service = makeService(state, { ...DEFAULT_CONFIG, outputStyle: 'role-task-goal' })
+    const result = await service.optimize('帮我写一份周报', { signal: new AbortController().signal })
+    expect(result.optimized).toBe(true)
+    expect(result.prompt).toContain('角色：')
+    expect(state.streamCalls).toHaveLength(2) // 缺标签 → 诊断重试
+    const secondSystem = state.streamCalls[1]?.system ?? ''
+    expect(secondSystem).toContain('角色：/任务：/目标：')
+  })
+
+  it('folds the local render into RTG labels in on mode', async () => {
+    const state = makeCtx([])
+    const service = makeService(state, { ...DEFAULT_CONFIG, localTemplate: 'on', outputStyle: 'role-task-goal' })
+    const result = await service.optimize('帮我写一份周报', { signal: new AbortController().signal })
+    expect(result.optimized).toBe(true)
+    expect(result.local).toBe(true)
+    expect(result.prompt).toContain('角色：')
+    expect(result.prompt).toContain('任务：')
+    expect(result.prompt).toContain('目标：')
+    expect(state.streamCalls).toHaveLength(0)
   })
 })

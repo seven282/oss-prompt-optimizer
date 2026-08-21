@@ -28,6 +28,12 @@ export const OptimizeErrorCode = {
   HEADINGS_IN_PLAIN: 'HEADINGS_IN_PLAIN',
   /** The output dropped the instruction's goal or a constraint (situation alignment). */
   GOAL_MISALIGNED: 'GOAL_MISALIGNED',
+  /**
+   * The output carried meta/methodology content (optimization criteria,
+   * "core constraint logic", a summary section) instead of only the
+   * optimized prompt itself (1.6.3 purity gate).
+   */
+  META_CONTENT: 'META_CONTENT',
   /** The model unexpectedly requested a tool call. */
   TOOL_CALL: 'TOOL_CALL',
   /** The model returned an unrecognized finish reason. */
@@ -65,6 +71,7 @@ export const OPTIMIZE_ERROR_TEXT: Record<OptimizeErrorCode, string> = {
   [OptimizeErrorCode.THIN_OUTPUT]: 'prompt-optimize: 模型输出的内容过短',
   [OptimizeErrorCode.HEADINGS_IN_PLAIN]: 'prompt-optimize: 模型输出包含小节标题（plain 模式不应出现 ## Role 等标题）',
   [OptimizeErrorCode.GOAL_MISALIGNED]: 'prompt-optimize: 模型输出丢失了原始指令的目标或约束，请重试',
+  [OptimizeErrorCode.META_CONTENT]: 'prompt-optimize: 模型输出包含解释性/方法论内容，仅允许输出优化后的提示词本身',
   [OptimizeErrorCode.TOOL_CALL]: 'prompt-optimize: 模型意外请求调用工具',
   [OptimizeErrorCode.UNSUPPORTED_FINISH]: 'prompt-optimize: 模型返回了不支持的结束原因',
   [OptimizeErrorCode.NO_TEXT]: 'prompt-optimize: 模型未输出任何文本',

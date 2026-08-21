@@ -49,11 +49,13 @@ export function hasAllSections(text: string): boolean {
 /**
  * Whether `text` already looks like an optimized prompt: all four required
  * sections present under their canonical English heading OR a Chinese-variant
- * heading (`## 角色` / `## 任务` / `## 背景` / `## 输出` etc.). Used by the
+ * heading (`## 角色` / `## 任务` / `## 背景` / `## 输出` etc.), or the
+ * Role/Task/Goal labeled form (1.6.5). Used by the
  * `skipIfAlreadyOptimized` pass-through so a re-optimization of an
  * already-structured prompt (in either language) is skipped.
  */
 export function hasOptimizedSections(text: string): boolean {
+  if (hasRoleTaskGoalLabels(text)) return true
   return REQUIRED_SECTIONS.every((section) =>
     SECTION_ALIASES[section].some((alias) =>
       // C-6 修复：复用 getSectionPattern 缓存（原为每次 new RegExp）。
@@ -122,6 +124,74 @@ export function thinOutputMessage(minChars: number): string {
 /** Stable failure message when a plain-style output carries section headings. */
 export function plainHeadingsMessage(): string {
   return 'optimized prompt contains section headings (## Role / ## Task / ## Context / ## Format) in plain style'
+}
+
+/**
+ * Purity gate (1.6.3, P0): whether the output carries meta/methodology
+ * content instead of only the optimized prompt itself. Catches the model
+ * appending things like "优化标准" sections, a "Role 定谁来说" summary, or a
+ * "总结：" afterword. Detection is deliberately conservative — heading-level
+ * and strong-marker patterns only, so a legit prompt that merely *mentions*
+ * one of these words is not flagged.
+ */
+const META_CONTENT_PATTERNS: RegExp[] = [
+  // 章节级方法论标题：如「Role（角色设定）优化标准」「Task（任务描述）优化标准」
+  /^[A-Za-z\u4e00-\u9fff]+（[^）]*）[^\n]{0,12}(优化标准|要点|原则|解析)/m,
+  // 强方法论词（正常成品提示词极少出现）
+  /优化标准|核心约束逻辑|方法论/g,
+  // 行首总结 / 归纳 / 综上（元归纳章节）
+  /^(总结|小结|归纳|综上|总而言之)[:：]/m,
+  // 四段定位口诀：「Role 定"谁来说"」「Task 定"说什么"」等
+  /定["“'](谁来说|说什么|基于什么说|怎么说|说给谁听)/,
+]
+
+/** Whether `text` contains meta/methodology content beyond the prompt itself. */
+export function hasMetaContent(text: string): boolean {
+  return META_CONTENT_PATTERNS.some((pattern) => pattern.test(text))
+}
+
+/** Stable failure message when the output carries meta/methodology content. */
+export function metaContentMessage(): string {
+  return 'optimized prompt contains meta/methodology content (e.g. "优化标准", "核心约束逻辑", a "总结：" afterword) — only the prompt itself is allowed'
+}
+
+/**
+ * Role/Task/Goal labels (1.6.5): the parseable three-element output form.
+ * zh: 角色：/任务：/目标：；en: Role:/Task:/Goal:. Either language set is
+ * accepted by the validators, so downstream parsing works regardless of the
+ * role-document language.
+ */
+export const RTG_LABELS_ZH = ['角色', '任务', '目标'] as const
+export const RTG_LABELS_EN = ['Role', 'Task', 'Goal'] as const
+
+const RTG_LABEL_RE = (label: string): RegExp =>
+  new RegExp(`^${label}[:：]`, 'm')
+
+/** Whether all three Role/Task/Goal labels appear in `text` (zh or en set). */
+export function hasRoleTaskGoalLabels(text: string): boolean {
+  const zh = RTG_LABELS_ZH.every((label) => RTG_LABEL_RE(label).test(text))
+  const en = RTG_LABELS_EN.every((label) => RTG_LABEL_RE(label).test(text))
+  return zh || en
+}
+
+/**
+ * Whether `text` is a valid Role/Task/Goal output: all three labels present
+ * AND every labeled part carries at least `minChars` non-whitespace
+ * characters. `minChars <= 0` falls back to the label-only check.
+ */
+export function hasValidRoleTaskGoal(text: string, minChars: number): boolean {
+  if (!hasRoleTaskGoalLabels(text)) return false
+  if (minChars <= 0) return true
+  const zh = RTG_LABELS_ZH.every((label) => RTG_LABEL_RE(label).test(text))
+  const labels = zh ? RTG_LABELS_ZH : RTG_LABELS_EN
+  return labels.every((label) => {
+    const match = RTG_LABEL_RE(label).exec(text)
+    if (match === null) return false
+    const from = match.index + match[0].length
+    const next = text.slice(from).search(/^[^\n]{0,8}[:：]/m)
+    const body = next === -1 ? text.slice(from) : text.slice(from, from + next)
+    return body.replace(/\s/g, '').length >= minChars
+  })
 }
 
 /** Reject empty / non-string input loudly (the tool argument contract). */

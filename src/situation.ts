@@ -216,7 +216,7 @@ export function archetypeLabel(type: TaskType, en: boolean): string | undefined 
 /** Two-level subcategory keys (globally unique, prefixed by task category). */
 export type TaskSubtype =
   | 'code-bugfix' | 'code-feature' | 'code-refactor' | 'code-review' | 'code-script'
-  | 'writing-report' | 'writing-email' | 'writing-copy' | 'writing-translate' | 'writing-creative' | 'writing-polish' | 'writing-resume' | 'writing-speech'
+  | 'writing-report' | 'writing-email' | 'writing-copy' | 'writing-translate' | 'writing-creative' | 'writing-polish' | 'writing-resume' | 'writing-speech' | 'writing-presentation'
   | 'analysis-data' | 'analysis-research' | 'analysis-review' | 'analysis-forecast'
   | 'ops-deploy' | 'ops-install' | 'ops-troubleshoot' | 'ops-maintain'
 
@@ -238,6 +238,7 @@ const TASK_SUBTYPES: Record<Exclude<TaskType, 'other'>, readonly { key: TaskSubt
     { key: 'writing-polish', zh: '润色/改写', en: 'polish/rewrite', keywords: ['润色', '改写', '修改措辞', '优化表达', '回复', '摘要', '缩写', 'polish', 'rewrite'] },
     { key: 'writing-resume', zh: '简历', en: 'resume', keywords: ['简历', '自我介绍', '求职', 'resume', 'cv'] },
     { key: 'writing-speech', zh: '演讲/讲稿', en: 'speech', keywords: ['演讲', '讲稿', '致辞', '发言', '演示稿', 'speech', 'presentation'] },
+    { key: 'writing-presentation', zh: '演示/PPT', en: 'presentation', keywords: ['ppt', '幻灯片', '述职', '路演', '宣讲', '演示文稿', 'presentation', 'slide', 'deck', 'pitch', 'keynote'] },
   ],
   analysis: [
     { key: 'analysis-data', zh: '数据分析', en: 'data analysis', keywords: ['数据', '统计', '指标', '趋势', '图表', '报表'] },

@@ -96,7 +96,7 @@ Once enabled, the host enters "optimize before sending" mode: the `agent/pre-ste
 
 ## Quick scene templates (/template)
 
-`/template <scene>` returns a ready-to-fill four-section template (Role / Task / Context / Format skeleton with placeholders) — **no model call, zero latency/cost** — for common scenes like a weekly report, email, copy, translation, data analysis, deployment checklist, etc. Covers all 21 subcategories (zh/en scene names and keywords matched; polish/resume/speech added in 1.5.2); for personalized needs use `/optimize` (1.5.1).
+`/template <scene>` returns a ready-to-fill four-section template (Role / Task / Context / Format skeleton with placeholders) — **no model call, zero latency/cost** — for common scenes like a weekly report, email, copy, translation, data analysis, deployment checklist, etc. Covers all 22 subcategories (zh/en scene names and keywords matched; polish/resume/speech added in 1.5.2, presentation in 1.6.4); for personalized needs use `/optimize` (1.5.1).
 
 **Pre-filled (1.5.6)**: `/template <scene> <instruction>` (e.g. `/template 周报 总结本周进展`) returns a **filled four-section result** — when the local gate passes, the pure-function layer renders it locally (also **zero tokens, ~5ms**); when the instruction carries no extractable signal, it falls back to the skeleton with a hint to use `/optimize`.
 
@@ -134,7 +134,7 @@ Set plugin options in `cordis.patch.yml` (every value below also has a schema de
 | `maxInputTokens` | int ≥0 | `3000` | Raw-instruction truncation cap (estimated tokens; harness `tokenMeter` with heuristic fallback; `0` disables) |
 | `timeoutMs` | int ≥1 | `60000` | Per-call timeout budget (milliseconds) |
 | `outputLanguage` | string | `'auto'` | Output language; `'auto'` follows the instruction's language, any other value (e.g. `'英文'`) pins it |
-| `outputStyle` | `'sections'` \| `'plain'` | `'sections'` | Four-section headings (`## Role`/`## Task`/`## Context`/`## Format`, default) or heading-free continuous prose (fewer tokens) |
+| `outputStyle` | `'sections'` \| `'plain'` \| `'role-task-goal'` | `'sections'` | Four-section headings (`## Role`/`## Task`/`## Context`/`## Format`, default — also the internal reference frame during optimization), heading-free continuous prose (fewer tokens), or three parseable labels (1.6.5 `role-task-goal`: `角色：/任务：/目标：` or `Role:/Task:/Goal:` for downstream parsing into role / task / goal; the goal line merges background constraints and the output spec) |
 | `metaPromptLanguage` | `'auto'` \| `'中文'` \| `'英文'` | `'auto'` | Language of the optimizer role document (meta-prompt). `'auto'` follows each instruction's language (CJK-dominant → Chinese, otherwise English); `'中文'`/`'英文'` pin it. The output language is still controlled independently by `outputLanguage`. Pin-able at runtime via `/optimizer-language auto\|中文\|英文` |
 | `extraInstructions` | string | none | Deployment-specific rules appended to the meta-prompt |
 | `examples` | array | built-in fallback | Few-shot pairs `[{input, output}]` injected into the meta-prompt (`sections` style only); when unset, one built-in pair matched to the task type and role-document language is injected automatically (code/writing/analysis/ops × zh/en; `other` falls back to writing; since 1.5.4 a detected subtype wins — e.g. `code-bugfix` uses its dedicated root-cause → minimal-fix → regression-check pair); explicit config overrides the built-ins |

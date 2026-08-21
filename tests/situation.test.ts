@@ -378,3 +378,17 @@ describe('heuristicClassifier (ADR-011 step 1-2)', () => {
     expect(withVerb).toBeGreaterThan(without)
   })
 })
+
+describe('writing-presentation subtype (1.6.4)', () => {
+  it('detects PPT/presentation instructions', () => {
+    expect(detectTaskSubtype('帮我生成个人介绍PPT', 'writing')).toBe('writing-presentation')
+    expect(detectTaskSubtype('做一个述职汇报PPT', 'writing')).toBe('writing-presentation')
+    expect(detectTaskSubtype('生成演示文稿', 'writing')).toBe('writing-presentation')
+  })
+
+  it('does not steal speech or report scenarios', () => {
+    // 演示稿（讲稿向）→ speech；纯汇报（无 PPT 语境）→ report。
+    expect(detectTaskSubtype('帮我写个演讲讲稿', 'writing')).toBe('writing-speech')
+    expect(detectTaskSubtype('帮我写个汇报', 'writing')).toBe('writing-report')
+  })
+})

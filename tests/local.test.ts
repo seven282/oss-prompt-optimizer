@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildLocalTemplate, buildRefinePrompt, goalAnchorsScore, goalRichness, localTemplateGate } from '../src/local.js'
+import { buildLocalTemplate, buildRefinePrompt, goalAnchorsScore, goalRichness, localTemplateGate, toRoleTaskGoal } from '../src/local.js'
 import { buildSituationProfile } from '../src/situation.js'
 
 describe('localTemplateGate (1.5.6)', () => {
@@ -145,5 +145,37 @@ describe('buildLocalTemplate (1.5.6)', () => {
     const out = buildLocalTemplate('Write a weekly report summarizing this week', 'writing-report', 'en')
     expect(out).toContain('lead with the conclusion, back with points, match length to the genre')
     expect(out).toContain('focus on progress and next steps for the audience.')
+  })
+})
+
+describe('writing-presentation local render (1.6.4)', () => {
+  it('renders a presentation-oriented template with fill rules', () => {
+    const out = buildLocalTemplate('帮我生成个人介绍PPT', 'writing-presentation', 'zh')
+    expect(out).toContain('## Role')
+    expect(out).toContain('面向受众组织信息')
+    expect(out).toContain('## Task')
+    expect(out).toContain('明确受众与目的')
+    expect(out).toContain('## Format')
+    expect(out).toContain('内容框架 + 页面结构 + 设计建议 + 演示话术')
+  })
+})
+
+describe('role-task-goal local fold (1.6.5)', () => {
+  it('folds a four-section render into Role/Task/Goal labels', () => {
+    const four = '## Role\n资深数据分析师。\n\n## Task\n分析销售数据并输出报告。\n\n## Context\n面向业务决策者。\n\n## Format\n不超过 500 字。'
+    const zh = toRoleTaskGoal(four, false)
+    expect(zh).toContain('角色：\n资深数据分析师')
+    expect(zh).toContain('任务：\n分析销售数据并输出报告')
+    expect(zh).toContain('目标：\n面向业务决策者。；不超过 500 字。')
+    const en = toRoleTaskGoal(four, true)
+    expect(en).toContain('Role:' + '\n' + '资深数据分析师')
+    expect(en).toContain('Goal:' + '\n' + '面向业务决策者。 不超过 500 字。')
+  })
+
+  it('builds the refine prompt with the RTG shape rule', () => {
+    const p = buildRefinePrompt('## Role\nx', '写周报', false, undefined, undefined, 'role-task-goal')
+    expect(p).toContain('只输出三行标签——角色：、任务：、目标：')
+    const s = buildRefinePrompt('## Role\nx', 'weekly report', true, undefined, undefined, 'sections')
+    expect(s).toContain('Keep the ## Role / ## Task / ## Context / ## Format structure')
   })
 })

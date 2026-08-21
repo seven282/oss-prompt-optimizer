@@ -48,11 +48,14 @@ export interface Config {
    */
   outputLanguage: string
   /**
-   * Output style for the optimized prompt. `'plain'` (default) emits a
-   * heading-free continuous prompt (fewer tokens); `'sections'` emits the
-   * four section headings (## Role / ## Task / ## Context / ## Format).
+   * Output style for the optimized prompt. `'sections'` (default) emits the
+   * four section headings (## Role / ## Task / ## Context / ## Format);
+   * `'plain'` emits a heading-free continuous prompt (fewer tokens);
+   * `'role-task-goal'` (1.6.5) emits three parseable labels — 角色/任务/目标
+   * (zh) or Role:/Task:/Goal: (en) — so downstream parsers can extract the
+   * role, the task and the goal directly.
    */
-  outputStyle: 'sections' | 'plain'
+  outputStyle: 'sections' | 'plain' | 'role-task-goal'
   /**
    * Language of the optimizer's role document (the meta-prompt / system
    * prompt). `'auto'` (default) follows each instruction's language (`'中文'`
@@ -282,7 +285,7 @@ export const Config: z<Config> = z.object({
   maxInputTokens: z.number().step(1).min(0).max(200000).default(3000),
   timeoutMs: z.number().step(1).min(1).max(MAX_TIMER_DELAY_MS).default(60000),
   outputLanguage: z.string().default('auto'),
-  outputStyle: z.union(['sections', 'plain']).default('sections'),
+  outputStyle: z.union(['sections', 'plain', 'role-task-goal']).default('sections'),
   metaPromptLanguage: z.union(['auto', '中文', '英文']).default('auto'),
   autoOptimize: z.boolean().default(false),
   autoOptimizePrefix: z.string().default('/optimize '),
