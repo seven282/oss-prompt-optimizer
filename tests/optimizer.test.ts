@@ -71,6 +71,7 @@ const DEFAULT_CONFIG: Config = {
   dreamInsightFeedback: false,
   classifier: 'heuristic',
   localTemplate: 'off',
+  hybridAlignThreshold: 0.4,
 }
 
 /** Build a text-only chunk stream (delta-only, tolerated by BlockAssembler). */
@@ -1319,5 +1320,64 @@ describe('localTemplate per-call override (1.5.6 方案 C)', () => {
     expect(result.optimized).toBe(true)
     expect(result.local).toBeUndefined()
     expect(state.streamCalls).toHaveLength(1) // exactly one model call
+  })
+})
+
+describe('localTemplate hybrid mode (1.6.1)', () => {
+  it('returns the local render at zero tokens when goal anchors are aligned', async () => {
+    // 数据分析指令：目标/约束锚点 0.4 ≥ 默认阈值 0.4 → 直出，不精修。
+    const state = makeCtx([])
+    const service = makeService(state, { ...DEFAULT_CONFIG, localTemplate: 'hybrid' })
+    const result = await service.optimize('你是资深数据分析师，分析这份销售数据的趋势，结论先行，不超过 200 字', { signal: new AbortController().signal })
+    expect(result.optimized).toBe(true)
+    expect(result.local).toBe(true)
+    expect(result.refined).toBeUndefined()
+    expect(state.streamCalls).toHaveLength(0) // zero model calls
+  })
+
+  it('refines via a single cheap LLM call when goal anchors are missing', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    const service = makeService(state, { ...DEFAULT_CONFIG, localTemplate: 'hybrid' })
+    const result = await service.optimize('写一份周报，总结本周进展和下周计划', { signal: new AbortController().signal })
+    expect(result.optimized).toBe(true)
+    expect(result.local).toBe(true)
+    expect(result.refined).toBe(true)
+    expect(state.streamCalls).toHaveLength(1) // exactly one cheap refinement call
+    // 精修输入是轻量 prompt（本地成品 + 原始指令），不是完整管线骨架。
+    const system = state.streamCalls[0]?.system ?? ''
+    expect(system).toContain('本地生成结果')
+    expect(system).toContain('原始指令')
+    expect(system).not.toContain('情境画像')
+  })
+
+  it('falls back to the local render when the refinement call errors', async () => {
+    const failing = (async function* () { throw new Error('network boom') })()
+    const state = makeCtx([failing])
+    const service = makeService(state, { ...DEFAULT_CONFIG, localTemplate: 'hybrid' })
+    const result = await service.optimize('写一份周报，总结本周进展和下周计划', { signal: new AbortController().signal })
+    expect(result.optimized).toBe(true)
+    expect(result.local).toBe(true)
+    expect(result.refined).toBe(true)
+    expect(result.prompt).toContain('## Role')
+    expect(result.prompt).toContain('## Format')
+  })
+
+  it('falls back to the full LLM pipeline when the gate rejects', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    const service = makeService(state, { ...DEFAULT_CONFIG, localTemplate: 'hybrid' })
+    const result = await service.optimize('帮我写一份 PRD', { signal: new AbortController().signal })
+    expect(result.optimized).toBe(true)
+    expect(result.local).toBeUndefined()
+    expect(result.refined).toBeUndefined()
+    expect(state.streamCalls).toHaveLength(1)
+  })
+
+  it('counts refinements in stats', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    const service = makeService(state, { ...DEFAULT_CONFIG, localTemplate: 'hybrid' })
+    await service.optimize('写一份周报，总结本周进展和下周计划', { signal: new AbortController().signal })
+    const stats = service.getStats()
+    expect(stats.refined).toBe(1)
+    expect(stats.local).toBe(1)
   })
 })

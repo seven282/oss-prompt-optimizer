@@ -232,9 +232,20 @@ export interface Config {
    * with a locally rendered four-section template — no LLM call, no tokens.
    * `'auto'` (default) renders when the confidence gate passes and falls back
    * to the LLM otherwise; `'on'` renders whenever a subcategory matches;
-   * `'off'` disables the local path entirely.
+   * `'off'` disables the local path entirely; `'hybrid'` (1.6.1) renders
+   * locally and then checks goal-anchor alignment — aligned results return at
+   * zero tokens, misaligned ones go through a cheap LLM refinement
+   * (`refined: true`, ~400-800 tokens vs ~1300-2300 for the full pipeline).
    */
-  localTemplate: 'auto' | 'on' | 'off'
+  localTemplate: 'auto' | 'on' | 'off' | 'hybrid'
+  /**
+   * Goal-anchor alignment threshold for `localTemplate: 'hybrid'` (1.6.1):
+   * when `goalAnchorsScore(profile)` is below this value the local render is
+   * refined by a cheap LLM call; at or above it the result returns as-is at
+   * zero tokens. 0.4 = refine only instructions with no goal/constraint/
+   * audience anchor at all; 0.8 = refine almost everything.
+   */
+  hybridAlignThreshold: number
   /**
    * Template set id for the optimizer role documents. `'default'` (the only
    * built-in) uses the shipped skeletons; unknown ids fail the load loudly.
@@ -305,7 +316,8 @@ export const Config: z<Config> = z.object({
   builtinExamples: z.boolean().default(true),
   dreamInsightFeedback: z.boolean().default(false),
   classifier: z.union(['heuristic', 'llm']).default('heuristic'),
-  localTemplate: z.union(['auto', 'on', 'off']).default('auto'),
+  localTemplate: z.union(['auto', 'on', 'off', 'hybrid']).default('auto'),
+  hybridAlignThreshold: z.number().min(0).max(1).default(0.4),
   templateId: z.string().default('default'),
   metaPromptTemplate: z.object({
     optimizeZh: z.string(),

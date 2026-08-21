@@ -1,5 +1,47 @@
 # Changelog
 
+## [1.6.1] - 2026-08-21
+
+- **`localTemplate: 'hybrid'` 混合两档（方案 A P0+P1）**：本地直出后做**目标感知
+  对齐检查**——`goalAnchorsScore(profile)` 按目标/约束/受众/角色锚点评分，≥
+  `hybridAlignThreshold`（默认 0.4）直接返回本地成品（**仍 0 token**）；低于阈值
+  走**轻量 LLM 精修**（`refined: true`）：
+  - 精修 = `buildRefinePrompt`（本地成品 + 原始指令）单次 `generateOnce`——输入侧
+    实测 **257–308 tokens**（vs 全量管线 ~1000–1500，省 **74–79%**）；输出侧增量
+    ~100–300，一次精修总计 **~400–600 tokens**
+  - 精修失败/输出无效 → 回退本地成品（四段完整、零成本），`refined` 标记保留
+  - `localTemplateGate` 新增 `confidence`（目标感知丰富度评分，观测）；auto/on/off
+    行为完全不变（零回归）
+- **可观测**：`OptimizeStats.refined` 计数 + `OptimizeResult.refined` 标记 +
+  `/optimize-stats` 输出 `|REFINED:<n>`
+- **顺手修复**：本地直出分支的 `stats.success` 重复计数（手动 ++ 与 emitCompleted
+  双加）→ 统一由 emitCompleted 单次计数
+- 测试 418 → 427（local +4：锚点评分/丰富度/confidence/精修 prompt；optimizer +5：
+  hybrid 对齐直出/未对齐精修/失败回退/门控拒绝/stats）。
+
+## [1.6.0] - 2026-08-21
+
+- **本地直出丰富度增强（P1，buildLocalTemplate）**：在 1.5.9 净化基础上新增
+  `FILL_RULES`（21 子类 × zh/en 成品填充规则）——每子类一条「角色补全 + 上下文
+  要点」，本地直出不再落到「无额外背景」空兜底：
+  - Role：追加子类角色补全（如周报→「结论先行、要点支撑、按文体控制篇幅」）
+  - Context：子类规则要点兜底 + 既有受众/目标/约束/可衡量/对话上下文抽取
+  - en 与 zh 同规则（分隔符按语言 `;` / `；`）
+- 测试 416 → 418（local +2：FILL_RULES 丰富度 zh/en 断言）。
+- 版本号：1.5.9 末尾递增进位（9 + 1 = 10 向前一位进位）→ **1.6.0**。
+
+## [1.5.9] - 2026-08-21
+
+- **本地直出输出净化（P0，buildLocalTemplate）**：此前本地直出把「内部数据」当
+  「成品」输出——Role 带「角色参考：」前缀、Task 混入「场景骨架：」原文与
+  「（来自原始指令）」元标记、Format 残留「Format 」标签。现净化：
+  - Role：去「角色参考：/Role reference:」前缀，读作成品角色
+  - Task：只取骨架的 Task 链 + 核心动作（去元标记）
+  - Format：解析骨架三段取 Format 链（去「Format 」前缀）
+  - Context：新增受众抽取（`profile.role.audience`）并入上下文行
+  - 新增 `parseSkeleton` / `cleanRoleRef` 纯函数
+- 测试 414 → 416（local +2：净化断言、显式角色+受众保留）。
+
 ## [1.5.8] - 2026-08-21
 
 - **默认输出风格改四段标题**：`outputStyle` 默认 `'plain'` → `'sections'`——优化

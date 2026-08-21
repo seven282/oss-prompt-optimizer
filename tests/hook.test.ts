@@ -52,6 +52,7 @@ const BASE_CONFIG: Config = {
   dreamInsightFeedback: false,
   classifier: 'heuristic',
   localTemplate: 'off',
+  hybridAlignThreshold: 0.4,
 }
 
 const FOUR_SECTIONS = `## Role

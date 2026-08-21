@@ -39,7 +39,7 @@ import { buildDiagnosis, refineInstruction } from './diagnose.js'
 import { buildIterateSystem, buildOptimizeSystem, type PromptBuildContext } from './prompt.js'
 import { buildSituationProfile, goalAlignment, goalDrift, mergeGoals, type GoalProfile, type SituationProfile } from './situation.js'
 import { bigramJaccard, createOptimizeCache, fnv1a, type OptimizeCache } from './cache.js'
-import { buildLocalTemplate, localTemplateGate, type LocalTemplateMode } from './local.js'
+import { buildLocalTemplate, buildRefinePrompt, goalAnchorsScore, localTemplateGate, type LocalTemplateMode } from './local.js'
 
 export { MaxTokensError } from './llm.js'
 
@@ -173,10 +173,12 @@ export interface OptimizeOptions {
    * Per-call override for the local zero-token template path (1.5.6).
    * `'auto'` renders locally when the confidence gate passes (subcategory +
    * extractable signals), else the LLM pipeline; `'on'` forces local whenever
-   * a subcategory matches; `'off'` forces the LLM pipeline. Absent → the
-   * configured `localTemplate` value applies.
+   * a subcategory matches; `'off'` forces the LLM pipeline; `'hybrid'`
+   * (1.6.1) renders locally and refines via a cheap LLM call when the
+   * goal-anchor alignment score is below `hybridAlignThreshold`. Absent →
+   * the configured `localTemplate` value applies.
    */
-  localTemplate?: 'auto' | 'on' | 'off'
+  localTemplate?: 'auto' | 'on' | 'off' | 'hybrid'
 }
 
 /** The service result: the optimized prompt, or a clear fallback. */
@@ -197,6 +199,11 @@ export interface OptimizeResult {
   outputTokens?: number
   /** Whether the result came from the local zero-token template path (1.5.6). */
   local?: boolean
+  /**
+   * Whether the local render was refined by a cheap LLM call (1.6.1
+   * `localTemplate: 'hybrid'` when goal-anchor alignment was low).
+   */
+  refined?: boolean
 }
 
 /** Run-statistics snapshot (观测; see `getStats`). */
@@ -207,6 +214,8 @@ export interface OptimizeStats {
   cached: number
   /** Local zero-token template renders (1.5.6, 观测). */
   local: number
+  /** Local renders refined by a cheap LLM call (1.6.1 `hybrid`, 观测). */
+  refined: number
   totalDurationMs: number
   maxDurationMs: number
   lastOutputTokens: number
@@ -269,6 +278,8 @@ export class PromptOptimizerService extends Service {
     cached: 0,
     /** Local zero-token template renders (1.5.6, 观测). */
     local: 0,
+    /** Local renders refined by a cheap LLM call (1.6.1 `hybrid`, 观测). */
+    refined: 0,
     totalDurationMs: 0,
     maxDurationMs: 0,
     lastOutputTokens: 0,
@@ -658,13 +669,26 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
     // 本地零 token 模板直出（1.5.6，方案 A）：结构化子类 + 可抽取信号时，
     // 用纯函数层渲染四段模板——不调模型、零 token、~<5ms。置信度门控
     // （localTemplateGate）决定是否走本地；其余回落下方 LLM 管线。
+    // `hybrid`（1.6.1）：本地直出后做目标锚点对齐检查——对齐度 ≥ 阈值直接
+    // 返回（仍 0 token）；未对齐走轻量 LLM 精修（refined，~400-800 tokens，
+    // 比全量管线省 ~60%）。
     const localMode = options.localTemplate ?? this.config.localTemplate
     if (localMode !== 'off' && !senseNeeds) {
       const gate = localTemplateGate(rawInput, localMode as LocalTemplateMode, options.context)
       if (gate.ok && gate.subtype !== undefined) {
         const metaLanguage = this.resolveMetaLanguage(rawInput)
         const prompt = buildLocalTemplate(rawInput, gate.subtype, metaLanguage, options.context)
-        this.stats.success++
+        if (localMode === 'hybrid') {
+          const profile = buildSituationProfile(rawInput, options.context)
+          const align = goalAnchorsScore(profile)
+          if (align < this.config.hybridAlignThreshold) {
+            this.stats.local++ // 精修路径也渲染了本地模板
+            const refinedStartedAt = Date.now()
+            const refined = await this.refineLocal(prompt, rawInput, metaLanguage, options, align)
+            this.emitCompleted('optimize', rawInput, refined, Date.now() - refinedStartedAt)
+            return refined
+          }
+        }
         this.stats.local++
         this.emitCompleted('optimize', rawInput, { prompt, optimized: true, retries: 0, local: true, outputTokens: this.estimateTextTokens(prompt) }, 0)
         return {
@@ -1056,6 +1080,56 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
    * continue from the truncated prefix instead of regenerating it — only the
    * continuation text is returned and the caller merges it.
    */
+  /**
+   * Cheap refinement of a local render (1.6.1 `hybrid`): a single LLM call
+   * patches goal / constraint / audience gaps against the original
+   * instruction instead of regenerating from scratch — input side stays
+   * ~300-500 tokens vs ~1000-1500 for the full pipeline. If the refinement
+   * fails validation (or the call errors), the local render is returned
+   * unchanged so the user still gets a complete four-section result.
+   * `stats.refined` is incremented; the caller emits the completion event.
+   */
+  private async refineLocal(
+    localPrompt: string,
+    input: string,
+    metaLanguage: MetaLanguage,
+    options: OptimizeOptions,
+    alignScore: number,
+  ): Promise<OptimizeResult> {
+    const en = metaLanguage === 'en'
+    const route = this.resolveRoute()
+    const system = buildRefinePrompt(localPrompt, input, en)
+    let text: string
+    try {
+      text = await this.generateOnce(system, route, options.signal, this.config.temperature, this.config.maxTokens)
+    } catch {
+      // 精修失败不阻塞——回退本地成品（四段完整、零成本），保留 refined 标记
+      // 以便调用方知晓曾尝试过精修（alignScore 过低）。
+      this.stats.refined++
+      return {
+        prompt: localPrompt,
+        optimized: true,
+        retries: 0,
+        local: true,
+        refined: true,
+        sections: this.sectionsOf(localPrompt),
+        outputTokens: this.estimateTextTokens(localPrompt),
+      }
+    }
+    const valid = validateOutput(text, this.config.outputStyle, this.config.minSectionChars)
+    const out = valid ? text : localPrompt
+    this.stats.refined++
+    return {
+      prompt: out,
+      optimized: true,
+      retries: 0,
+      local: true,
+      refined: true,
+      ...(valid && this.config.outputStyle === 'sections' ? { sections: this.sectionsOf(out) } : {}),
+      outputTokens: this.estimateTextTokens(out),
+    }
+  }
+
   private async generateOnce(
     system: string,
     route: ResolvedRoute,
