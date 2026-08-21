@@ -204,7 +204,7 @@ dsh plugin --profile web remove oss-prompt-optimizer
 | `contextMaxTokens` | int ≥0 | `800` | 上下文 token 预算；超出截断到最长前缀并附标记；`0` 关闭截断（精简默认） |
 | `outputLengthMaxTokens` | int ≥0 | `800` | 优化结果建议长度上限（token，软约束：仅指导模型尽量精简，不阻断、不重试）；`0` 关闭。与 `maxTokens`（模型调用硬上限）相互独立 |
 | `situationProfileLevel` | `'full'` \| `'minimal'` \| `'off'` | `'full'` | 情境画像（`{{情境画像}}` 块）注入预算：`full` 角色+目标+约束全量；`minimal` 仅目标/约束（不含角色信号，更省 token）；`off` 不注入。只影响情境块，`{{任务类型}}` 提示不受影响 |
-| `localTemplate` | `'auto'` \| `'on'` \| `'off'` \| `'hybrid'` | `'auto'` | 本地零 token 模板直出（1.5.6）：结构化子类场景（周报/邮件/数据分析/部署等）用纯函数层本地渲染四段模板——**不调模型、零 token、~<5ms**。`auto` 经置信度门控（子类命中且含可抽取信号才直出，否则回落 LLM）；`on` 子类命中即直出（创作/研究类除外）；`off` 完全关闭走 LLM；`hybrid`（1.6.1）直出后做目标感知对齐检查——对齐直接返回（仍 0 token），未对齐走轻量 LLM 精修（输入侧 ~260–310 tokens，比全量省 ~75%） |
+| `localTemplate` | `'auto'` \| `'on'` \| `'off'` \| `'hybrid'` | `'auto'` | 本地模板路径（1.5.6 起）：结构化子类场景（周报/邮件/数据分析/部署等）先用纯函数层渲染四段**参考模板（seed）**（零 token、~5ms），再由 LLM 优化。`auto`（默认，1.6.2）**seed 优化**——本地参考模板 + 目标画像喂给 LLM 感知目标优化，输出经目标对齐校验，输入侧实测 ~270–310 tokens（省 ~75%）；`on` 本地渲染即成品直接返回（0 token 模板形态）；`off` 完全关闭走完整管线；`hybrid`（1.6.1）目标锚点对齐直接返回（0 token）、未对齐走 seed 优化 |
 | `hybridAlignThreshold` | number 0–1 | `0.4` | `hybrid` 档目标锚点对齐阈值：`goalAnchorsScore`（目标/约束/受众/角色锚点加权）低于此值 → 本地成品走精修；≥ 此值直接返回。`0.4` = 仅对无任何目标锚点的裸指令精修；调高到 `0.8` 则几乎全部精修 |
 | `goalAlignmentRetry` | boolean | `true` | 目标/约束未对齐（`goalAlignment` 失败）时是否消耗校验重试预算再试一次：`true` 保留目标保真（1.3.0 起默认行为）；`false` 直接接受结构有效的输出，省一次调用。`optimizationProfile: 'fast'` 时强制关闭 |
 | `optimizationProfile` | `'balanced'` \| `'fast'` | `'balanced'` | 时长档位：`balanced` 保留全部质量门（校验重试/目标对齐重试/selfRefine）；`fast` 跳过校验与目标对齐重试、禁用 selfRefine——一次结构有效即接受，最坏时长显著下降，返工率上升（显式选择才生效） |

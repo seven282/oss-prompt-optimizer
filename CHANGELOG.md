@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.6.2] - 2026-08-21
+
+- **`auto` 语义改为 seed 优化（本地参考模板 + LLM 感知目标，非 0 token）**：
+  本地渲染不再直接作为成品返回，而是作为**参考模板（seed）**喂给 LLM 做目标
+  感知优化——`buildRefinePrompt(参考模板 + 原始指令 + 目标画像)` 单次调用：
+  - 输入侧实测 **267–311 tokens**（vs 全量管线 ~1000–1500，省 **74–79%**）
+  - **目标感知**：抽取的目标/约束/受众锚点注入精修 prompt，LLM 显式感知
+  - **输出对齐目标**：`refineLocal` 输出后经 `goalAlignment` 校验——未对齐且
+    `goalAlignmentRetry` 开启时，注入缺失项为诊断重试一次（与全量管线
+    GOAL_MISALIGNED 闭环同源，seed 路径至多一次防 token 失控）
+  - 失败/无效 → 回退参考模板（四段完整），`refined: true` 保留
+- **档位语义**：`off` 全量管线 / `auto`（默认）seed 优化 / `on` 纯本地直出
+  （0 token 模板，/template 预填同源）/ `hybrid` 对齐直出或 seed 优化
+- 测试 427 → 429（optimizer +2：seed 优化目标对齐重试 / 对齐首出即收）。
+  注意：`goalAnchors` 对「不超过 200 字」类约束提取宽泛锚点「不超过」，
+  any-anchor 匹配会宽松误判（既有 goalAlignment 语义，未改动）。
+
 ## [1.6.1] - 2026-08-21
 
 - **`localTemplate: 'hybrid'` 混合两档（方案 A P0+P1）**：本地直出后做**目标感知

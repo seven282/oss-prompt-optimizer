@@ -666,39 +666,38 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
         outputTokens: this.estimateTextTokens(rawInput),
       }
     }
-    // 本地零 token 模板直出（1.5.6，方案 A）：结构化子类 + 可抽取信号时，
-    // 用纯函数层渲染四段模板——不调模型、零 token、~<5ms。置信度门控
-    // （localTemplateGate）决定是否走本地；其余回落下方 LLM 管线。
-    // `hybrid`（1.6.1）：本地直出后做目标锚点对齐检查——对齐度 ≥ 阈值直接
-    // 返回（仍 0 token）；未对齐走轻量 LLM 精修（refined，~400-800 tokens，
-    // 比全量管线省 ~60%）。
+    // 本地零 token 模板（1.5.6 起）：结构化子类 + 可抽取信号时，先用纯函数层
+    // 渲染四段**参考模板（seed）**——不调模型、零 token、~<5ms。
+    // - `on`：seed 即成品直接返回（0 token 模板形态，/template 预填同源）
+    // - `hybrid`（1.6.1）：目标锚点对齐（≥ 阈值）→ seed 直接返回（0 token）；
+    //   未对齐 → seed 优化
+    // - `auto`（1.6.2 起默认）：**seed 优化**——本地参考模板 + LLM 感知目标，
+    //   输出经目标对齐校验；省 token（~600-1300 vs 全量 ~1300-2300），非 0 token
+    // 门控拒绝的指令仍回落下方完整 LLM 管线。
     const localMode = options.localTemplate ?? this.config.localTemplate
     if (localMode !== 'off' && !senseNeeds) {
       const gate = localTemplateGate(rawInput, localMode as LocalTemplateMode, options.context)
       if (gate.ok && gate.subtype !== undefined) {
         const metaLanguage = this.resolveMetaLanguage(rawInput)
-        const prompt = buildLocalTemplate(rawInput, gate.subtype, metaLanguage, options.context)
-        if (localMode === 'hybrid') {
-          const profile = buildSituationProfile(rawInput, options.context)
-          const align = goalAnchorsScore(profile)
-          if (align < this.config.hybridAlignThreshold) {
-            this.stats.local++ // 精修路径也渲染了本地模板
-            const refinedStartedAt = Date.now()
-            const refined = await this.refineLocal(prompt, rawInput, metaLanguage, options, align)
-            this.emitCompleted('optimize', rawInput, refined, Date.now() - refinedStartedAt)
-            return refined
+        const seed = buildLocalTemplate(rawInput, gate.subtype, metaLanguage, options.context)
+        this.stats.local++
+        const profile = buildSituationProfile(rawInput, options.context)
+        const align = goalAnchorsScore(profile)
+        if (localMode === 'on' || (localMode === 'hybrid' && align >= this.config.hybridAlignThreshold)) {
+          this.emitCompleted('optimize', rawInput, { prompt: seed, optimized: true, retries: 0, local: true, outputTokens: this.estimateTextTokens(seed) }, 0)
+          return {
+            prompt: seed,
+            optimized: true,
+            retries: 0,
+            local: true,
+            sections: this.sectionsOf(seed),
+            outputTokens: this.estimateTextTokens(seed),
           }
         }
-        this.stats.local++
-        this.emitCompleted('optimize', rawInput, { prompt, optimized: true, retries: 0, local: true, outputTokens: this.estimateTextTokens(prompt) }, 0)
-        return {
-          prompt,
-          optimized: true,
-          retries: 0,
-          local: true,
-          sections: this.sectionsOf(prompt),
-          outputTokens: this.estimateTextTokens(prompt),
-        }
+        const refinedStartedAt = Date.now()
+        const refined = await this.refineLocal(seed, rawInput, metaLanguage, options, profile)
+        this.emitCompleted('optimize', rawInput, refined, Date.now() - refinedStartedAt)
+        return refined
       }
     }
     let input = truncateInput(rawInput, this.config.maxInputChars)
@@ -1081,12 +1080,15 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
    * continuation text is returned and the caller merges it.
    */
   /**
-   * Cheap refinement of a local render (1.6.1 `hybrid`): a single LLM call
-   * patches goal / constraint / audience gaps against the original
-   * instruction instead of regenerating from scratch — input side stays
-   * ~300-500 tokens vs ~1000-1500 for the full pipeline. If the refinement
-   * fails validation (or the call errors), the local render is returned
-   * unchanged so the user still gets a complete four-section result.
+   * Seed optimization (1.6.1 hybrid / 1.6.2 auto): a single LLM call turns
+   * the locally rendered reference template into a finished prompt against
+   * the original instruction — input side stays ~300-500 tokens vs
+   * ~1000-1500 for the full pipeline. The extracted goal/constraint/audience
+   * anchors are injected (goal-aware), and the output is checked with
+   * `goalAlignment` — when anchors are missing and `goalAlignmentRetry` is
+   * on, one retry injects the missing anchors as diagnosis. If the call
+   * errors or the output fails validation, the seed is returned unchanged
+   * so the user still gets a complete four-section result.
    * `stats.refined` is incremented; the caller emits the completion event.
    */
   private async refineLocal(
@@ -1094,17 +1096,19 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
     input: string,
     metaLanguage: MetaLanguage,
     options: OptimizeOptions,
-    alignScore: number,
+    profile: SituationProfile,
   ): Promise<OptimizeResult> {
     const en = metaLanguage === 'en'
     const route = this.resolveRoute()
-    const system = buildRefinePrompt(localPrompt, input, en)
+    const signal = options.signal
+    const temperature = this.config.temperature
+    const attempt = (diagnosis?: string): Promise<string> =>
+      this.generateOnce(buildRefinePrompt(localPrompt, input, en, profile, diagnosis), route, signal, temperature, this.config.maxTokens)
     let text: string
     try {
-      text = await this.generateOnce(system, route, options.signal, this.config.temperature, this.config.maxTokens)
+      text = await attempt()
     } catch {
-      // 精修失败不阻塞——回退本地成品（四段完整、零成本），保留 refined 标记
-      // 以便调用方知晓曾尝试过精修（alignScore 过低）。
+      // 调用失败不阻塞——回退参考模板（四段完整、零成本），保留 refined 标记。
       this.stats.refined++
       return {
         prompt: localPrompt,
@@ -1116,9 +1120,23 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
         outputTokens: this.estimateTextTokens(localPrompt),
       }
     }
-    const valid = validateOutput(text, this.config.outputStyle, this.config.minSectionChars)
-    const out = valid ? text : localPrompt
+    let valid = validateOutput(text, this.config.outputStyle, this.config.minSectionChars)
+    // 目标对齐校验（1.6.2）：输出必须体现原指令的目标/约束/受众——未对齐且
+    // 开启对齐重试时，注入缺失项为诊断重试一次（与全量管线的 GOAL_MISALIGNED
+    // 闭环同源，但 seed 路径至多一次以免 token 失控）。
+    let goalCheck = goalAlignment(profile.goal, text)
+    if (valid && !goalCheck.aligned && this.config.goalAlignmentRetry) {
+      const diagnosis = goalCheck.missing.join('、')
+      try {
+        text = await attempt(`missing: ${diagnosis}`)
+      } catch {
+        // 保留首次结果
+      }
+      valid = validateOutput(text, this.config.outputStyle, this.config.minSectionChars)
+      goalCheck = goalAlignment(profile.goal, text)
+    }
     this.stats.refined++
+    const out = valid ? text : localPrompt
     return {
       prompt: out,
       optimized: true,

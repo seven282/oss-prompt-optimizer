@@ -65,14 +65,22 @@ describe('goal-aware scores (1.6.1 hybrid)', () => {
     expect(g.confidence).toBeGreaterThan(0)
   })
 
-  it('builds a cheap refinement prompt from the local render and the instruction', () => {
+  it('builds a seed-optimization prompt from the local render, instruction, and goal anchors', () => {
     const p = buildRefinePrompt('## Role\n资深撰稿人', '写一份周报', false)
-    expect(p).toContain('本地生成结果')
+    expect(p).toContain('本地参考模板')
     expect(p).toContain('原始指令')
     expect(p).toContain('## Role\n资深撰稿人')
     const en = buildRefinePrompt('## Role\nWriter', 'write a report', true)
-    expect(en).toContain('Locally generated result')
+    expect(en).toContain('Locally generated reference template')
     expect(en).toContain('Original instruction')
+    // 1.6.2：传入 profile 时注入目标画像块（目标/约束/受众锚点）。
+    const rich = buildSituationProfile('你是资深数据分析师，分析这份销售数据的趋势，结论先行，不超过 200 字')
+    const withProfile = buildRefinePrompt('## Role\n资深数据分析师', '分析这份销售数据的趋势，结论先行，不超过 200 字', false, rich)
+    expect(withProfile).toContain('目标与约束（优化时须保留并补全）')
+    expect(withProfile).toContain('约束：')
+    // 诊断注入（目标对齐重试路径）。
+    const withDiag = buildRefinePrompt('## Role\n资深数据分析师', '分析这份销售数据的趋势', false, rich, 'missing: 约束：结论先行')
+    expect(withDiag).toContain('上一次输出未体现以下目标/约束')
   })
 })
 

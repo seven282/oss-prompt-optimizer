@@ -1258,18 +1258,24 @@ describe('dream insight feedback (1.4.9)', () => {
 })
 
 describe('localTemplate zero-token path (1.5.6)', () => {
-  it('renders locally (no llm call) when the gate passes in auto mode', async () => {
-    // 「写一份周报…」→ writing-report + 有可抽取信号 → 本地直出。
-    const state = makeCtx([]) // no streams: a model call would fail the test
+  it('seed-optimizes via one LLM call when the gate passes in auto mode (1.6.2)', async () => {
+    // 「写一份周报…」→ writing-report + 可抽取信号 → 本地渲染参考模板（seed），
+    // auto 默认走 seed 优化：LLM 基于参考模板感知目标优化（refined:true）。
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
     const service = makeService(state, { ...DEFAULT_CONFIG, localTemplate: 'auto' })
     const result = await service.optimize('写一份周报，总结本周进展和下周计划', { signal: new AbortController().signal })
     expect(result.optimized).toBe(true)
     expect(result.local).toBe(true)
+    expect(result.refined).toBe(true)
     expect(result.prompt).toContain('## Role')
     expect(result.prompt).toContain('## Task')
     expect(result.prompt).toContain('## Context')
     expect(result.prompt).toContain('## Format')
-    expect(state.streamCalls).toHaveLength(0) // zero model calls
+    expect(state.streamCalls).toHaveLength(1) // exactly one seed-optimization call
+    // 精修输入是参考模板 + 原始指令 + 目标画像，不是完整管线骨架。
+    const system = state.streamCalls[0]?.system ?? ''
+    expect(system).toContain('本地参考模板')
+    expect(system).toContain('原始指令')
   })
 
   it('falls back to the LLM pipeline when the gate rejects (auto)', async () => {
@@ -1343,9 +1349,9 @@ describe('localTemplate hybrid mode (1.6.1)', () => {
     expect(result.local).toBe(true)
     expect(result.refined).toBe(true)
     expect(state.streamCalls).toHaveLength(1) // exactly one cheap refinement call
-    // 精修输入是轻量 prompt（本地成品 + 原始指令），不是完整管线骨架。
+    // 精修输入是参考模板 + 原始指令 + 目标画像，不是完整管线骨架。
     const system = state.streamCalls[0]?.system ?? ''
-    expect(system).toContain('本地生成结果')
+    expect(system).toContain('本地参考模板')
     expect(system).toContain('原始指令')
     expect(system).not.toContain('情境画像')
   })
@@ -1379,5 +1385,33 @@ describe('localTemplate hybrid mode (1.6.1)', () => {
     const stats = service.getStats()
     expect(stats.refined).toBe(1)
     expect(stats.local).toBe(1)
+  })
+})
+
+describe('seed optimization goal alignment (1.6.2)', () => {
+  it('retries with goal-misalignment diagnosis when the output misses anchors', async () => {
+    // 首次输出 FOUR_SECTIONS（产品经理 PRD，缺「不超过 200 字」约束）→ 未对齐；
+    // 重试输出补全版（含约束）→ 对齐。断言恰好 2 次调用 + 第二次带诊断。
+    const aligned = '## Role\n资深数据分析师\n\n## Task\n分析销售趋势，结论先行，不超过 200 字。\n\n## Context\n数据支撑。\n\n## Format\n结论先行，200 字内。'
+    const state = makeCtx([textStream(FOUR_SECTIONS), textStream(aligned)])
+    const service = makeService(state, { ...DEFAULT_CONFIG, localTemplate: 'auto' })
+    const result = await service.optimize('你是数据分析师，分析销售数据，必须包含数据表格', { signal: new AbortController().signal })
+    expect(result.optimized).toBe(true)
+    expect(result.refined).toBe(true)
+    expect(result.prompt).toContain('数据表格') // 对齐后的输出保留约束
+    expect(state.streamCalls).toHaveLength(2) // 首次 + 目标对齐重试
+    const secondSystem = state.streamCalls[1]?.system ?? ''
+    expect(secondSystem).toContain('上一次输出未体现以下目标/约束')
+    expect(secondSystem).toContain('约束：必须包含数据表格')
+  })
+
+  it('accepts the first output when it already aligns with the goal', async () => {
+    const aligned = '## Role\n资深数据分析师\n\n## Task\n分析销售数据并给出趋势，必须包含数据表格。\n\n## Context\n数据支撑。\n\n## Format\n结论先行。'
+    const state = makeCtx([textStream(aligned)])
+    const service = makeService(state, { ...DEFAULT_CONFIG, localTemplate: 'auto' })
+    const result = await service.optimize('你是数据分析师，分析销售数据，必须包含数据表格', { signal: new AbortController().signal })
+    expect(result.optimized).toBe(true)
+    expect(result.refined).toBe(true)
+    expect(state.streamCalls).toHaveLength(1) // 对齐 → 无重试
   })
 })
