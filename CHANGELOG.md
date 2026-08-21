@@ -1,5 +1,55 @@
 # Changelog
 
+## [1.5.8] - 2026-08-21
+
+- **默认输出风格改四段标题**：`outputStyle` 默认 `'plain'` → `'sections'`——优化
+  结果默认为 `## Role` / `## Task` / `## Context` / `## Format` 四段结构化提示词。
+  实测四段标题仅增加 ~6–10 token/次输出（<1%），换来结构清晰、下游可直接执行；
+  需要极致省 token 仍可显式 `outputStyle: 'plain'`。README 两版默认值同步。
+- 测试 414 全绿（config 默认断言更新为 sections）。
+
+## [1.5.7] - 2026-08-21
+
+- **内置示例新增 analysis-review 评估类**（`BUILTIN_SUBTYPE_EXAMPLES`，zh/en）：
+  通用 analysis 示例（趋势解读向）不覆盖「结构化评估」形态——新增 input
+  「评估 localTemplate 本地直出的覆盖面与边界」的四段示例（结构化清单输出）；
+  源自「输出质量基准对照」附录的压缩版修订稿（锚定 1.5.6 现状：0 token 直出、
+  本地路径不读上下文）。`resolveBuiltinExamples` 子类优先机制不变。
+- 测试 413 → 414（analysis-review 命中子类示例断言）。
+
+## [1.5.6] - 2026-08-21
+
+- **本地零 token 模板直出（方案 A，`localTemplate`）**：四个感知层（任务/角色/
+  情境/上下文）本就是纯函数，唯一调模型的是正文生成——对结构化子类场景
+  （周报/邮件/数据分析/部署等），`local.ts` 用骨架 + 抽取信号**本地渲染四段
+  模板**，零模型调用、零 token、~<5ms。
+  - 配置 `localTemplate: 'auto' | 'on' | 'off'`（默认 `'auto'`）：`auto` 经
+    `localTemplateGate` 置信度门控——子类命中且含可抽取信号（角色/主谓宾/
+    目标约束/可衡量/对话上下文）才直出，否则回落 LLM；`on` 子类命中即直出
+    （除创作类）；`off` 完全关闭
+  - 开放创作类（诗/演讲/研究/预测）**永不本地直出**（`open-creative` 门控）
+  - `OptimizeResult.local` 标记 + `stats.local` 计数 + `/optimize-stats`
+    新增 `|LOCAL:<n>` 可观测；per-call `options.localTemplate` 可覆盖
+  - 复用纯函数层（`ROLE_LIBRARY`/`SUB_TOPIC_TEMPLATES` 从 meta.ts 导出），
+    零 harness 依赖，可独立单测
+  - **方案 B 副产品：`/template <场景> <指令>` 预填版**——场景 + 指令时经
+    `localTemplateGate` 门控本地渲染成品四段（零 token）；无信号时回退骨架
+  - **方案 C 混合两档**：`prompt_optimize` 工具新增 `localTemplate` 入参
+    （auto/on/off 透传）+ 结果 `local` 字段——本地直出不满意时以
+    `localTemplate: 'off'` 再次调用即走 LLM 精修（per-call 覆盖配置）
+- 测试 395 → 413（新增 local.test.ts 10 例 + optimizer 本地直出 6 例 +
+  /template 预填/回退 2 例；/optimize-stats 断言加 LOCAL 字段）
+
+## [1.5.5] - 2026-08-21
+
+- **任务分类歧义消解（写作动词 vs 运维词）**：`detectTaskType` 增加显式写作动词
+  （写/撰写/起草/编写/拟写/草拟/润色/翻译）作为 writing 强信号——当它与 ops 类词
+  （`发布/上线`，1.5.2 新增）打平时判 writing，不再误判 ops-deploy
+  （「帮我写一份新产品发布公告」此前被误判为运维类，注入错误的角色/骨架）。
+  - 回归护栏：纯运维指令（「发布到生产环境」「帮我部署一个服务」）保持 ops；
+    技术词优先（「写一个部署脚本」→ code）不受影响
+- 测试 394 → 395（新增歧义消解断言）
+
 ## [1.5.4] - 2026-08-21
 
 - **内置 few-shot 示例子类优先**：新增 `BUILTIN_SUBTYPE_EXAMPLES`（zh/en），

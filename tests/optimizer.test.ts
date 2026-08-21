@@ -70,6 +70,7 @@ const DEFAULT_CONFIG: Config = {
   builtinExamples: true,
   dreamInsightFeedback: false,
   classifier: 'heuristic',
+  localTemplate: 'off',
 }
 
 /** Build a text-only chunk stream (delta-only, tolerated by BlockAssembler). */
@@ -1252,5 +1253,71 @@ describe('dream insight feedback (1.4.9)', () => {
     expect(second.optimized).toBe(true)
     expect(state.streamCalls[1].system).toContain('Previous AI-inferred insights')
     expect(state.streamCalls[1].system).toContain('Deep goal: X')
+  })
+})
+
+describe('localTemplate zero-token path (1.5.6)', () => {
+  it('renders locally (no llm call) when the gate passes in auto mode', async () => {
+    // 「写一份周报…」→ writing-report + 有可抽取信号 → 本地直出。
+    const state = makeCtx([]) // no streams: a model call would fail the test
+    const service = makeService(state, { ...DEFAULT_CONFIG, localTemplate: 'auto' })
+    const result = await service.optimize('写一份周报，总结本周进展和下周计划', { signal: new AbortController().signal })
+    expect(result.optimized).toBe(true)
+    expect(result.local).toBe(true)
+    expect(result.prompt).toContain('## Role')
+    expect(result.prompt).toContain('## Task')
+    expect(result.prompt).toContain('## Context')
+    expect(result.prompt).toContain('## Format')
+    expect(state.streamCalls).toHaveLength(0) // zero model calls
+  })
+
+  it('falls back to the LLM pipeline when the gate rejects (auto)', async () => {
+    // 无子类命中的指令 → 门控拒绝 → 走 LLM。
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    const service = makeService(state, { ...DEFAULT_CONFIG, localTemplate: 'auto' })
+    const result = await service.optimize('帮我写一份 PRD', { signal: new AbortController().signal })
+    expect(result.optimized).toBe(true)
+    expect(result.local).toBeUndefined()
+    expect(state.streamCalls).toHaveLength(1)
+  })
+
+  it('respects localTemplate: off (never local)', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    const service = makeService(state, { ...DEFAULT_CONFIG, localTemplate: 'off' })
+    const result = await service.optimize('写一份周报，总结本周进展和下周计划', { signal: new AbortController().signal })
+    expect(result.local).toBeUndefined()
+    expect(state.streamCalls).toHaveLength(1)
+  })
+
+  it('on mode renders local whenever a subcategory matches (no signal needed)', async () => {
+    const state = makeCtx([])
+    const service = makeService(state, { ...DEFAULT_CONFIG, localTemplate: 'on' })
+    // 仅子类命中、无显式信号 —— 'on' 也直出（auto 会因 no-signal 回落）。
+    const result = await service.optimize('帮我写周报', { signal: new AbortController().signal })
+    expect(result.optimized).toBe(true)
+    expect(result.local).toBe(true)
+    expect(state.streamCalls).toHaveLength(0)
+  })
+
+  it('counts local renders in stats and /optimize-stats LOCAL token', async () => {
+    const state = makeCtx([])
+    const service = makeService(state, { ...DEFAULT_CONFIG, localTemplate: 'auto' })
+    await service.optimize('写一份周报，总结本周进展和下周计划', { signal: new AbortController().signal })
+    expect(service.getStats().local).toBe(1)
+  })
+})
+
+describe('localTemplate per-call override (1.5.6 方案 C)', () => {
+  it('forces the LLM pipeline for a single call even when config is auto (refine path)', async () => {
+    // 本地直出结果不满意 → 对同一指令以 localTemplate: 'off' 再调用 → 走 LLM 精修。
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    const service = makeService(state, { ...DEFAULT_CONFIG, localTemplate: 'auto' })
+    const result = await service.optimize('写一份周报，总结本周进展和下周计划', {
+      signal: new AbortController().signal,
+      localTemplate: 'off',
+    })
+    expect(result.optimized).toBe(true)
+    expect(result.local).toBeUndefined()
+    expect(state.streamCalls).toHaveLength(1) // exactly one model call
   })
 })

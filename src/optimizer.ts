@@ -39,6 +39,7 @@ import { buildDiagnosis, refineInstruction } from './diagnose.js'
 import { buildIterateSystem, buildOptimizeSystem, type PromptBuildContext } from './prompt.js'
 import { buildSituationProfile, goalAlignment, goalDrift, mergeGoals, type GoalProfile, type SituationProfile } from './situation.js'
 import { bigramJaccard, createOptimizeCache, fnv1a, type OptimizeCache } from './cache.js'
+import { buildLocalTemplate, localTemplateGate, type LocalTemplateMode } from './local.js'
 
 export { MaxTokensError } from './llm.js'
 
@@ -168,6 +169,14 @@ export interface OptimizeOptions {
    * inferring deep goal / implicit constraints / quality criteria / follow-ups.
    */
   senseNeeds?: boolean
+  /**
+   * Per-call override for the local zero-token template path (1.5.6).
+   * `'auto'` renders locally when the confidence gate passes (subcategory +
+   * extractable signals), else the LLM pipeline; `'on'` forces local whenever
+   * a subcategory matches; `'off'` forces the LLM pipeline. Absent → the
+   * configured `localTemplate` value applies.
+   */
+  localTemplate?: 'auto' | 'on' | 'off'
 }
 
 /** The service result: the optimized prompt, or a clear fallback. */
@@ -186,6 +195,8 @@ export interface OptimizeResult {
   sections?: { name: string; content: string }[]
   /** Estimated token count of the optimized prompt (successful results only). */
   outputTokens?: number
+  /** Whether the result came from the local zero-token template path (1.5.6). */
+  local?: boolean
 }
 
 /** Run-statistics snapshot (观测; see `getStats`). */
@@ -194,6 +205,8 @@ export interface OptimizeStats {
   success: number
   failed: number
   cached: number
+  /** Local zero-token template renders (1.5.6, 观测). */
+  local: number
   totalDurationMs: number
   maxDurationMs: number
   lastOutputTokens: number
@@ -254,6 +267,8 @@ export class PromptOptimizerService extends Service {
     success: 0,
     failed: 0,
     cached: 0,
+    /** Local zero-token template renders (1.5.6, 观测). */
+    local: 0,
     totalDurationMs: 0,
     maxDurationMs: 0,
     lastOutputTokens: 0,
@@ -638,6 +653,28 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
         // 空 sections——仅当英文标题齐全时才提供逐段内容。
         ...(hasAllSections(rawInput) ? { sections: this.sectionsOf(rawInput) } : {}),
         outputTokens: this.estimateTextTokens(rawInput),
+      }
+    }
+    // 本地零 token 模板直出（1.5.6，方案 A）：结构化子类 + 可抽取信号时，
+    // 用纯函数层渲染四段模板——不调模型、零 token、~<5ms。置信度门控
+    // （localTemplateGate）决定是否走本地；其余回落下方 LLM 管线。
+    const localMode = options.localTemplate ?? this.config.localTemplate
+    if (localMode !== 'off' && !senseNeeds) {
+      const gate = localTemplateGate(rawInput, localMode as LocalTemplateMode, options.context)
+      if (gate.ok && gate.subtype !== undefined) {
+        const metaLanguage = this.resolveMetaLanguage(rawInput)
+        const prompt = buildLocalTemplate(rawInput, gate.subtype, metaLanguage, options.context)
+        this.stats.success++
+        this.stats.local++
+        this.emitCompleted('optimize', rawInput, { prompt, optimized: true, retries: 0, local: true, outputTokens: this.estimateTextTokens(prompt) }, 0)
+        return {
+          prompt,
+          optimized: true,
+          retries: 0,
+          local: true,
+          sections: this.sectionsOf(prompt),
+          outputTokens: this.estimateTextTokens(prompt),
+        }
       }
     }
     let input = truncateInput(rawInput, this.config.maxInputChars)

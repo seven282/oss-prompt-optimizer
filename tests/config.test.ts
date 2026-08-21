@@ -16,7 +16,7 @@ describe('Config schema', () => {
       maxInputChars: 4000,
       timeoutMs: 60000,
       outputLanguage: 'auto',
-      outputStyle: 'plain',
+      outputStyle: 'sections',
       metaPromptLanguage: 'auto',
       autoOptimize: false,
       autoOptimizePrefix: '/optimize ',

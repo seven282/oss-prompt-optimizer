@@ -82,9 +82,21 @@ export function detectTaskType(input: string): TaskType {
   const kinds = Object.keys(TASK_KEYWORDS) as (keyof typeof TASK_KEYWORDS)[]
   // Iteration order is the tie-break priority; the first category reaching a
   // new max wins ties (strictly-greater comparison keeps the earlier kind).
-  const { item } = bestScoreByKeywords(kinds.map((kind) => ({ kind, keywords: TASK_KEYWORDS[kind] })), lower)
-  return item !== undefined ? item.kind : 'other'
+  const { item, score } = bestScoreByKeywords(kinds.map((kind) => ({ kind, keywords: TASK_KEYWORDS[kind] })), lower)
+  if (item === undefined) return 'other'
+  // 1.5.5 歧义消解：写作动词（写/撰写/起草/编写/拟…）是写作类强信号——
+  // 当它与 ops 类词（如「发布/上线」，1.5.2 新增）打平时，应判 writing
+  // （「帮我写一份新产品发布公告」→ writing-copy，而非 ops-deploy）。
+  // 仅在平局或 ops 未领先时应用，避免破坏「发布到生产环境」等纯运维指令
+  // 的 ops 判定；code 类技术词优先不受影响（迭代顺序在前，平局仍 code 赢）。
+  if (item.kind === 'ops' && score === 1 && WRITING_VERB_RE.test(lower)) {
+    return 'writing'
+  }
+  return item.kind
 }
+
+/** Explicit writing verbs — strong writing-category signal (1.5.5 tie-break). */
+const WRITING_VERB_RE = /写|撰写|起草|编写|拟写|草拟|润色|翻译/i
 
 /** Per-category role/format hints injected as the `{{任务类型}}` block (zh). */
 const TASKTYPE_ZH: Record<Exclude<TaskType, 'other'>, string> = {
@@ -108,7 +120,7 @@ const TASKTYPE_EN: Record<Exclude<TaskType, 'other'>, string> = {
  * the model has a concrete role fallback when the situation profile carries
  * no explicit role (low-confidence cases) — never injected into the profile.
  */
-const ROLE_LIBRARY: Record<Exclude<TaskType, 'other'>, { zh: string; en: string }> = {
+export const ROLE_LIBRARY: Record<Exclude<TaskType, 'other'>, { zh: string; en: string }> = {
   code: {
     zh: '角色参考：资深工程师，精通 Python/TypeScript，先保证可运行再优化、代码附必要注释。',
     en: 'Role reference: senior engineer, proficient in Python/TypeScript; make it run first, then optimize; annotate where needed.',
@@ -133,7 +145,7 @@ const ROLE_LIBRARY: Record<Exclude<TaskType, 'other'>, { zh: string; en: string 
  * detected — the model fills in the specifics instead of inventing a shape.
  * Also drives the `/template <scene>` quick command (no model call).
  */
-const SUB_TOPIC_TEMPLATES: Record<TaskSubtype, { zh: string; en: string }> = {
+export const SUB_TOPIC_TEMPLATES: Record<TaskSubtype, { zh: string; en: string }> = {
   'code-bugfix': {
     zh: '场景骨架：Role 资深工程师；Task 定位根因→最小修复→回归验证；Format 根因分析 + 改动点 + 测试结果。',
     en: 'Scene skeleton: Role senior engineer; Task root-cause → minimal fix → regression check; Format root cause + changes + test results.',
@@ -325,7 +337,7 @@ const PLACEHOLDER_MAP: Readonly<Record<string, keyof MetaBlocks>> = {
 import { DEFAULT_TEMPLATES, type TemplateSet } from './templates.js'
 import type { PromptExample } from './config.js'
 import { buildContextBlock } from './context.js'
-import { buildSituationProfile, renderSituationBlock, subtypeKeywords, subtypeLabel, type GoalDrift, type SituationProfile, type SituationProfileLevel, type TaskSubtype } from './situation.js'
+import { buildSituationProfile, detectMeasurable, detectTaskSubtype, extractMainVerbObject, renderSituationBlock, subtypeKeywords, subtypeLabel, type GoalDrift, type SituationProfile, type SituationProfileLevel, type TaskSubtype } from './situation.js'
 
 /**
  * Built-in few-shot examples (1 pair per task type × language). Injected when
@@ -374,10 +386,11 @@ const BUILTIN_EXAMPLES: Record<MetaLanguage, Record<Exclude<TaskType, 'other'>, 
 
 /**
  * Subtype-level built-in examples (1.5.4): a more specific pair wins over the
- * task-type pair when the subtype is detected. Currently only `code-bugfix`
- * ships one — the "root cause → minimal fix → regression check" shape that
- * the generic `code` example (scripting) does not cover. Explicit `examples`
- * still always win.
+ * task-type pair when the subtype is detected. `code-bugfix` ships the
+ * "root cause → minimal fix → regression check" shape (1.5.4);
+ * `analysis-review` ships a "structured evaluation" shape (1.5.7) that the
+ * generic `analysis` example (trend reading) does not cover. Explicit
+ * `examples` still always win.
  */
 const BUILTIN_SUBTYPE_EXAMPLES: Record<MetaLanguage, Partial<Record<TaskSubtype, PromptExample>>> = {
   zh: {
@@ -385,11 +398,19 @@ const BUILTIN_SUBTYPE_EXAMPLES: Record<MetaLanguage, Partial<Record<TaskSubtype,
       input: '定位并修复 @src/cache.ts 的报错',
       output: '## Role\n资深 TypeScript 工程师，精通类型检查与缓存模块设计，先保证可运行再优化。\n\n## Task\n对 @src/cache.ts 做完整错误诊断与最小修复：先静态检查与代码走读定位全部报错点，逐条列出错误类型与触发条件；再做最小修复，保持导出接口/函数签名/缓存语义（LRU+TTL、键值存储）完全不变，每处改动附注释说明依据；最后运行 tsc --noEmit 与相关单测，确认报错消除且无新增警告或行为变更。\n\n## Context\n@src/cache.ts 是纯函数缓存层（fnv1a 哈希 + bigramJaccard + LRU/TTL，无 harness 依赖）。未提供具体报错信息与环境——无法精确定位时采取最保守修复，并说明推断依据与可复现步骤。\n\n## Format\n依次输出三部分：①根因分析（短条目）②改动点（文件+行号+修改前后对比）③测试结果；涉及代码提供可直接运行的完整 TypeScript 片段。',
     },
+    'analysis-review': {
+      input: '评估 localTemplate 本地直出的覆盖面与边界',
+      output: '## Role\n资深提示词插件架构师，熟悉 localTemplate 本地直出机制与 token 成本模型。\n\n## Task\n评估 1.5.6 本地直出覆盖面与边界，输出系统化结论：先梳理门控规则（子类命中 + 可抽取信号）；再对照 21 个可直出子类与 4 个永不直出（创作/演讲/研究/预测）的边界；最后评估「本地直出 + LLM 精修」混合两档的收益。\n\n## Context\n1.5.6 已实现本地直出：零 token 零延迟；本地路径不读上下文；/optimize-stats 的 LOCAL:<n> 可观测。实际直出 token 为 0，非 ≤1000。\n\n## Format\n结构化清单：①直出判定标准（确定性/无依赖/可规则化 ↔ 现有门控）②可直出 vs 必须 LLM 的边界（附实际 token）③上下文感知关闭的适用条件与风险④按优先级列出优化项（模板缺口→门控阈值→评估）。重点突出可直出与不可直出的边界。',
+    },
   },
   en: {
     'code-bugfix': {
       input: 'Locate and fix the errors in @src/cache.ts',
       output: '## Role\nSenior TypeScript engineer, proficient in type checking and cache-module design; make it run first, then optimize.\n\n## Task\nDiagnose and minimally fix @src/cache.ts: statically check and walk the code to locate every error, listing each error type and trigger condition; then apply the minimal fix that keeps the exported interfaces, function signatures and cache semantics (LRU+TTL, key-value storage) unchanged, annotating the rationale for each change; finally run tsc --noEmit and the related unit tests to confirm the errors are gone with no new warnings or behavior changes.\n\n## Context\n@src/cache.ts is a pure-function cache layer (fnv1a hash + bigramJaccard + LRU/TTL, no harness dependency). No concrete error message or environment is provided — when the root cause cannot be pinpointed, apply the most conservative fix and state the inference basis and reproduction steps.\n\n## Format\nOutput three parts in order: ① root-cause analysis (short bullets) ② changes (file + line + before/after) ③ test results; include a directly runnable complete TypeScript snippet wherever code is involved.',
+    },
+    'analysis-review': {
+      input: 'Assess the coverage and boundaries of localTemplate local rendering',
+      output: '## Role\nSenior prompt-plugin architect, familiar with the localTemplate local-render mechanism and the token cost model.\n\n## Task\nAssess the coverage and boundaries of the 1.5.6 local render and produce a systematic conclusion: first walk the gate rules (subcategory match + extractable signals); then compare the 21 renderable subcategories against the 4 never-rendered ones (creative/speech/research/forecast); finally weigh the hybrid two-tier benefit of "local render + LLM refine".\n\n## Context\n1.5.6 already ships local render: zero tokens, zero latency; the local path never reads conversation context; /optimize-stats exposes LOCAL:<n>. Actual local-render tokens are 0, not ≤1000.\n\n## Format\nStructured checklist: ① render criteria (deterministic / context-free / rule-izable ↔ the existing gate) ② the renderable-vs-LLM boundary with actual tokens ③ when turning context-awareness off is appropriate and its risks ④ prioritized next steps (template gaps → gate thresholds → evaluation). Highlight the renderable / not-renderable boundary.',
     },
   },
 }

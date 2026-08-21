@@ -51,6 +51,7 @@ const BASE_CONFIG: Config = {
   builtinExamples: true,
   dreamInsightFeedback: false,
   classifier: 'heuristic',
+  localTemplate: 'off',
 }
 
 const FOUR_SECTIONS = `## Role

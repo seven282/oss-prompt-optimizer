@@ -227,6 +227,15 @@ export interface Config {
    */
   classifier: 'heuristic' | 'llm'
   /**
+   * Local zero-token template render (1.5.6, 方案 A): when the instruction
+   * maps to a well-structured subcategory with extractable signals, answer
+   * with a locally rendered four-section template — no LLM call, no tokens.
+   * `'auto'` (default) renders when the confidence gate passes and falls back
+   * to the LLM otherwise; `'on'` renders whenever a subcategory matches;
+   * `'off'` disables the local path entirely.
+   */
+  localTemplate: 'auto' | 'on' | 'off'
+  /**
    * Template set id for the optimizer role documents. `'default'` (the only
    * built-in) uses the shipped skeletons; unknown ids fail the load loudly.
    * Custom skeletons come from `metaPromptTemplate`.
@@ -262,7 +271,7 @@ export const Config: z<Config> = z.object({
   maxInputTokens: z.number().step(1).min(0).max(200000).default(3000),
   timeoutMs: z.number().step(1).min(1).max(MAX_TIMER_DELAY_MS).default(60000),
   outputLanguage: z.string().default('auto'),
-  outputStyle: z.union(['sections', 'plain']).default('plain'),
+  outputStyle: z.union(['sections', 'plain']).default('sections'),
   metaPromptLanguage: z.union(['auto', '中文', '英文']).default('auto'),
   autoOptimize: z.boolean().default(false),
   autoOptimizePrefix: z.string().default('/optimize '),
@@ -296,6 +305,7 @@ export const Config: z<Config> = z.object({
   builtinExamples: z.boolean().default(true),
   dreamInsightFeedback: z.boolean().default(false),
   classifier: z.union(['heuristic', 'llm']).default('heuristic'),
+  localTemplate: z.union(['auto', 'on', 'off']).default('auto'),
   templateId: z.string().default('default'),
   metaPromptTemplate: z.object({
     optimizeZh: z.string(),

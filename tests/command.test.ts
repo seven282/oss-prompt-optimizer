@@ -61,6 +61,7 @@ const DEFAULT_CONFIG: Config = {
   builtinExamples: true,
   dreamInsightFeedback: false,
   classifier: 'heuristic',
+  localTemplate: 'off',
 }
 
 function textStream(text: string): AsyncIterable<StreamChunk> {
@@ -295,13 +296,13 @@ describe('/optimize-stats command', () => {
   it('reports the last run output tokens as a machine token', async () => {
     const { commands } = makeService(() => textStream(FOUR_SECTIONS))
     // Before any run the counters are zero.
-    expect(await stats(commands).handler(invocation(''))).toMatchObject({ kind: 'success', text: 'OPTIMIZE_STATS:TOKENS:0|INPUT:0|CALLS:0|LASTMSCALL:0' })
+    expect(await stats(commands).handler(invocation(''))).toMatchObject({ kind: 'success', text: 'OPTIMIZE_STATS:TOKENS:0|INPUT:0|CALLS:0|LASTMSCALL:0|LOCAL:0' })
     const optimize = commands.find((c) => c.name === 'optimize')!
     await optimize.handler(invocation('帮我写周报'))
     const result = await stats(commands).handler(invocation(''))
     expect(result).toMatchObject({ kind: 'success' })
     const text = (result as { text: string }).text
-    expect(text).toMatch(/OPTIMIZE_STATS:TOKENS:\d+\|INPUT:\d+\|CALLS:1\|LASTMSCALL:\d+/)
+    expect(text).toMatch(/OPTIMIZE_STATS:TOKENS:\d+\|INPUT:\d+\|CALLS:1\|LASTMSCALL:\d+\|LOCAL:\d+/)
   })
 })
 
@@ -325,5 +326,31 @@ describe('/template quick command (1.5.1)', () => {
     const b = (await tmpl.handler(invocation(''))) as { kind: string }
     expect(a.kind).toBe('error')
     expect(b.kind).toBe('error')
+  })
+
+  it('returns a pre-filled template for scene + instruction (1.5.6 方案 B)', async () => {
+    const { commands } = makeService(() => textStream(FOUR_SECTIONS))
+    const tmpl = commands.find((c) => c.name === 'template')!
+    // 「周报 总结本周进展」→ 场景周报 + 指令 → 本地预填版（零模型调用）。
+    const res = (await tmpl.handler(invocation('周报 总结本周进展和下周计划'))) as { kind: string; text: string }
+    expect(res.kind).toBe('success')
+    const text = res.text
+    expect(text).toContain('## Role')
+    expect(text).toContain('## Task')
+    expect(text).toContain('## Context')
+    expect(text).toContain('## Format')
+    // 预填版含抽取的核心动作（本地渲染，非占位符骨架）。
+    expect(text).toContain('核心动作')
+    expect(text).not.toContain('{{')
+  })
+
+  it('falls back to the skeleton when the instruction has no local signals (1.5.6)', async () => {
+    const { commands } = makeService(() => textStream(FOUR_SECTIONS))
+    const tmpl = commands.find((c) => c.name === 'template')!
+    // 场景 + 无信号的指令 → 门控拒绝 → 回退骨架 + 提示。
+    const res = (await tmpl.handler(invocation('周报 随便'))) as { kind: string; text: string }
+    expect(res.kind).toBe('success')
+    expect(res.text).toContain('场景骨架')
+    expect(res.text).toContain('未识别可本地填充的信号')
   })
 })

@@ -128,6 +128,15 @@ describe('buildOptimizePrompt', () => {
     expect(prompt).not.toContain('完整错误诊断与最小修复')
   })
 
+  it('prefers the subtype built-in example for an evaluation task (1.5.7)', () => {
+    // 「评估 localTemplate 本地直出的覆盖面与边界」→ analysis + analysis-review
+    // → the subtype pair wins over the generic `analysis` (trend) pair.
+    const prompt = buildOptimizePrompt('评估 localTemplate 本地直出的覆盖面与边界')
+    expect(prompt).toContain('原始指令：评估 localTemplate 本地直出的覆盖面与边界')
+    expect(prompt).toContain('结构化清单')
+    expect(prompt).not.toContain('原始指令：分析这份销售数据的趋势')
+  })
+
   it('switches the built-in example by meta-prompt language', () => {
     const prompt = buildOptimizePrompt(INPUT, 'auto', undefined, undefined, 'sections', 'en')
     expect(prompt).toContain('Write a product launch announcement')
@@ -472,6 +481,18 @@ describe('detectTaskType', () => {
   it('detects writing tasks', () => {
     expect(detectTaskType('写一封英文邮件给客户')).toBe('writing')
     expect(detectTaskType('把这段文字翻译成英文')).toBe('writing')
+  })
+
+  it('disambiguates writing verbs vs ops words (1.5.5)', () => {
+    // 「发布」是 1.5.2 新增的 ops 词；显式写作动词 + ops 词打平时应判 writing，
+    // 而非 ops-deploy（「帮我写一份新产品发布公告」此前被误判）。
+    expect(detectTaskType('帮我写一份新产品发布公告')).toBe('writing')
+    expect(detectTaskType('撰写一份发布公告')).toBe('writing')
+    // 无写作动词的纯运维指令保持 ops（1.5.2 断链修复回归）。
+    expect(detectTaskType('发布到生产环境')).toBe('ops')
+    expect(detectTaskType('帮我部署一个服务')).toBe('ops')
+    // 技术词优先：写作动词 + code 技术词 → code。
+    expect(detectTaskType('写一个部署脚本')).toBe('code')
   })
 
   it('returns other when nothing matches', () => {

@@ -3,6 +3,8 @@ import type { CommandResult } from '@deepseek-ai/dsh-commands'
 import { OptimizeError, OptimizeErrorCode, OPTIMIZE_ERROR_TEXT } from './errors.js'
 import { gatherConversationContext, type ContextMessage } from './context.js'
 import { matchScene, renderSceneTemplate } from './meta.js'
+import type { TaskSubtype } from './situation.js'
+import { buildLocalTemplate, localTemplateGate } from './local.js'
 import type { PromptOptimizerService } from './optimizer.js'
 
 /** Stable machine-readable token for the current role-document language mode. */
@@ -162,7 +164,7 @@ export function registerOptimizeCommand(ctx: Context, service: PromptOptimizerSe
       const stats = service.getStats()
       return {
         kind: 'success',
-        text: `OPTIMIZE_STATS:TOKENS:${stats.lastOutputTokens}|INPUT:${stats.lastInputTokens}|CALLS:${stats.lastRunCalls}|LASTMSCALL:${stats.lastCallMs}`,
+        text: `OPTIMIZE_STATS:TOKENS:${stats.lastOutputTokens}|INPUT:${stats.lastInputTokens}|CALLS:${stats.lastRunCalls}|LASTMSCALL:${stats.lastCallMs}|LOCAL:${stats.local}`,
       }
     },
   })
@@ -170,6 +172,9 @@ export function registerOptimizeCommand(ctx: Context, service: PromptOptimizerSe
   // Quick scene template (1.5.1): `/template <场景>` returns a ready-to-fill
   // four-section template for a detected subcategory — no model call, zero
   // latency/cost. The client renders it as-is.
+  // 1.5.6 方案 B: `/template <场景> <指令>`（如 `/template 周报 总结本周进展`）
+  // 返回「预填版」——指令经 localTemplateGate 门控通过时用 buildLocalTemplate
+  // 本地渲染成品四段（零 token）；门控拒绝时回退骨架并提示走 /optimize。
   ctx.commands.register({
     name: 'template',
     description: 'Return a ready-to-fill scene template (no model call)',
@@ -178,11 +183,39 @@ export function registerOptimizeCommand(ctx: Context, service: PromptOptimizerSe
       if (arg.length === 0) {
         return { kind: 'error', text: 'prompt-optimize: 用法 /template <场景>（如：周报、邮件、数据分析、部署…）' }
       }
-      const subtype = matchScene(arg)
+      // 先尝试「场景 + 指令」拆分：首 token 必须独立命中场景（防止把整串当
+      // 场景名的关键词子串误匹配），剩余部分作为预填指令。
+      let subtype: TaskSubtype | undefined
+      let instruction: string | undefined
+      const parts = arg.split(/\s+/)
+      if (parts.length >= 2) {
+        const head = parts[0] ?? ''
+        const rest = parts.slice(1).join(' ').trim()
+        const headMatch = matchScene(head)
+        if (headMatch !== undefined && rest.length > 0) {
+          subtype = headMatch
+          instruction = rest
+        }
+      }
+      // 无指令拆分 → 整体匹配场景（`/template 周报` 或 `数据分析` 等）。
+      if (subtype === undefined) {
+        subtype = matchScene(arg)
+      }
       if (subtype === undefined) {
         return { kind: 'error', text: `prompt-optimize: 未识别场景 "${arg}"；支持：周报/邮件/文案/翻译/创作/润色/简历/演讲/数据分析/研究/评估/预测/bug修复/新功能/重构/审查/脚本/部署/安装/排查/运维` }
       }
       const en = service.getMetaPromptLanguage() === 'en'
+      if (instruction !== undefined) {
+        const gate = localTemplateGate(instruction, 'auto')
+        if (gate.ok) {
+          return { kind: 'success', text: buildLocalTemplate(instruction, subtype, en ? 'en' : 'zh') }
+        }
+        // 门控拒绝：回退骨架，附提示。
+        return {
+          kind: 'success',
+          text: `${renderSceneTemplate(subtype, en)}\n\n（未识别可本地填充的信号——个性化需求请用 /optimize 走完整优化）`,
+        }
+      }
       return { kind: 'success', text: renderSceneTemplate(subtype, en) }
     },
   })

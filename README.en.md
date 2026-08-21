@@ -4,11 +4,11 @@
 
 **prompt-optimizer** turns a casually written sentence into a professional, ready-to-use prompt — the same experience as Qoder and Codex.
 
-By default the result is a heading-free plain-text prompt (`outputStyle: 'plain'`, fewer tokens); a four-section structured style (`outputStyle: 'sections'` — `## Role` / `## Task` / `## Context` / `## Format`) is configurable. The optimization is driven by a built-in meta-prompt and run through the harness `LLM` service — the plugin never calls any external API and never touches credentials.
+By default the result is a four-section structured prompt (`outputStyle: 'sections'` — `## Role` / `## Task` / `## Context` / `## Format`); a heading-free plain-text style (`outputStyle: 'plain'`, fewer tokens) is configurable. The optimization is driven by a built-in meta-prompt and run through the harness `LLM` service — the plugin never calls any external API and never touches credentials.
 
 ## Features
 
-- **Output styles** — heading-free plain-text prompts by default (fewer tokens), or a four-section structured style (`outputStyle: 'sections'` — `## Role` / `## Task` / `## Context` / `## Format`).
+- **Output styles** — four-section structured prompts by default (`outputStyle: 'sections'` — `## Role` / `## Task` / `## Context` / `## Format`), or a heading-free plain-text style (`outputStyle: 'plain'`, fewer tokens).
 - **Tool** — agents can call the `prompt_optimize` tool with an `instruction` and receive the optimized prompt back; passing a previous result as `lastOptimized` together with `iterateInstruction` iterates on it instead.
 - **Service** — other plugins can call `ctx.promptOptimizer.optimize(rawInput, { signal })` or `ctx.promptOptimizer.iterate(lastOptimized, instruction, { signal })`; the browser side can call them via `ctx.remote.promptOptimizer`.
 - **Input box ✨ button** — a persistent icon in the composer toolbar: click to optimize the current draft and write the result back, with one-click undo; **clicking again while optimizing cancels** (AbortSignal), and a transient "≈N tokens" cost hint appears after a fresh optimization.
@@ -98,6 +98,8 @@ Once enabled, the host enters "optimize before sending" mode: the `agent/pre-ste
 
 `/template <scene>` returns a ready-to-fill four-section template (Role / Task / Context / Format skeleton with placeholders) — **no model call, zero latency/cost** — for common scenes like a weekly report, email, copy, translation, data analysis, deployment checklist, etc. Covers all 21 subcategories (zh/en scene names and keywords matched; polish/resume/speech added in 1.5.2); for personalized needs use `/optimize` (1.5.1).
 
+**Pre-filled (1.5.6)**: `/template <scene> <instruction>` (e.g. `/template 周报 总结本周进展`) returns a **filled four-section result** — when the local gate passes, the pure-function layer renders it locally (also **zero tokens, ~5ms**); when the instruction carries no extractable signal, it falls back to the skeleton with a hint to use `/optimize`.
+
 ## Auto-optimize hook
 
 Enable it in `cordis.patch.yml`:
@@ -132,7 +134,7 @@ Set plugin options in `cordis.patch.yml` (every value below also has a schema de
 | `maxInputTokens` | int ≥0 | `3000` | Raw-instruction truncation cap (estimated tokens; harness `tokenMeter` with heuristic fallback; `0` disables) |
 | `timeoutMs` | int ≥1 | `60000` | Per-call timeout budget (milliseconds) |
 | `outputLanguage` | string | `'auto'` | Output language; `'auto'` follows the instruction's language, any other value (e.g. `'英文'`) pins it |
-| `outputStyle` | `'sections'` \| `'plain'` | `'plain'` | Heading-free continuous prose (default, fewer tokens) or four-section headings |
+| `outputStyle` | `'sections'` \| `'plain'` | `'sections'` | Four-section headings (`## Role`/`## Task`/`## Context`/`## Format`, default) or heading-free continuous prose (fewer tokens) |
 | `metaPromptLanguage` | `'auto'` \| `'中文'` \| `'英文'` | `'auto'` | Language of the optimizer role document (meta-prompt). `'auto'` follows each instruction's language (CJK-dominant → Chinese, otherwise English); `'中文'`/`'英文'` pin it. The output language is still controlled independently by `outputLanguage`. Pin-able at runtime via `/optimizer-language auto\|中文\|英文` |
 | `extraInstructions` | string | none | Deployment-specific rules appended to the meta-prompt |
 | `examples` | array | built-in fallback | Few-shot pairs `[{input, output}]` injected into the meta-prompt (`sections` style only); when unset, one built-in pair matched to the task type and role-document language is injected automatically (code/writing/analysis/ops × zh/en; `other` falls back to writing; since 1.5.4 a detected subtype wins — e.g. `code-bugfix` uses its dedicated root-cause → minimal-fix → regression-check pair); explicit config overrides the built-ins |
@@ -160,6 +162,7 @@ Set plugin options in `cordis.patch.yml` (every value below also has a schema de
 | `contextMaxTokens` | int ≥0 | `800` | Token budget for the gathered context; over-budget input is truncated to the longest prefix with a marker; `0` disables truncation (lean default) |
 | `outputLengthMaxTokens` | int ≥0 | `800` | Suggested upper bound for the optimized prompt's length (tokens; soft guideline — guides the model to stay concise, never blocks or retries); `0` disables. Independent of `maxTokens` (the hard per-call output cap) |
 | `situationProfileLevel` | `'full'` \| `'minimal'` \| `'off'` | `'full'` | Injection budget for the situation profile (`{{情境画像}}` block): `full` injects role + goal + constraints; `minimal` injects goal/constraints only (no role signals, leaner); `off` injects nothing. Only affects the situation block — the `{{任务类型}}` hint is unaffected |
+| `localTemplate` | `'auto'` \| `'on'` \| `'off'` | `'auto'` | Local zero-token template render (1.5.6): for well-structured subcategories (weekly report / email / data analysis / deployment…) the four-section prompt is rendered locally from pure functions — **no model call, zero tokens, ~<5ms**. `auto` renders when a confidence gate passes (subcategory match + extractable signals), else the LLM pipeline; `on` renders whenever a subcategory matches (open-ended creative/research excluded); `off` disables the local path |
 | `goalAlignmentRetry` | boolean | `true` | Whether a goal/constraint misalignment consumes a validation retry: `true` keeps goal fidelity (the default since 1.3.0); `false` accepts a structurally-valid output as-is, saving one call. Forced off by `optimizationProfile: 'fast'` |
 | `optimizationProfile` | `'balanced'` \| `'fast'` | `'balanced'` | Latency profile: `balanced` keeps every quality gate (validation retries, goal-alignment retries, self-refine); `fast` skips validation and goal-alignment retries and disables self-refine — the first structurally-valid attempt is accepted, so worst-case latency drops at the cost of more rework (opt-in) |
 | `earlyStop` | boolean | `false` | Stream early-stop (**off by default** — output completeness first; changed in 1.4.5 to prevent mid-sentence truncation). When enabled: the tail window only opens after each section has ≥40 substantive chars and the total length ≥120; it stops only at a sentence boundary (period/newline) after 16 consecutive chunks growing < 24 chars; `false` always consumes the full stream |

@@ -60,6 +60,11 @@ export function registerPromptOptimizeTool(
           type: 'string',
           description: 'The new requirement to apply to `lastOptimized` (only valid together with `lastOptimized`).',
         },
+        localTemplate: {
+          type: 'string',
+          enum: ['auto', 'on', 'off'],
+          description: 'Optional local-render override (1.5.6): `off` forces the LLM pipeline (e.g. to refine a previously returned local template with full model quality); `on` renders locally whenever a subcategory matches; `auto` (default) renders locally when the confidence gate passes. `auto` is the default when absent.',
+        },
       },
       output: {
         schema: {
@@ -72,6 +77,7 @@ export function registerPromptOptimizeTool(
             errorCode: { type: 'string', enum: [...Object.values(OptimizeErrorCode)] },
             retries: { type: 'integer', required: true },
             outputTokens: { type: 'integer' },
+            local: { type: 'boolean' },
             sections: {
               type: 'array',
               items: {
@@ -91,6 +97,7 @@ export function registerPromptOptimizeTool(
           retries: value.retries,
           ...(value.outputTokens !== undefined ? { outputTokens: value.outputTokens } : {}),
           ...(value.sections !== undefined ? { sections: value.sections } : {}),
+          ...(value.local !== undefined ? { local: value.local } : {}),
         }),
       },
       timeoutMs: config.timeoutMs,
@@ -100,6 +107,7 @@ export function registerPromptOptimizeTool(
           signal: exec.signal,
           ...(args.temperature !== undefined ? { temperature: args.temperature } : {}),
           ...(args.maxTokens !== undefined ? { maxTokens: args.maxTokens } : {}),
+          ...(args.localTemplate !== undefined ? { localTemplate: args.localTemplate as 'auto' | 'on' | 'off' } : {}),
         }
         if (args.lastOptimized !== undefined) {
           return service.iterate(args.lastOptimized, args.iterateInstruction ?? '', base)
