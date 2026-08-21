@@ -111,6 +111,23 @@ describe('buildOptimizePrompt', () => {
     expect(prompt).toContain('原始指令：写一个 Python 脚本读取 CSV 并按指定列求和')
   })
 
+  it('prefers the subtype built-in example for a bug-fix task', () => {
+    // 「定位并修复 @src/cache.ts 的报错」→ code + code-bugfix → the subtype
+    // pair wins over the generic `code` (scripting) pair.
+    const prompt = buildOptimizePrompt('定位并修复 @src/cache.ts 的报错')
+    expect(prompt).toContain('原始指令：定位并修复 @src/cache.ts 的报错')
+    expect(prompt).toContain('完整错误诊断与最小修复')
+    expect(prompt).not.toContain('原始指令：写一个 Python 脚本读取 CSV 并按指定列求和')
+  })
+
+  it('falls back to the task-type example when the subtype has none', () => {
+    // 「写个 Python 脚本」→ code + code-script; no code-script pair exists,
+    // so the generic `code` (scripting) pair is used.
+    const prompt = buildOptimizePrompt('帮我写个 Python 脚本处理 Excel')
+    expect(prompt).toContain('原始指令：写一个 Python 脚本读取 CSV 并按指定列求和')
+    expect(prompt).not.toContain('完整错误诊断与最小修复')
+  })
+
   it('switches the built-in example by meta-prompt language', () => {
     const prompt = buildOptimizePrompt(INPUT, 'auto', undefined, undefined, 'sections', 'en')
     expect(prompt).toContain('Write a product launch announcement')

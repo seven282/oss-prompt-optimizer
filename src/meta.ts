@@ -372,8 +372,39 @@ const BUILTIN_EXAMPLES: Record<MetaLanguage, Record<Exclude<TaskType, 'other'>, 
   },
 }
 
-/** Pick the built-in example pair for a language + task type (`other` falls back to writing). */
-function resolveBuiltinExamples(en: boolean, taskType: TaskType | undefined): readonly PromptExample[] {
+/**
+ * Subtype-level built-in examples (1.5.4): a more specific pair wins over the
+ * task-type pair when the subtype is detected. Currently only `code-bugfix`
+ * ships one — the "root cause → minimal fix → regression check" shape that
+ * the generic `code` example (scripting) does not cover. Explicit `examples`
+ * still always win.
+ */
+const BUILTIN_SUBTYPE_EXAMPLES: Record<MetaLanguage, Partial<Record<TaskSubtype, PromptExample>>> = {
+  zh: {
+    'code-bugfix': {
+      input: '定位并修复 @src/cache.ts 的报错',
+      output: '## Role\n资深 TypeScript 工程师，精通类型检查与缓存模块设计，先保证可运行再优化。\n\n## Task\n对 @src/cache.ts 做完整错误诊断与最小修复：先静态检查与代码走读定位全部报错点，逐条列出错误类型与触发条件；再做最小修复，保持导出接口/函数签名/缓存语义（LRU+TTL、键值存储）完全不变，每处改动附注释说明依据；最后运行 tsc --noEmit 与相关单测，确认报错消除且无新增警告或行为变更。\n\n## Context\n@src/cache.ts 是纯函数缓存层（fnv1a 哈希 + bigramJaccard + LRU/TTL，无 harness 依赖）。未提供具体报错信息与环境——无法精确定位时采取最保守修复，并说明推断依据与可复现步骤。\n\n## Format\n依次输出三部分：①根因分析（短条目）②改动点（文件+行号+修改前后对比）③测试结果；涉及代码提供可直接运行的完整 TypeScript 片段。',
+    },
+  },
+  en: {
+    'code-bugfix': {
+      input: 'Locate and fix the errors in @src/cache.ts',
+      output: '## Role\nSenior TypeScript engineer, proficient in type checking and cache-module design; make it run first, then optimize.\n\n## Task\nDiagnose and minimally fix @src/cache.ts: statically check and walk the code to locate every error, listing each error type and trigger condition; then apply the minimal fix that keeps the exported interfaces, function signatures and cache semantics (LRU+TTL, key-value storage) unchanged, annotating the rationale for each change; finally run tsc --noEmit and the related unit tests to confirm the errors are gone with no new warnings or behavior changes.\n\n## Context\n@src/cache.ts is a pure-function cache layer (fnv1a hash + bigramJaccard + LRU/TTL, no harness dependency). No concrete error message or environment is provided — when the root cause cannot be pinpointed, apply the most conservative fix and state the inference basis and reproduction steps.\n\n## Format\nOutput three parts in order: ① root-cause analysis (short bullets) ② changes (file + line + before/after) ③ test results; include a directly runnable complete TypeScript snippet wherever code is involved.',
+    },
+  },
+}
+
+/** Pick the built-in example pair for a language + task type (+ subtype). */
+function resolveBuiltinExamples(
+  en: boolean,
+  taskType: TaskType | undefined,
+  subtype: TaskSubtype | undefined,
+): readonly PromptExample[] {
+  const subtypeSet = en ? BUILTIN_SUBTYPE_EXAMPLES.en : BUILTIN_SUBTYPE_EXAMPLES.zh
+  if (subtype !== undefined) {
+    const sub = subtypeSet[subtype]
+    if (sub !== undefined) return [sub]
+  }
   const set = en ? BUILTIN_EXAMPLES.en : BUILTIN_EXAMPLES.zh
   const key = taskType !== undefined && taskType !== 'other' ? taskType : 'writing'
   return [set[key]]
@@ -426,7 +457,7 @@ function metaBlocks(
   // explicitly false (1.4.6: short-instruction scenarios may want no example).
   const effectiveExamples = examples !== undefined && examples.length > 0
     ? examples
-    : (builtinExamples === false ? [] : resolveBuiltinExamples(en, taskType))
+    : (builtinExamples === false ? [] : resolveBuiltinExamples(en, taskType, subtype))
   const exampleBlock = outputStyle !== 'plain' && effectiveExamples.length > 0
     ? `参考以下示例的格式与风格（示例仅为示范，不要照抄内容）：\n${effectiveExamples
         .map((e, i) => `示例 ${i + 1}：\n原始指令：${e.input}\n优化结果：\n${e.output}`)

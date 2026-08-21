@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.5.4] - 2026-08-21
+
+- **内置 few-shot 示例子类优先**：新增 `BUILTIN_SUBTYPE_EXAMPLES`（zh/en），
+  子类命中（当前仅 `code-bugfix`）时优先注入子类专用示例，否则回退任务大类示例——
+  `code-bugfix` 的「定位根因→最小修复→回归验证」骨架补上了通用 code 示例
+  （脚本向）不覆盖的 bug 修复形态；显式 `examples` 仍永远优先，注入条件
+  （`sections` 模式 + 无显式示例 + `builtinExamples` 未关）不变
+- 示例内容源自「输出质量基准对照」修订稿：合并外部增强版本的 3 处重复表述、
+  Context 补入模块实际功能（fnv1a + bigramJaccard + LRU/TTL）、按句断行
+- 测试 392 → 394（新增：code-bugfix 命中子类示例、非 bugfix 的 code 指令回退大类示例）
+
 ## [1.5.3] - 2026-08-21
 
 - **全量审查修复（正确性/设计/维护性 13 项）**：
