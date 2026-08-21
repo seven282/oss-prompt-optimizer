@@ -365,6 +365,7 @@ const PLACEHOLDER_MAP: Readonly<Record<string, keyof MetaBlocks>> = {
 import { DEFAULT_TEMPLATES, type TemplateSet } from './templates.js'
 import type { PromptExample } from './config.js'
 import { buildContextBlock } from './context.js'
+import { toRoleTaskGoal } from './validate.js'
 import { buildSituationProfile, detectMeasurable, detectTaskSubtype, extractMainVerbObject, renderSituationBlock, subtypeKeywords, subtypeLabel, type GoalDrift, type SituationProfile, type SituationProfileLevel, type TaskSubtype } from './situation.js'
 
 /**
@@ -441,6 +442,104 @@ const BUILTIN_SUBTYPE_EXAMPLES: Record<MetaLanguage, Partial<Record<TaskSubtype,
         output: '## Role\n资深提示词工程专家，熟悉四段（Role/Task/Context/Format）设计约束与可检验标准，先诊断再重构。\n\n## Task\n对给定模板做逐段诊断与重构：先分别指出 ## Role / ## Task / ## Context / ## Format 每段的具体缺陷（模糊表达、约束缺失、逻辑混乱、可检验性不足）并说明对执行效果的影响；再以四段定位框架（Role 决定发言者身份、Task 决定任务内容、Context 决定信息基础、Format 决定呈现方式）为每段建立判定标准；随后给出每段的优化方案（改进后目标表述、改写示例、需补充的约束）；最后输出完整文档。\n\n## Context\n目标模板需先提供或引用；以四段设计哲学为基准（Role 身份能力行为、Task 动词步骤产出物、Context 前置信息场景约束、Format 结构格式粒度）；避免空泛建议，每个优化点对应可执行的检查清单。\n\n## Format\n输出 Markdown 文档：模板总览、逐段分析（问题-原因-优化方案）、优化后的完整模板正文、优化前后效果对比表。',
       },
     ],
+    'writing-report': [
+      {
+        input: '写一份周报，总结本周进展和下周计划',
+        output: '## Role\n资深项目助理，擅长周报撰写，结论先行、要点支撑。\n\n## Task\n总结本周进展与下周计划：先列本周完成事项与关键结果，再写下周计划与待办风险。\n\n## Context\n面向团队与上级，聚焦进展与待办；无数据时如实说明状态。\n\n## Format\n分节列出、每项一行；标题 + 结构 + 篇幅控制。',
+      },
+      {
+        // B3a 变体：述职报告（成果量化导向，与周报的事务性结构区分）。
+        input: '写一份述职报告，突出本季度成果',
+        output: '## Role\n资深项目助理，擅长述职报告，成果量化、复盘到位。\n\n## Task\n撰写述职报告：量化本季度成果→复盘得失→给出下阶段规划。\n\n## Context\n面向上级与评审，突出成果与影响；数据尽量量化。\n\n## Format\n成果亮点（量化）+ 复盘 + 规划，分节列出。',
+      },
+    ],
+    'writing-email': [
+      {
+        input: '写一封催款邮件给客户',
+        output: '## Role\n专业客户经理，语气礼貌而立场坚定。\n\n## Task\n向客户发送催款邮件：说明账单到期情况、礼貌提醒付款、附联系方式与期限。\n\n## Context\n面向长期客户，维护合作关系；语气委婉但要求明确。\n\n## Format\n主题行 + 邮件正文 + 结尾署名。',
+      },
+    ],
+    'writing-copy': [
+      {
+        input: '写一条新品上市的推广文案',
+        output: '## Role\n资深营销文案，擅长抓核心卖点与行动号召。\n\n## Task\n撰写新品上市推广文案：提炼核心卖点、面向目标人群、给出明确行动号召。\n\n## Context\n面向目标消费者，投放于社交媒体；语气有感染力、篇幅精炼。\n\n## Format\n标题 + 正文 + 备选标题。',
+      },
+    ],
+    'writing-resume': [
+      {
+        input: '帮我写一份求职用的个人介绍',
+        output: '## Role\n职业顾问，擅长把经历转化为量化亮点。\n\n## Task\n把求职者经历整理为个人介绍：经历→量化→匹配目标岗位。\n\n## Context\n面向招聘方，突出与目标岗位的匹配度；需提供岗位方向与亮点数据。\n\n## Format\n结构 + 要点 + 篇幅限制。',
+      },
+    ],
+    'writing-presentation': [
+      {
+        input: '帮我生成个人介绍PPT',
+        output: '## Role\n演示内容架构师，面向受众组织信息、突出数据与成果。\n\n## Task\n搭建个人介绍PPT：明确受众与目的→搭建内容框架→逐页结构→视觉与话术要点。\n\n## Context\n面向面试官或听众；说明场合（求职/述职/汇报）与时长；突出量化成果。\n\n## Format\n内容框架 + 页面结构 + 设计建议 + 演示话术。',
+      },
+      {
+        // B3a 变体：产品介绍 PPT（卖点/竞品/客户收益导向，与个人介绍区分）。
+        input: '帮我做一份产品介绍PPT',
+        output: '## Role\n演示内容架构师，面向客户讲清产品价值。\n\n## Task\n搭建产品介绍PPT：核心卖点→产品演示→竞品对比→客户收益。\n\n## Context\n面向目标客户或合作方；说明产品类型与演示时长。\n\n## Format\n内容框架 + 页面结构 + 演示要点。',
+      },
+      {
+        // B3b 精选变体：融资路演 PPT（市场/商业模式/融资需求导向，结构差异显著）。
+        input: '帮我做一份融资路演PPT',
+        output: '## Role\n演示内容架构师，面向投资人讲清市场机会与商业模式。\n\n## Task\n搭建融资路演PPT：市场机会→商业模式→团队与数据→融资需求与用途。\n\n## Context\n面向投资人；说明融资阶段与金额；突出增长数据与壁垒。\n\n## Format\n内容框架 + 页面结构 + 演示要点。',
+      },
+    ],
+    'code-script': [
+      {
+        input: '写一个 Python 脚本批量重命名文件',
+        output: '## Role\n资深 Python 工程师，先保证可运行再优化。\n\n## Task\n编写脚本批量重命名文件：定义命名规则、处理异常与冲突、输出执行日志。\n\n## Context\n输入目录与命名规则；不修改原文件；说明依赖与运行环境。\n\n## Format\n完整可运行的 .py 代码 + 顶部使用说明（依赖、运行命令）。',
+      },
+    ],
+    'analysis-data': [
+      {
+        input: '分析这份销售数据的趋势',
+        output: '## Role\n资深数据分析师，结论先行、数据支撑。\n\n## Task\n分析销售数据趋势：清洗→关键指标→趋势判断→结论与建议。\n\n## Context\n说明数据来源与时间范围；面向业务决策者。\n\n## Format\n结论先行 + 图表/数据支撑 + 建议清单。',
+      },
+    ],
+    'ops-deploy': [
+      {
+        input: '帮我部署这个服务到服务器',
+        output: '## Role\n资深运维工程师，先确认环境再操作。\n\n## Task\n部署服务到目标服务器：确认环境→按清单执行→完成后自检。\n\n## Context\n说明目标环境与服务类型；操作需可回滚、有验证步骤。\n\n## Format\n命令清单 + 验证步骤 + 回滚说明。',
+      },
+      {
+        // B3a 变体：生产环境发布（灰度+回滚预案，与通用部署区分）。
+        input: '帮我发布到生产环境',
+        output: '## Role\n资深运维工程师，生产发布慎之又慎。\n\n## Task\n发布到生产环境：变更前备份→灰度放量→监控验证→异常回滚。\n\n## Context\n说明服务类型与变更内容；含回滚预案与灰度比例。\n\n## Format\n发布步骤（灰度）+ 监控项 + 回滚预案。',
+      },
+    ],
+    'code-review': [
+      {
+        input: '帮我 review 一下这段代码',
+        output: '## Role\n资深代码审查员，按正确性、可读性、性能逐项把关。\n\n## Task\n审查给定代码：逐项检查正确性、可读性、性能与边界情况，给出问题清单与修改建议。\n\n## Context\n说明代码用途与上下文；优先标注阻塞性问题。\n\n## Format\n问题清单（严重度 + 位置 + 建议）+ 总结。',
+      },
+    ],
+    'ops-troubleshoot': [
+      {
+        input: '帮我排查这个服务启动失败的问题',
+        output: '## Role\n资深运维工程师，按日志→定位→修复的顺序排查。\n\n## Task\n排查服务启动失败：收集日志→定位根因→给出修复方案与验证步骤。\n\n## Context\n说明服务类型与错误现象；先做最小验证再改。\n\n## Format\n排查步骤 + 根因 + 修复方案 + 验证。',
+      },
+    ],
+    'writing-polish': [
+      {
+        input: '帮我润色这段文案',
+        output: '## Role\n资深编辑，保持原意、优化表达。\n\n## Task\n润色给定文案：保持原意→调整语气→优化措辞与节奏。\n\n## Context\n说明使用场景与目标读者；保留关键信息。\n\n## Format\n润色后全文 + 改动说明。',
+      },
+    ],
+    'writing-translate': [
+      {
+        input: '把这段中文翻译成英文',
+        output: '## Role\n专业翻译，兼顾准确与地道。\n\n## Task\n把给定内容翻译为目标语言：保持术语准确、语气一致、句式自然。\n\n## Context\n说明文体与用途；术语有约定时优先遵循。\n\n## Format\n译文 + 术语表（如有）。',
+      },
+    ],
+    'analysis-research': [
+      {
+        input: '调研一下这个行业的竞争格局',
+        output: '## Role\n行业研究员，资料→框架→论证→结论。\n\n## Task\n调研行业竞争格局：收集资料→搭建框架→论证→给出结论与依据。\n\n## Context\n说明调研范围与目标；引用来源、注明局限。\n\n## Format\n结论先行 + 依据 + 来源引用 + 局限性。',
+      },
+    ],
   },
   en: {
     'code-bugfix': [
@@ -457,6 +556,104 @@ const BUILTIN_SUBTYPE_EXAMPLES: Record<MetaLanguage, Partial<Record<TaskSubtype,
       {
         input: 'Diagnose and restructure the Role, Task, Context and Format sections of a template, outputting an optimization document',
         output: '## Role\nSenior prompt-engineering expert, familiar with the design constraints and testability criteria of the four sections (Role/Task/Context/Format); diagnose first, then restructure.\n\n## Task\nDiagnose and restructure the given template section by section: first identify the concrete defect of each of ## Role / ## Task / ## Context / ## Format (vague wording, missing constraints, muddled logic, weak testability) and how it hurts execution; then build criteria per section on the four-section positioning frame (Role defines who speaks, Task defines what to do, Context defines what it is based on, Format defines how to present); then give the optimization for each section (revised target wording, rewrite example, constraints to add); finally output the complete document.\n\n## Context\nThe target template must be provided or referenced first; benchmark against the four-section design philosophy (Role identity+capability+behavior, Task verb+steps+deliverable, Context prerequisites+scenario+constraints, Format structure+granularity); avoid vague advice; every optimization point maps to an executable checklist.\n\n## Format\nOutput a Markdown document: template overview, per-section analysis (problem → cause → optimization), the restructured template in full, and a before/after comparison table.',
+      },
+    ],
+    'writing-report': [
+      {
+        input: "Write a weekly report summarizing this week's progress and next week's plan",
+        output: '## Role\nSenior project assistant, skilled at concise, bullet-driven weekly reports.\n\n## Task\nSummarize this week\'s progress and next week\'s plan: list completed items with key results first, then next week\'s plan and risks.\n\n## Context\nFor the team and leadership, focused on progress and todos; state status honestly when no data is available.\n\n## Format\nSectioned list, one item per line; title + structure + length control.',
+      },
+      {
+        // B3a variant: performance review (results-quantified, distinct from the weekly report).
+        input: "Write a performance review report highlighting this quarter's results",
+        output: '## Role\nSenior project assistant, skilled at quantified, review-driven performance reports.\n\n## Task\nWrite the performance review: quantify this quarter\'s results → review wins and losses → outline next-phase plans.\n\n## Context\nFor management and the review board, emphasizing results and impact; quantify wherever possible.\n\n## Format\nQuantified highlights + review + plans, in sections.',
+      },
+    ],
+    'writing-email': [
+      {
+        input: 'Write a payment reminder email to a client',
+        output: '## Role\nProfessional account manager, polite but firm.\n\n## Task\nSend a payment reminder: state the due invoice, politely request payment, and include contact info and deadline.\n\n## Context\nFor a long-term client, preserving the relationship; tactful yet explicit.\n\n## Format\nSubject line + email body + closing signature.',
+      },
+    ],
+    'writing-copy': [
+      {
+        input: 'Write a launch promo for a new product',
+        output: '## Role\nSenior copywriter, skilled at surfacing core selling points and calls to action.\n\n## Task\nWrite a product-launch promo: distill the core selling point, target the audience, and give a clear call to action.\n\n## Context\nFor target consumers on social media; an engaging tone with a tight length.\n\n## Format\nHeadline + body + alternative headlines.',
+      },
+    ],
+    'writing-resume': [
+      {
+        input: 'Write a personal introduction for a job application',
+        output: '## Role\nCareer advisor, skilled at turning experience into quantified highlights.\n\n## Task\nTurn the applicant\'s experience into a personal introduction: experience → quantification → match to the target role.\n\n## Context\nFor recruiters, emphasizing fit with the target role; needs the role direction and highlight metrics.\n\n## Format\nStructure + bullets + length cap.',
+      },
+    ],
+    'writing-presentation': [
+      {
+        input: 'Create a personal-introduction presentation (PPT)',
+        output: '## Role\nPresentation content architect, organizing information for the audience and highlighting data and outcomes.\n\n## Task\nBuild a personal-introduction deck: audience & purpose → content framework → per-page structure → visual & delivery tips.\n\n## Context\nFor interviewers or an audience; state the occasion (interview/review/report) and duration; highlight quantified outcomes.\n\n## Format\nContent framework + page structure + design tips + delivery notes.',
+      },
+      {
+        // B3a variant: product-introduction deck (selling points / competitors / customer value).
+        input: 'Create a product-introduction presentation (PPT)',
+        output: '## Role\nPresentation content architect, making the product value clear to customers.\n\n## Task\nBuild a product-introduction deck: core selling points → product demo → competitor comparison → customer benefits.\n\n## Context\nFor target customers or partners; state the product type and the presentation duration.\n\n## Format\nContent framework + page structure + delivery notes.',
+      },
+      {
+        // B3b curated variant: fundraising pitch deck (market / business model / funding ask).
+        input: 'Create a fundraising pitch-deck presentation',
+        output: '## Role\nPresentation content architect, making the market opportunity and business model clear to investors.\n\n## Task\nBuild a fundraising pitch deck: market opportunity → business model → team and traction → funding ask and use of funds.\n\n## Context\nFor investors; state the funding stage and amount; highlight growth data and moats.\n\n## Format\nContent framework + page structure + delivery notes.',
+      },
+    ],
+    'code-script': [
+      {
+        input: 'Write a Python script to batch-rename files',
+        output: '## Role\nSenior Python engineer; make it run first, then optimize.\n\n## Task\nWrite a batch-rename script: define the naming rule, handle exceptions and conflicts, and log the execution.\n\n## Context\nInput directory and naming rule; never modify the original files; state dependencies and the runtime.\n\n## Format\nA directly runnable .py file + usage notes at the top (dependencies, run command).',
+      },
+    ],
+    'analysis-data': [
+      {
+        input: 'Analyze the trend in this sales data',
+        output: '## Role\nSenior data analyst; lead with the conclusion, back it with data.\n\n## Task\nAnalyze the sales trend: clean → key metrics → trend judgment → conclusion and recommendations.\n\n## Context\nState the data source and time range; for business decision-makers.\n\n## Format\nConclusion first + charts/data + a recommendation list.',
+      },
+    ],
+    'ops-deploy': [
+      {
+        input: 'Deploy this service to a server',
+        output: '## Role\nSenior ops engineer; verify the environment before touching anything.\n\n## Task\nDeploy the service to the target server: confirm the environment → follow the checklist → self-check when done.\n\n## Context\nState the target environment and service type; operations must be reversible with verification steps.\n\n## Format\nCommand checklist + verification steps + rollback notes.',
+      },
+      {
+        // B3a variant: production release (canary + rollback plan, distinct from a generic deploy).
+        input: 'Release this service to production',
+        output: '## Role\nSenior ops engineer, extra cautious with production releases.\n\n## Task\nRelease to production: back up before the change → canary rollout → monitor and verify → roll back on anomalies.\n\n## Context\nState the service type and the change scope; include the rollback plan and the canary ratio.\n\n## Format\nRelease steps (canary) + monitoring items + rollback plan.',
+      },
+    ],
+    'code-review': [
+      {
+        input: 'Review this code for me',
+        output: '## Role\nSenior code reviewer, checking correctness, readability and performance item by item.\n\n## Task\nReview the given code: check correctness, readability, performance and edge cases, then list the issues with fix suggestions.\n\n## Context\nState what the code does and its context; flag blocking issues first.\n\n## Format\nIssue list (severity + location + suggestion) + a summary.',
+      },
+    ],
+    'ops-troubleshoot': [
+      {
+        input: 'Troubleshoot why this service fails to start',
+        output: '## Role\nSenior ops engineer, following logs → root cause → fix.\n\n## Task\nTroubleshoot the failed startup: gather logs → locate the root cause → provide a fix and verification steps.\n\n## Context\nState the service type and the error symptom; verify the smallest change first.\n\n## Format\nTroubleshooting steps + root cause + fix + verification.',
+      },
+    ],
+    'writing-polish': [
+      {
+        input: 'Polish this copy for me',
+        output: '## Role\nSenior editor, preserving the meaning while improving the expression.\n\n## Task\nPolish the given copy: keep the meaning → adjust the tone → refine wording and rhythm.\n\n## Context\nState the use case and target reader; keep the key information.\n\n## Format\nPolished full text + a change note.',
+      },
+    ],
+    'writing-translate': [
+      {
+        input: 'Translate this Chinese text into English',
+        output: '## Role\nProfessional translator, balancing accuracy and naturalness.\n\n## Task\nTranslate the given content into the target language: keep terms accurate, tone consistent and sentences natural.\n\n## Context\nState the register and purpose; follow established terminology when available.\n\n## Format\nTranslation + a terminology table (if any).',
+      },
+    ],
+    'analysis-research': [
+      {
+        input: 'Research the competitive landscape of this industry',
+        output: '## Role\nIndustry researcher, sources → framework → argument → conclusion.\n\n## Task\nResearch the competitive landscape: gather sources → build a framework → argue → give the conclusion with evidence.\n\n## Context\nState the research scope and goal; cite sources and note limitations.\n\n## Format\nConclusion first + evidence + source citations + limitations.',
       },
     ],
   },
@@ -526,11 +723,15 @@ function metaBlocks(
   const effectiveExamples = examples !== undefined && examples.length > 0
     ? examples
     : (builtinExamples === false ? [] : resolveBuiltinExamples(en, taskType, subtype))
-  // role-task-goal（1.6.5）：示例均为四段形态，注入会误导模型输出四段而非
-  // 三要素——RTG 模式下禁用示例块（三要素版示例留 P1）。
-  const exampleBlock = outputStyle !== 'plain' && outputStyle !== 'role-task-goal' && effectiveExamples.length > 0
+  // role-task-goal（1.6.5 折叠注入）：内置示例为四段形态——RTG 模式下把示例
+  // output 折叠为三要素标签再注入，作为三要素输出的 few-shot 引导
+  // （plain 无标题形态仍禁用示例）。
+  const exampleBlock = outputStyle !== 'plain' && effectiveExamples.length > 0
     ? `参考以下示例的格式与风格（示例仅为示范，不要照抄内容）：\n${effectiveExamples
-        .map((e, i) => `示例 ${i + 1}：\n原始指令：${e.input}\n优化结果：\n${e.output}`)
+        .map((e, i) => {
+          const out = outputStyle === 'role-task-goal' ? toRoleTaskGoal(e.output, en) : e.output
+          return `示例 ${i + 1}：\n原始指令：${e.input}\n优化结果：\n${out}`
+        })
         .join('\n\n')}\n`
     : ''
   const diagnosisBlock = diagnosis !== undefined && diagnosis.trim().length > 0

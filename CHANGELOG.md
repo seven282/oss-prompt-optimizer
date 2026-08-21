@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.6.6] - 2026-08-21
+
+- **P1a 三要素示例折叠注入**：`toRoleTaskGoal`/`sectionBodyOf` 移入 validate.ts
+  （纯函数层，避免 meta↔local 循环）；RTG 模式下内置示例 output 折叠为三要素
+  再注入——三要素输出获得 few-shot 引导（plain 仍禁用）
+- **B1 子类示例扩充（2 → 10 个）**：新增 writing-report/email/copy/resume/
+  presentation、code-script、analysis-data、ops-deploy × zh/en 各 1 对（四段
+  资产，RTG 运行时折叠）；大类回退不变
+- **B2a 子类示例再扩充（10 → 15 个）**：新增 code-review、ops-troubleshoot、
+  writing-polish、writing-translate、analysis-research × zh/en（结构差异显著
+  子类）；15 子类 + 4 大类折叠合规 36/36
+- **B3a 高频子类变体**：writing-report（+述职报告）、writing-presentation
+  （+产品介绍PPT）、ops-deploy（+生产发布，灰度+回滚预案）各 1 变体 × zh/en——
+  命中子类多条示例按序注入（示例 1/2），模型按指令语义选择结构
+- **B3b 精选变体**：writing-presentation +「融资路演PPT」（市场机会→商业模式→
+  团队与数据→融资需求与用途，结构差异显著）——presentation 命中注入 3 条，
+  report/deploy 维持 2 条（token 成本可控）
+- **校验器缺陷修复**：`hasValidRoleTaskGoal` 的「下一标签」正则
+  `/^[^\n]{0,8}[:：]/` 误判内容行（如「分析销售数据趋势：」行首+短词+冒号）为
+  标签 → 正文截断误拒；改为只匹配真实 RTG 标签
+- 测试 452 → 474（meta +20 示例命中/变体/折叠合规；validate +2 内容行不误判）。
+
 ## [1.6.5] - 2026-08-21
 
 - **三要素输出形态 `outputStyle: 'role-task-goal'`（P0，方案确认 A）**：四段
@@ -16,8 +38,7 @@
     透传兼容，已优化的三要素提示词不重复优化）
   - `optimizer.ts`：validateOutput 三分支；RTG 缺标签/过薄 → 自定义诊断重试
   - `local.ts`：`toRoleTaskGoal` 折叠（on 直出时本地四段 seed → 三要素）
-  - **默认保持 sections（零回归）**：role-task-goal 显式配置才生效；内置示例
-    在 RTG 模式下不注入（四段示例会误导形态），三要素版示例留 P1
+  - **默认保持 sections（零回归）**：role-task-goal 显式配置才生效
 - 测试 442 → 452（validate +3 标签/校验/skip / meta +2 结构块 zh/en /
   local +2 折叠/refine shapeRule / optimizer +3 通过/缺标签重试/on 直出折叠）。
 

@@ -178,20 +178,63 @@ export function hasRoleTaskGoalLabels(text: string): boolean {
  * Whether `text` is a valid Role/Task/Goal output: all three labels present
  * AND every labeled part carries at least `minChars` non-whitespace
  * characters. `minChars <= 0` falls back to the label-only check.
+ * Fix (P1a): the "next label" scan only matches real RTG labels — the old
+ * `/^[^\n]{0,8}[:：]/` wrongly treated content lines like "分析销售数据趋势："
+ * as labels, truncating the body to < minChars.
  */
 export function hasValidRoleTaskGoal(text: string, minChars: number): boolean {
   if (!hasRoleTaskGoalLabels(text)) return false
   if (minChars <= 0) return true
   const zh = RTG_LABELS_ZH.every((label) => RTG_LABEL_RE(label).test(text))
   const labels = zh ? RTG_LABELS_ZH : RTG_LABELS_EN
+  const nextLabelRe = new RegExp(
+    `^(?:${[...RTG_LABELS_ZH, ...RTG_LABELS_EN].join('|')})[:：]`,
+    'm',
+  )
   return labels.every((label) => {
     const match = RTG_LABEL_RE(label).exec(text)
     if (match === null) return false
     const from = match.index + match[0].length
-    const next = text.slice(from).search(/^[^\n]{0,8}[:：]/m)
+    const next = text.slice(from).search(nextLabelRe)
     const body = next === -1 ? text.slice(from) : text.slice(from, from + next)
     return body.replace(/\s/g, '').length >= minChars
   })
+}
+
+/** Body text of one `## <section>` block in a four-section render. */
+function sectionBodyOf(text: string, section: string): string {
+  const pattern = new RegExp(`^##\\s*${section}[\\s\\S]*?$`, 'm')
+  const heading = pattern.exec(text)
+  if (heading === null) return ''
+  const from = heading.index + heading[0].length
+  const next = text.slice(from).search(/^##\s/m)
+  const body = next === -1 ? text.slice(from) : text.slice(from, from + next)
+  return body.replace(/\n+/g, '\n').trim()
+}
+
+/**
+ * Fold a four-section render into the Role/Task/Goal form (1.6.5):
+ * 角色 ← Role, 任务 ← Task, 目标 ← Context + Format merged on one line.
+ * Labels follow the render language (zh 角色：/任务：/目标：, en Role:/Task:/Goal:).
+ * Lives in validate.ts so both local.ts (local fold) and meta.ts (RTG example
+ * folding) can use it without a local↔meta cycle. Pure function.
+ */
+export function toRoleTaskGoal(fourSections: string, en: boolean): string {
+  const role = sectionBodyOf(fourSections, 'Role')
+  const task = sectionBodyOf(fourSections, 'Task')
+  const context = sectionBodyOf(fourSections, 'Context')
+  const format = sectionBodyOf(fourSections, 'Format')
+  const goalParts = [context, format].filter((p) => p.length > 0)
+  const goal = goalParts.join(en ? ' ' : '；')
+  const label = (zh: string, enLabel: string, body: string): string =>
+    `${en ? `${enLabel}:` : `${zh}：`}\n${body}`
+  return [
+    label('角色', 'Role', role),
+    '',
+    label('任务', 'Task', task),
+    '',
+    label('目标', 'Goal', goal),
+  ].join('\n')
 }
 
 /** Reject empty / non-string input loudly (the tool argument contract). */

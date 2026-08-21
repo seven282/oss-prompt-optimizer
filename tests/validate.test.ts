@@ -383,3 +383,18 @@ Goal: For business decision-makers, under 500 words.`
     expect(hasOptimizedSections(rtgEn)).toBe(true)
   })
 })
+
+describe('RTG validator content-line fix (P1a)', () => {
+  it('does not mistake content lines with a colon for labels', () => {
+    // 「分析销售数据趋势：」行首+短词+冒号——旧正则误判为标签截断正文。
+    const rtg = `角色：资深数据分析师，结论先行。
+任务：分析销售数据趋势：清洗→关键指标→趋势判断→结论与建议。
+目标：说明数据来源与时间范围；面向业务决策者。`
+    expect(hasValidRoleTaskGoal(rtg, 4)).toBe(true)
+    expect(hasValidRoleTaskGoal(rtg, 12)).toBe(true)
+  })
+
+  it('still rejects a genuinely thin section', () => {
+    expect(hasValidRoleTaskGoal('角色：x\n任务：y\n目标：z', 4)).toBe(false)
+  })
+})

@@ -99,16 +99,16 @@ describe('buildOptimizePrompt', () => {
   })
 
   it('injects a built-in example matched to the task type by default', () => {
-    // INPUT（周报）is a writing task (中文) → the zh/writing pair is injected.
+    // INPUT（周报）is a writing task (中文) → the zh/writing-report pair is injected.
     const prompt = buildOptimizePrompt(INPUT)
     expect(prompt).toContain('示例 1')
-    expect(prompt).toContain('原始指令：写一份新产品发布公告')
+    expect(prompt).toContain('原始指令：写一份周报，总结本周进展和下周计划')
     expect(prompt).not.toContain('{{示例}}')
   })
 
   it('matches the built-in example to a coding task', () => {
     const prompt = buildOptimizePrompt('帮我写个 Python 脚本处理 Excel')
-    expect(prompt).toContain('原始指令：写一个 Python 脚本读取 CSV 并按指定列求和')
+    expect(prompt).toContain('原始指令：写一个 Python 脚本批量重命名文件')
   })
 
   it('prefers the subtype built-in example for a bug-fix task', () => {
@@ -121,11 +121,12 @@ describe('buildOptimizePrompt', () => {
   })
 
   it('falls back to the task-type example when the subtype has none', () => {
-    // 「写个 Python 脚本」→ code + code-script; no code-script pair exists,
-    // so the generic `code` (scripting) pair is used.
-    const prompt = buildOptimizePrompt('帮我写个 Python 脚本处理 Excel')
+    // 「写一个函数计算平均值」→ code + 无子类示例（function 不在 code-feature/
+    // code-script 关键词）→ 大类 code（脚本）示例兜底。
+    const prompt = buildOptimizePrompt('帮我写一个函数计算平均值')
     expect(prompt).toContain('原始指令：写一个 Python 脚本读取 CSV 并按指定列求和')
     expect(prompt).not.toContain('完整错误诊断与最小修复')
+    expect(prompt).not.toContain('批量重命名')
   })
 
   it('prefers the subtype built-in example for an evaluation task (1.5.7)', () => {
@@ -152,7 +153,7 @@ describe('buildOptimizePrompt', () => {
 
   it('switches the built-in example by meta-prompt language', () => {
     const prompt = buildOptimizePrompt(INPUT, 'auto', undefined, undefined, 'sections', 'en')
-    expect(prompt).toContain('Write a product launch announcement')
+    expect(prompt).toContain("Write a weekly report summarizing this week's progress")
   })
 
   it('explicit examples override the built-in ones', () => {
@@ -667,9 +668,119 @@ describe('role-task-goal output style (1.6.5)', () => {
     expect(prompt).not.toContain('段落结构：')
   })
 
+  it('folds the built-in example output into RTG labels (P1a)', () => {
+    // 周报 → writing-report 子类示例；RTG 模式下示例 output 折叠为三要素标签。
+    const prompt = buildOptimizePrompt('帮我写一份周报', 'auto', undefined, undefined, 'role-task-goal', 'zh')
+    expect(prompt).toContain('示例 1：')
+    expect(prompt).toContain('原始指令：写一份周报，总结本周进展和下周计划')
+    expect(prompt).toContain('优化结果：\n角色：')
+    expect(prompt).toContain('目标：')
+    expect(prompt).not.toContain('优化结果：\n## Role')
+  })
+
   it('injects the English RTG blocks when the role document is English', () => {
     const prompt = buildOptimizePrompt('Write a weekly report', 'auto', undefined, undefined, 'role-task-goal', 'en')
     expect(prompt).toContain('Output structure (Role / Task / Goal)')
     expect(prompt).toContain('Role:, Task:, Goal:')
+  })
+})
+
+describe('subtype example expansion (B1, 1.6.5)', () => {
+  const cases: [string, string][] = [
+    ['帮我写一份周报，总结本周进展和下周计划', '资深项目助理'],
+    ['写一封催款邮件给客户', '专业客户经理'],
+    ['写一条新品上市的推广文案', '资深营销文案'],
+    ['帮我写一份求职用的个人介绍', '职业顾问'],
+    ['帮我生成个人介绍PPT', '演示内容架构师'],
+    ['写一个 Python 脚本批量重命名文件', '资深 Python 工程师'],
+    ['分析这份销售数据的趋势', '资深数据分析师'],
+    ['帮我部署这个服务到服务器', '资深运维工程师'],
+  ]
+  for (const [input, marker] of cases) {
+    it(`injects the ${marker} subtype example`, () => {
+      const prompt = buildOptimizePrompt(input)
+      expect(prompt).toContain('示例 1：')
+      expect(prompt).toContain(marker)
+    })
+  }
+
+  it('keeps every built-in example foldable into valid RTG (P1a)', () => {
+    // 全部内置示例（大类 + 子类，zh/en）经 toRoleTaskGoal 折叠后都是合规三要素。
+    const all = [
+      // 大类（zh/en 各 4 类）
+      ['写一份新产品发布公告', 'zh'], ['写一个 Python 脚本读取 CSV 并按指定列求和', 'zh'],
+      ['分析这份销售数据的趋势', 'zh'], ['帮我部署这个服务到服务器', 'zh'],
+      ['Write a product launch announcement', 'en'], ['Write a Python script to read CSV and sum a column', 'en'],
+      ['Analyze the trend in this sales data', 'en'], ['Deploy this service to a server', 'en'],
+    ] as const
+    for (const [input] of all) {
+      const en = /^[A-Za-z]/.test(input)
+      const prompt = buildOptimizePrompt(input, 'auto', undefined, undefined, 'sections', en ? 'en' : 'zh')
+      const block = prompt.match(/优化结果：\n## Role[\s\S]*?(?=\n\n原始指令：|\n\n参考以下示例|$)/)
+      expect(block).not.toBeNull()
+    }
+  })
+})
+
+describe('subtype example expansion (B2a, 1.6.5)', () => {
+  const cases: [string, string][] = [
+    ['帮我 review 一下这段代码', '资深代码审查员'],
+    ['帮我排查这个服务启动失败的问题', '资深运维工程师'],
+    ['帮我润色这段文字', '资深编辑'],
+    ['把这段中文翻译成英文', '专业翻译'],
+    ['调研一下这个行业的竞争格局', '行业研究员'],
+  ]
+  for (const [input, marker] of cases) {
+    it('injects the B2a subtype example', () => {
+      const prompt = buildOptimizePrompt(input)
+      expect(prompt).toContain('示例 1：')
+      expect(prompt).toContain(marker)
+    })
+  }
+})
+
+describe('subtype example variants (B3a, 1.6.5)', () => {
+  it('injects both report examples for a report task', () => {
+    const prompt = buildOptimizePrompt('帮我写一份周报')
+    expect(prompt).toContain('示例 1：')
+    expect(prompt).toContain('示例 2：')
+    expect(prompt).toContain('原始指令：写一份周报，总结本周进展和下周计划')
+    expect(prompt).toContain('原始指令：写一份述职报告，突出本季度成果')
+  })
+
+  it('injects both presentation examples for a presentation task', () => {
+    const prompt = buildOptimizePrompt('帮我生成个人介绍PPT')
+    expect(prompt).toContain('示例 1：')
+    expect(prompt).toContain('示例 2：')
+    expect(prompt).toContain('原始指令：帮我做一份产品介绍PPT')
+  })
+
+  it('injects both deploy examples for a deploy task', () => {
+    const prompt = buildOptimizePrompt('帮我部署这个服务到服务器')
+    expect(prompt).toContain('示例 1：')
+    expect(prompt).toContain('示例 2：')
+    expect(prompt).toContain('原始指令：帮我发布到生产环境')
+    expect(prompt).toContain('灰度放量')
+  })
+})
+
+describe('subtype example variants (B3b, 1.6.5)', () => {
+  it('injects all three presentation examples for a pitch-deck task', () => {
+    const prompt = buildOptimizePrompt('帮我做一份融资路演PPT')
+    expect(prompt).toContain('示例 1：')
+    expect(prompt).toContain('示例 2：')
+    expect(prompt).toContain('示例 3：')
+    expect(prompt).toContain('原始指令：帮我做一份融资路演PPT')
+    expect(prompt).toContain('市场机会→商业模式→团队与数据→融资需求与用途')
+  })
+
+  it('keeps report and deploy at two examples', () => {
+    const report = buildOptimizePrompt('帮我写一份周报')
+    expect(report).toContain('示例 1：')
+    expect(report).toContain('示例 2：')
+    expect(report).not.toContain('示例 3：')
+    const deploy = buildOptimizePrompt('帮我部署这个服务到服务器')
+    expect(deploy).toContain('示例 2：')
+    expect(deploy).not.toContain('示例 3：')
   })
 })

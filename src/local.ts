@@ -382,37 +382,6 @@ export function buildLocalTemplate(
   ].join('\n')
 }
 
-/**
- * Fold a four-section local render into the Role/Task/Goal form (1.6.5):
- * 角色 ← Role, 任务 ← Task, 目标 ← Context + Format merged on one line.
- * Labels follow the render language (zh 角色：/任务：/目标：, en Role:/Task:/Goal:).
- * Pure function.
- */
-export function toRoleTaskGoal(fourSections: string, en: boolean): string {
-  const role = sectionBodyOf(fourSections, 'Role')
-  const task = sectionBodyOf(fourSections, 'Task')
-  const context = sectionBodyOf(fourSections, 'Context')
-  const format = sectionBodyOf(fourSections, 'Format')
-  const goalParts = [context, format].filter((p) => p.length > 0)
-  const goal = goalParts.join(en ? ' ' : '；')
-  const label = (zh: string, enLabel: string, body: string): string =>
-    `${en ? `${enLabel}:` : `${zh}：`}\n${body}`
-  return [
-    label('角色', 'Role', role),
-    '',
-    label('任务', 'Task', task),
-    '',
-    label('目标', 'Goal', goal),
-  ].join('\n')
-}
-
-/** Body text of one `## <section>` block in a four-section render. */
-function sectionBodyOf(text: string, section: string): string {
-  const pattern = new RegExp(`^##\\s*${section}[\\s\\S]*?$`, 'm')
-  const heading = pattern.exec(text)
-  if (heading === null) return ''
-  const from = heading.index + heading[0].length
-  const next = text.slice(from).search(/^##\s/m)
-  const body = next === -1 ? text.slice(from) : text.slice(from, from + next)
-  return body.replace(/\n+/g, '\n').trim()
-}
+// toRoleTaskGoal / sectionBodyOf live in validate.ts (pure-function layer,
+// shared with meta.ts for RTG example folding without a local↔meta cycle).
+export { toRoleTaskGoal } from './validate.js'
