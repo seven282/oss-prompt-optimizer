@@ -61,6 +61,7 @@ const DEFAULT_CONFIG: Config = {
   earlyStopTailChunks: 12,
   earlyStopTailGrowth: 48,
   builtinExamples: true,
+  sceneRefEnabled: true,
   dreamInsightFeedback: false,
   classifier: 'heuristic',
   localTemplate: 'off',

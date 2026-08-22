@@ -320,12 +320,8 @@ const STRUCTURE_SECTIONS = `段落结构：
 - 全文精炼：一个要点一句话；正文按句断行，段落间空一行。
 - 按任务复杂度组织：简单任务不拆步骤、不硬凑全部要素；复杂任务才分层展开。`
 
-/** Plain-style structure paragraph (no headings, continuous prose). */
-const STRUCTURE_PLAIN = `输出结构：
-- 输出是一段完整、连贯、可直接交给 AI 执行的提示词正文，依次覆盖角色定位、任务与完成标准、约束、输出格式与长度，按需取舍。
-- 正文按句断行——每句或每个要点一行，段落间空一行；避免超长单行。
-- 不要用任何小节标题（如 ##、###）或「角色：」「任务：」等字段标签——需要分点就用普通段落或列表，绝不输出标题行。
-- 按任务复杂度组织：简单任务不拆步骤、不硬凑全部要素；复杂任务才分层展开。`
+/** Plain-style structure paragraph — empty (template skeleton provides the essential output rule). */
+const STRUCTURE_PLAIN = ``
 
 /** Section-mode pre-output self-check.
  *  P-E（1.6.8）：六问压两问——「长度是否足以直接执行」这类问句会催写满；
@@ -333,8 +329,8 @@ const STRUCTURE_PLAIN = `输出结构：
  *  结构块与失败诊断路径承担，自查只保留形态与成本两条。 */
 const SELFCHECK_SECTIONS = `- 输出前自查：四段标题是否齐全且各有实质内容，有无虚构、空话与重复？在长度锚点内说清即止——不凑满字数，也不缺执行要素。`
 
-/** Plain-mode pre-output self-check. */
-const SELFCHECK_PLAIN = `- 输出前自查：角色定位、任务与完成标准、约束、输出格式四要素是否都已说清，且没有小节标题、空话与重复？在长度锚点内说清即止——不凑满字数，也不缺执行要素。`
+/** Plain-mode pre-output self-check — empty (template keeps the prompt minimal). */
+const SELFCHECK_PLAIN = ``
 
 /** Role/Task/Goal structure paragraph (1.6.5, parseable three-element form). */
 const STRUCTURE_RTG = `输出结构（角色/任务/目标）：
@@ -351,18 +347,14 @@ const STRUCTURE_SECTIONS_EN = `Section structure:
 - Keep it terse: one point per sentence; break lines by sentence with a blank line between paragraphs.
 - Scale with complexity: skip step breakdowns and unused elements for simple tasks; expand in layers only for complex ones.`
 
-/** English plain-style structure paragraph (no headings, continuous prose). */
-const STRUCTURE_PLAIN_EN = `Output structure:
-- The output is one complete, coherent prompt body covering — as needed — the role, the task with completion criteria, constraints, and output format and length.
-- Break lines by sentence — each sentence or bullet on its own line, with a blank line between paragraphs; avoid overlong single lines.
-- Don't use any subsection headings (such as ## or ###) or field labels like "Role:" or "Task:" — even when breaking the content into points, use plain paragraphs or lists, never heading lines.
-- Scale with complexity: skip step breakdowns and unused elements for simple tasks; expand in layers only for complex ones.`
+/** English plain-style structure paragraph — empty. */
+const STRUCTURE_PLAIN_EN = ``
 
 /** English section-mode pre-output self-check. */
 const SELFCHECK_SECTIONS_EN = `- Self-check before output: are all four headings present with substantive content, free of invented facts and filler? Stay within the length anchor — never pad to fill it, never drop an execution essential.`
 
-/** English plain-mode pre-output self-check. */
-const SELFCHECK_PLAIN_EN = `- Self-check before output: are the role, task with completion criteria, constraints, and output format all clearly stated, free of headings, filler, and repetition? Stay within the length anchor — never pad to fill it, never drop an execution essential.`
+/** English plain-mode pre-output self-check — empty. */
+const SELFCHECK_PLAIN_EN = ``
 
 /** Role/Task/Goal structure paragraph (1.6.5, parseable three-element form). */
 const STRUCTURE_RTG_EN = `Output structure (Role / Task / Goal):
@@ -796,6 +788,7 @@ function metaBlocks(
   rawInput: string,
   builtinExamples?: boolean,
   compact?: boolean,
+  sceneRefEnabled?: boolean,
 ): MetaBlocks {
   const pinned = language !== undefined && language !== 'auto' && language.length > 0
   const langRule = pinned ? `- 输出语言固定为：${language}。\n` : ''
@@ -814,7 +807,7 @@ function metaBlocks(
   // output 折叠为三要素标签再注入，作为三要素输出的 few-shot 引导
   // （plain 无标题形态仍禁用示例）。
   const exampleBlock = outputStyle !== 'plain' && effectiveExamples.length > 0
-    ? `参考以下示例的格式与风格（示例仅为示范，不要照抄内容）：\n${effectiveExamples
+    ? `参考以下示例的格式与结构（示例仅为示范，内容必须根据用户实际指令重新撰写，禁止照搬示例内容）：\n${effectiveExamples
         .map((e, i) => {
           const out = outputStyle === 'role-task-goal' ? toRoleTaskGoal(e.output, en) : e.output
           return `示例 ${i + 1}：\n原始指令：${e.input}\n优化结果：\n${out}`
@@ -834,11 +827,12 @@ function metaBlocks(
   // B2 合并块（1.6.8）：子类提示＋角色参考＋场景骨架三块语义重叠——都在回答
   // 「这个任务长什么样」，压成一行场景参考。子类命中 → 标签+角色+骨架一行；
   // 仅大类命中 → 只保留角色参考行。ADR-009 内容级门控不变（仅命中时注入）。
+  // sceneRefEnabled: false 时完全跳过场景参考注入（省 ~200 input tokens）。
   const sceneRefBlock =
-    !compact && subtype !== undefined && taskType !== undefined && taskType !== 'other'
+    sceneRefEnabled !== false && !compact && subtype !== undefined && taskType !== undefined && taskType !== 'other'
       ? (en
-          ? `- Scene reference: 【${subtypeLabel(subtype, true)}】 · ${ROLE_LIBRARY[taskType].en} · ${SUB_TOPIC_TEMPLATES[subtype].en}\n`
-          : `- 场景参考：【${subtypeLabel(subtype, false)}】类 · ${ROLE_LIBRARY[taskType].zh} · ${SUB_TOPIC_TEMPLATES[subtype].zh}\n`)
+          ? `- IMPORTANT: The scene reference below is INSPIRATION ONLY — expand it into a detailed, specific prompt. Do NOT echo or copy it verbatim.\n- Scene reference: 【${subtypeLabel(subtype, true)}】 · ${ROLE_LIBRARY[taskType].en} · ${SUB_TOPIC_TEMPLATES[subtype].en}\n`
+          : `- 重要：以下场景参考仅为灵感来源——请将其展开为具体、详细的提示词，严禁逐字照搬。\n- 场景参考：【${subtypeLabel(subtype, false)}】类 · ${ROLE_LIBRARY[taskType].zh} · ${SUB_TOPIC_TEMPLATES[subtype].zh}\n`)
       : taskType !== undefined && taskType !== 'other'
         ? `${en ? ROLE_LIBRARY[taskType].en : ROLE_LIBRARY[taskType].zh}\n`
         : ''
@@ -971,10 +965,11 @@ export function buildOptimizePrompt(
   level?: SituationProfileLevel,
   builtinExamples?: boolean,
   compact?: boolean,
+  sceneRefEnabled?: boolean,
 ): string {
   const template = metaLanguage === 'en' ? templates.optimizeEn : templates.optimizeZh
   const resolvedProfile = profile ?? buildSituationProfile(input, context)
-  const rendered = renderBlocks(template, metaBlocks(language, extraInstructions, examples, outputStyle, metaLanguage, diagnosis, context, taskType ?? resolvedProfile.task.type, maxOutputTokens, resolvedProfile, resolvedProfile.task.subtype, undefined, level, input, builtinExamples, compact))
+  const rendered = renderBlocks(template, metaBlocks(language, extraInstructions, examples, outputStyle, metaLanguage, diagnosis, context, taskType ?? resolvedProfile.task.type, maxOutputTokens, resolvedProfile, resolvedProfile.task.subtype, undefined, level, input, builtinExamples, compact, sceneRefEnabled))
   return rendered.replace('{{原始指令}}', input)
 }
 
@@ -1020,10 +1015,11 @@ export function buildIteratePrompt(
   level?: SituationProfileLevel,
   builtinExamples?: boolean,
   compact?: boolean,
+  sceneRefEnabled?: boolean,
 ): string {
   const template = metaLanguage === 'en' ? templates.iterateEn : templates.iterateZh
   const resolvedProfile = profile ?? buildSituationProfile(instruction, context)
-  const rendered = renderBlocks(template, metaBlocks(language, extraInstructions, examples, outputStyle, metaLanguage, diagnosis, context, taskType ?? resolvedProfile.task.type, maxOutputTokens, resolvedProfile, resolvedProfile.task.subtype, drift, level, instruction, builtinExamples, compact))
+  const rendered = renderBlocks(template, metaBlocks(language, extraInstructions, examples, outputStyle, metaLanguage, diagnosis, context, taskType ?? resolvedProfile.task.type, maxOutputTokens, resolvedProfile, resolvedProfile.task.subtype, drift, level, instruction, builtinExamples, compact, sceneRefEnabled))
   return rendered.replace(/\{\{上次结果\}\}|\{\{迭代指令\}\}/g, (match) =>
     match === '{{上次结果}}' ? lastResult : instruction,
   )

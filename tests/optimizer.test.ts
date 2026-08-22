@@ -69,6 +69,7 @@ const DEFAULT_CONFIG: Config = {
   earlyStopTailChunks: 12,
   earlyStopTailGrowth: 48,
   builtinExamples: true,
+  sceneRefEnabled: true,
   dreamInsightFeedback: false,
   senseNeedsSeparate: false,
   classifier: 'heuristic',
@@ -205,7 +206,7 @@ describe('PromptOptimizerService.optimize', () => {
     const state = makeCtx([textStream(FOUR_SECTIONS)])
     const service = makeService(state, { ...DEFAULT_CONFIG, metaPromptLanguage: 'auto' })
     await service.optimize('帮我写一份 PRD', { signal: new AbortController().signal })
-    expect(state.streamCalls[0].system).toContain('你是一名提示词优化专家')
+    expect(state.streamCalls[0].system).toContain('你是提示词优化专家')
     expect(state.streamCalls[0].system).not.toContain('You are a prompt optimization expert')
   })
 
@@ -221,7 +222,7 @@ describe('PromptOptimizerService.optimize', () => {
     const state = makeCtx([textStream(FOUR_SECTIONS)])
     const service = makeService(state, { ...DEFAULT_CONFIG, metaPromptLanguage: 'auto' })
     await service.iterate(FOUR_SECTIONS, '帮我改成面向中小企业的版本', { signal: new AbortController().signal })
-    expect(state.streamCalls[0].system).toContain('你是一名提示词优化专家')
+    expect(state.streamCalls[0].system).toContain('你是提示词优化专家')
   })
 
   it('clearing the runtime override falls back to the auto config', async () => {
@@ -300,7 +301,8 @@ describe('PromptOptimizerService.optimize', () => {
     expect(result.prompt).toBe(PLAIN)
     expect(result.sections).toBeUndefined()
     const system = state.streamCalls[0].system ?? ''
-    expect(system).toContain('不要用任何小节标题')
+    // D-Lite: plain mode structure block is empty — template carries the rule
+    expect(system).toContain('精简、可执行')
     expect(system).not.toContain('## Role')
   })
 

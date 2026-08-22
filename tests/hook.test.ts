@@ -50,6 +50,7 @@ const BASE_CONFIG: Config = {
   earlyStopTailChunks: 12,
   earlyStopTailGrowth: 48,
   builtinExamples: true,
+  sceneRefEnabled: true,
   dreamInsightFeedback: false,
   senseNeedsSeparate: false,
   classifier: 'heuristic',

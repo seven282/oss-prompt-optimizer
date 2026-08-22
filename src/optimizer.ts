@@ -392,6 +392,7 @@ export class PromptOptimizerService extends Service {
       situationProfileLevel: this.config.situationProfileLevel,
       builtinExamples: this.config.builtinExamples,
       compact,
+      sceneRefEnabled: this.config.sceneRefEnabled,
     }
   }
 

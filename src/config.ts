@@ -225,6 +225,13 @@ export interface Config {
    */
   builtinExamples: boolean
   /**
+   * Whether to inject scene reference (role library + sub-topic templates)
+   * when a task subtype is detected. `true` (default) injects the scene
+   * reference block; `false` disables it — saves ~200 input tokens per call
+   * but loses the subtype-specific role/skeleton guidance.
+   */
+  sceneRefEnabled: boolean
+  /**
    * Dream-insight feedback (1.4.9): when a session run with `senseNeeds`
    * produced a `--- 延伸洞察 ---` appendix, keep it per session and inject it
    * into later optimize/iterate calls (marked as AI-inferred, non-fact).
@@ -334,6 +341,7 @@ export const Config: z<Config> = z.object({
   optimizationProfile: z.union(['balanced', 'fast']).default('balanced'),
   earlyStop: z.boolean().default(false),
   builtinExamples: z.boolean().default(true),
+  sceneRefEnabled: z.boolean().default(true),
   dreamInsightFeedback: z.boolean().default(false),
   senseNeedsSeparate: z.boolean().default(false),
   classifier: z.union(['heuristic', 'llm']).default('heuristic'),

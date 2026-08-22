@@ -25,6 +25,9 @@ export interface PromptBuildContext {
   builtinExamples?: boolean
   /** P-A compact tier (1.6.8): strip hint blocks for simple instructions. */
   compact?: boolean
+  /** Whether to inject scene reference (role library + sub-topic templates).
+   *  `false` disables it — saves ~200 input tokens per call. */
+  sceneRefEnabled?: boolean
 }
 
 /** Build the system prompt for one `optimize` model call. Pure function. */
@@ -51,6 +54,7 @@ export function buildOptimizeSystem(
     ctx.situationProfileLevel,
     ctx.builtinExamples,
     ctx.compact,
+    ctx.sceneRefEnabled,
   )
 }
 
@@ -82,5 +86,6 @@ export function buildIterateSystem(
     ctx.situationProfileLevel,
     ctx.builtinExamples,
     ctx.compact,
+    ctx.sceneRefEnabled,
   )
 }

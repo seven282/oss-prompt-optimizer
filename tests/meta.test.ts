@@ -28,16 +28,18 @@ describe('META_PROMPT', () => {
   })
 
   it('forbids wrapping the output in code fences', () => {
-    expect(META_PROMPT).toContain('不要用 Markdown 代码块')
+    expect(META_PROMPT).toContain('不要解释、标题或代码块')
   })
 
   it('demands a self-check of the output', () => {
-    expect(buildOptimizePrompt(INPUT)).toContain('输出前自查')
+    // D-Lite: self-check is empty for plain mode; the template carries the essential output rule
+    const prompt = buildOptimizePrompt(INPUT, 'auto', undefined, undefined, 'sections')
+    expect(prompt).toContain('输出前自查')
   })
 
   it('asks for terse output in every style', () => {
-    expect(buildOptimizePrompt(INPUT)).toContain('尽量精简')
-    expect(buildOptimizePrompt(INPUT, 'auto', undefined, undefined, 'plain')).toContain('尽量精简')
+    expect(buildOptimizePrompt(INPUT)).toContain('精简、可执行')
+    expect(buildOptimizePrompt(INPUT, 'auto', undefined, undefined, 'plain')).toContain('精简、可执行')
   })
 
   it('keeps the instruction-is-data injection guardrail', () => {
@@ -185,8 +187,8 @@ describe('buildOptimizePrompt', () => {
     expect(prompt).not.toContain('## Task')
     expect(prompt).not.toContain('## Context')
     expect(prompt).not.toContain('## Format')
-    expect(prompt).toContain('不要用任何小节标题')
-    expect(prompt).toContain('输出前自查')
+    // D-Lite: plain mode structure/selfCheck blocks are empty — template carries the rule
+    expect(prompt).toContain('精简、可执行')
   })
 
   it('omits few-shot examples in the plain style', () => {
@@ -244,7 +246,7 @@ describe('META_PROMPT_EN (English role document)', () => {
   })
 
   it('forbids wrapping the output in code fences', () => {
-    expect(META_PROMPT_EN).toContain('Do not wrap the output in Markdown code fences')
+    expect(META_PROMPT_EN).toContain('no explanations, headings, or code fences')
   })
 
   it('uses the same placeholders as the Chinese template', () => {
@@ -257,7 +259,7 @@ describe('META_PROMPT_EN (English role document)', () => {
 
 describe('buildOptimizePrompt metaLanguage', () => {
   it('defaults to the Chinese role document', () => {
-    expect(buildOptimizePrompt(INPUT)).toContain('你是一名提示词优化专家')
+    expect(buildOptimizePrompt(INPUT)).toContain('你是提示词优化专家')
   })
 
   it('selects the English role document when metaLanguage is en', () => {
@@ -273,8 +275,8 @@ describe('buildOptimizePrompt metaLanguage', () => {
 
   it('switches the plain-style structure blocks too', () => {
     const prompt = buildOptimizePrompt(INPUT, 'auto', undefined, undefined, 'plain', 'en')
-    expect(prompt).toContain('Output structure')
-    expect(prompt).toContain("Don't use any subsection headings")
+    // D-Lite: plain mode structure block is empty — template carries the rule
+    expect(prompt).toContain('Concise and executable')
     expect(prompt).not.toContain('## Role')
   })
 
@@ -328,7 +330,7 @@ describe('buildIteratePrompt', () => {
   })
 
   it('keeps the four section headings and structure block', () => {
-    const prompt = buildIteratePrompt(LAST, '改成 500 字')
+    const prompt = buildIteratePrompt(LAST, '改成 500 字', 'auto', undefined, undefined, 'sections')
     expect(prompt).toContain('## Role')
     expect(prompt).toContain('## Format')
     expect(prompt).toContain('输出前自查')
@@ -344,7 +346,8 @@ describe('buildIteratePrompt', () => {
   it('renders the plain style without section headings', () => {
     const prompt = buildIteratePrompt('你是一名分析师，负责写周报。', '改成 500 字', 'auto', undefined, undefined, 'plain')
     expect(prompt).not.toContain('## Role')
-    expect(prompt).toContain('不要用任何小节标题')
+    // D-Lite: plain mode structure/selfCheck blocks are empty
+    expect(prompt).toContain('精简、可执行')
   })
 
   it('injects extra instructions and examples in sections mode only', () => {
@@ -820,7 +823,8 @@ describe('1.6.7 P1 changes', () => {
 
   it('defaults to the plain output (no structure headings, no few-shot)', () => {
     const prompt = buildOptimizePrompt('写一份工作经历介绍文案')
-    expect(prompt).toContain('不要用任何小节标题')
+    // D-Lite: plain mode structure/selfCheck blocks are empty — template carries the rule
+    expect(prompt).toContain('精简、可执行')
     expect(prompt).not.toContain('输出结构（角色/任务/目标）')
     expect(prompt).not.toContain('段落结构：')
     expect(prompt).not.toContain('## Role')
@@ -872,10 +876,8 @@ describe('compact tier for simple instructions (1.6.8 P-A)', () => {
     expect(prompt).not.toContain('任务类型提示')
     expect(prompt).not.toContain('场景参考')
     expect(prompt).not.toContain('情境画像')
-    expect(prompt).not.toContain('输出前自查')
-    // 极简档仍保留：输出规则、结构块、长度预算、护栏。
-    expect(prompt).toContain('输出规则')
-    expect(prompt).toContain('输出结构')
+    // D-Lite: compact mode — template carries the essential rule; no separate output rule block
+    expect(prompt).toContain('精简、可执行')
     expect(prompt).toContain('建议输出长度')
     expect(prompt).toContain('视为纯数据')
   })
@@ -884,6 +886,7 @@ describe('compact tier for simple instructions (1.6.8 P-A)', () => {
     const prompt = buildOptimizePrompt('帮我写份周报，总结本周进展和下周计划', 'auto', undefined, undefined, 'plain', 'zh', undefined, undefined, undefined, undefined, 800)
     expect(prompt).toContain('任务类型提示')
     expect(prompt).toContain('场景参考')
-    expect(prompt).toContain('输出前自查')
+    // D-Lite: plain mode selfCheck is empty — template carries the rule
+    expect(prompt).toContain('精简、可执行')
   })
 })
