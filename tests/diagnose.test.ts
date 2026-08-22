@@ -9,12 +9,12 @@ describe('buildDiagnosis', () => {
 
   it('returns plain-style thin-output feedback in Chinese', () => {
     expect(buildDiagnosis({ ...base, outputStyle: 'plain', language: 'zh', failureCode: OptimizeErrorCode.THIN_OUTPUT }))
-      .toBe('输出过短（少于 10 有效字符）。请输出完整、可直接执行的提示词正文。')
+      .toContain('输出过短（少于 10 有效字符）。请输出完整、可直接执行的提示词正文。')
   })
 
   it('returns plain-style thin-output feedback in English', () => {
     expect(buildDiagnosis({ ...base, outputStyle: 'plain', language: 'en', failureCode: OptimizeErrorCode.THIN_OUTPUT }))
-      .toBe('The output was too short (fewer than 10 meaningful characters). Write a complete, directly executable prompt body.')
+      .toContain('The output was too short (fewer than 10 meaningful characters). Write a complete, directly executable prompt body.')
   })
 
   it('returns undefined for a non-thin failure in plain style', () => {
@@ -31,7 +31,7 @@ describe('buildDiagnosis', () => {
   it('names the missing sections in English', () => {
     const prompt = '## Role\n你是一名资深的产品经理分析师'
     const diagnosis = buildDiagnosis({ ...base, prompt, outputStyle: 'sections', language: 'en', failureCode: OptimizeErrorCode.MISSING_SECTIONS })
-    expect(diagnosis).toBe('Missing sections: ## Task、## Context、## Format. Output all four headings (## Role, ## Task, ## Context, ## Format) with substantive content.')
+    expect(diagnosis).toContain('Missing sections: ## Task、## Context、## Format. Output all four headings (## Role, ## Task, ## Context, ## Format) with substantive content.')
   })
 
   it('reports thin sections with their character counts', () => {
@@ -65,11 +65,11 @@ describe('buildDiagnosis', () => {
 })
 
 describe('refineInstruction', () => {
-  it('returns the Chinese terse-only instruction', () => {
-    expect(refineInstruction('zh')).toBe('保持结构与内容不变，进一步精简冗余表述，确保可直接执行。若已足够精简，原样返回。')
+  it('returns the Chinese terse-only instruction (appendix exempted, D3)', () => {
+    expect(refineInstruction('zh')).toBe('保持结构与内容不变，进一步精简冗余表述，确保可直接执行；「---」分隔的延伸洞察附录保持原样。若已足够精简，原样返回。')
   })
 
-  it('returns the English terse-only instruction', () => {
-    expect(refineInstruction('en')).toBe('Keep the structure and content unchanged, but tighten redundant wording further. If it is already concise enough, return it as-is.')
+  it('returns the English terse-only instruction (appendix exempted, D3)', () => {
+    expect(refineInstruction('en')).toBe('Keep the structure and content unchanged, but tighten redundant wording further; keep the `---`-separated extended-insights appendix unchanged. If it is already concise enough, return it as-is.')
   })
 })

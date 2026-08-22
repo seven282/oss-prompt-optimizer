@@ -5,6 +5,7 @@ import {
   DEFAULT_TEMPLATES,
   detectLanguage,
   detectTaskType,
+  isCompactInstruction,
   META_ITERATE,
   META_ITERATE_EN,
   META_PROMPT,
@@ -12,12 +13,14 @@ import {
   validateTemplateSet,
   type TemplateSet,
 } from '../src/meta.js'
+import { detectTaskSubtype } from '../src/situation.js'
 
 const INPUT = '帮我写一份周报'
 
 describe('META_PROMPT', () => {
   it('requires the four English section headings in the rendered prompt', () => {
-    const prompt = buildOptimizePrompt(INPUT)
+    // sections 形态（1.6.7 起默认 role-task-goal，此处显式验证四段模板约束）。
+    const prompt = buildOptimizePrompt(INPUT, 'auto', undefined, undefined, 'sections')
     expect(prompt).toContain('## Role')
     expect(prompt).toContain('## Task')
     expect(prompt).toContain('## Context')
@@ -88,7 +91,7 @@ describe('buildOptimizePrompt', () => {
   it('injects few-shot examples when configured', () => {
     const prompt = buildOptimizePrompt(INPUT, 'auto', undefined, [
       { input: '写一首诗', output: '## Role\n诗人\n\n## Task\n写诗\n\n## Context\n背景\n\n## Format\n四行' },
-    ])
+    ], 'sections')
     expect(prompt).toContain('示例 1')
     expect(prompt).toContain('原始指令：写一首诗')
     expect(prompt).not.toContain('{{示例}}')
@@ -100,21 +103,21 @@ describe('buildOptimizePrompt', () => {
 
   it('injects a built-in example matched to the task type by default', () => {
     // INPUT（周报）is a writing task (中文) → the zh/writing-report pair is injected.
-    const prompt = buildOptimizePrompt(INPUT)
+    const prompt = buildOptimizePrompt(INPUT, 'auto', undefined, undefined, 'sections')
     expect(prompt).toContain('示例 1')
     expect(prompt).toContain('原始指令：写一份周报，总结本周进展和下周计划')
     expect(prompt).not.toContain('{{示例}}')
   })
 
   it('matches the built-in example to a coding task', () => {
-    const prompt = buildOptimizePrompt('帮我写个 Python 脚本处理 Excel')
+    const prompt = buildOptimizePrompt('帮我写个 Python 脚本处理 Excel', 'auto', undefined, undefined, 'sections')
     expect(prompt).toContain('原始指令：写一个 Python 脚本批量重命名文件')
   })
 
   it('prefers the subtype built-in example for a bug-fix task', () => {
     // 「定位并修复 @src/cache.ts 的报错」→ code + code-bugfix → the subtype
     // pair wins over the generic `code` (scripting) pair.
-    const prompt = buildOptimizePrompt('定位并修复 @src/cache.ts 的报错')
+    const prompt = buildOptimizePrompt('定位并修复 @src/cache.ts 的报错', 'auto', undefined, undefined, 'sections')
     expect(prompt).toContain('原始指令：定位并修复 @src/cache.ts 的报错')
     expect(prompt).toContain('完整错误诊断与最小修复')
     expect(prompt).not.toContain('原始指令：写一个 Python 脚本读取 CSV 并按指定列求和')
@@ -123,7 +126,7 @@ describe('buildOptimizePrompt', () => {
   it('falls back to the task-type example when the subtype has none', () => {
     // 「写一个函数计算平均值」→ code + 无子类示例（function 不在 code-feature/
     // code-script 关键词）→ 大类 code（脚本）示例兜底。
-    const prompt = buildOptimizePrompt('帮我写一个函数计算平均值')
+    const prompt = buildOptimizePrompt('帮我写一个函数计算平均值', 'auto', undefined, undefined, 'sections')
     expect(prompt).toContain('原始指令：写一个 Python 脚本读取 CSV 并按指定列求和')
     expect(prompt).not.toContain('完整错误诊断与最小修复')
     expect(prompt).not.toContain('批量重命名')
@@ -132,7 +135,7 @@ describe('buildOptimizePrompt', () => {
   it('prefers the subtype built-in example for an evaluation task (1.5.7)', () => {
     // 「评估 localTemplate 本地直出的覆盖面与边界」→ analysis + analysis-review
     // → the subtype pair wins over the generic `analysis` (trend) pair.
-    const prompt = buildOptimizePrompt('评估 localTemplate 本地直出的覆盖面与边界')
+    const prompt = buildOptimizePrompt('评估 localTemplate 本地直出的覆盖面与边界', 'auto', undefined, undefined, 'sections')
     expect(prompt).toContain('原始指令：评估 localTemplate 本地直出的覆盖面与边界')
     expect(prompt).toContain('结构化清单')
     expect(prompt).not.toContain('原始指令：分析这份销售数据的趋势')
@@ -141,7 +144,7 @@ describe('buildOptimizePrompt', () => {
   it('injects all subtype examples when a subcategory has multiple (1.6.4)', () => {
     // analysis-review 现有两条：localTemplate 评估（1.5.7）+ 模板四段诊断（1.6.4）。
     // 命中该子类时两条都注入（示例 1 / 示例 2）。
-    const prompt = buildOptimizePrompt('评估一个模板的 Role、Task、Context、Format 四段并给出优化方案')
+    const prompt = buildOptimizePrompt('评估一个模板的 Role、Task、Context、Format 四段并给出优化方案', 'auto', undefined, undefined, 'sections')
     expect(prompt).toContain('示例 1：')
     expect(prompt).toContain('示例 2：')
     // 两条示例的 input 都注入：localTemplate 评估（1.5.7）+ 模板四段诊断（1.6.4）。
@@ -159,7 +162,7 @@ describe('buildOptimizePrompt', () => {
   it('explicit examples override the built-in ones', () => {
     const prompt = buildOptimizePrompt(INPUT, 'auto', undefined, [
       { input: '写一首诗', output: '## Role\n诗人\n\n## Task\n写诗\n\n## Context\n背景\n\n## Format\n四行' },
-    ])
+    ], 'sections')
     expect(prompt).toContain('原始指令：写一首诗')
     expect(prompt).not.toContain('写一个 Python 脚本')
   })
@@ -347,7 +350,7 @@ describe('buildIteratePrompt', () => {
   it('injects extra instructions and examples in sections mode only', () => {
     const withBlocks = buildIteratePrompt(LAST, '改成 500 字', 'auto', '必须面向高管', [
       { input: '写一首诗', output: '## Role\n诗人' },
-    ])
+    ], 'sections')
     expect(withBlocks).toContain('必须面向高管')
     expect(withBlocks).toContain('示例 1')
     const plain = buildIteratePrompt(LAST, '改成 500 字', 'auto', '必须面向高管', [
@@ -551,6 +554,7 @@ describe('output-length budget block ({{长度预算}})', () => {
   it('injects the suggested length cap when configured (zh)', () => {
     const prompt = buildOptimizePrompt(INPUT, 'auto', undefined, undefined, 'sections', 'zh', undefined, DEFAULT_TEMPLATES, undefined, undefined, 600)
     expect(prompt).toContain('建议输出长度不超过 600 token')
+    expect(prompt).toContain('中文约 400 字以内')
     expect(prompt).not.toContain('{{长度预算}}')
   })
 
@@ -568,6 +572,7 @@ describe('output-length budget block ({{长度预算}})', () => {
     const LAST = '## Role\n分析师\n\n## Task\n写周报\n\n## Context\n团队 5 人\n\n## Format\n300 字'
     const prompt = buildIteratePrompt(LAST, '改成 500 字', 'auto', undefined, undefined, 'sections', 'zh', undefined, DEFAULT_TEMPLATES, undefined, undefined, 400)
     expect(prompt).toContain('建议输出长度不超过 400 token')
+    expect(prompt).toContain('中文约 250 字以内')
   })
 })
 
@@ -601,11 +606,11 @@ describe('situation block ({{情境画像}})', () => {
 describe('task subtype hint ({{任务类型}} 子类)', () => {
   it('appends the subtype hint when a subcategory is detected (zh)', () => {
     const prompt = buildOptimizePrompt('修复登录页面的 bug')
-    expect(prompt).toContain('子类提示：该指令属于【bug 修复】类任务')
+    expect(prompt).toContain('- 场景参考：【bug 修复】类')
   })
 
   it('emits a subtype hint for polish/rewrite (1.5.2 new subtype)', () => {
-    expect(buildOptimizePrompt('帮我润色一下这段文字')).toContain('子类提示：该指令属于【润色/改写】类任务')
+    expect(buildOptimizePrompt('帮我润色一下这段文字')).toContain('- 场景参考：【润色/改写】类')
   })
 
   it('emits no subtype hint for an undetectable subcategory', () => {
@@ -663,7 +668,7 @@ describe('role-task-goal output style (1.6.5)', () => {
     expect(prompt).toContain('目标：')
     expect(prompt).toContain('三行标签')
     expect(prompt).toContain('输出前自查')
-    expect(prompt).toContain('角色、任务、目标三行标签')
+    expect(prompt).toContain('角色：/任务：/目标：三行标签')
     // 不注入四段结构块。
     expect(prompt).not.toContain('段落结构：')
   })
@@ -698,7 +703,7 @@ describe('subtype example expansion (B1, 1.6.5)', () => {
   ]
   for (const [input, marker] of cases) {
     it(`injects the ${marker} subtype example`, () => {
-      const prompt = buildOptimizePrompt(input)
+      const prompt = buildOptimizePrompt(input, 'auto', undefined, undefined, 'sections')
       expect(prompt).toContain('示例 1：')
       expect(prompt).toContain(marker)
     })
@@ -732,7 +737,7 @@ describe('subtype example expansion (B2a, 1.6.5)', () => {
   ]
   for (const [input, marker] of cases) {
     it('injects the B2a subtype example', () => {
-      const prompt = buildOptimizePrompt(input)
+      const prompt = buildOptimizePrompt(input, 'auto', undefined, undefined, 'sections')
       expect(prompt).toContain('示例 1：')
       expect(prompt).toContain(marker)
     })
@@ -741,7 +746,7 @@ describe('subtype example expansion (B2a, 1.6.5)', () => {
 
 describe('subtype example variants (B3a, 1.6.5)', () => {
   it('injects both report examples for a report task', () => {
-    const prompt = buildOptimizePrompt('帮我写一份周报')
+    const prompt = buildOptimizePrompt('帮我写一份周报', 'auto', undefined, undefined, 'sections')
     expect(prompt).toContain('示例 1：')
     expect(prompt).toContain('示例 2：')
     expect(prompt).toContain('原始指令：写一份周报，总结本周进展和下周计划')
@@ -749,14 +754,14 @@ describe('subtype example variants (B3a, 1.6.5)', () => {
   })
 
   it('injects both presentation examples for a presentation task', () => {
-    const prompt = buildOptimizePrompt('帮我生成个人介绍PPT')
+    const prompt = buildOptimizePrompt('帮我生成个人介绍PPT', 'auto', undefined, undefined, 'sections')
     expect(prompt).toContain('示例 1：')
     expect(prompt).toContain('示例 2：')
     expect(prompt).toContain('原始指令：帮我做一份产品介绍PPT')
   })
 
   it('injects both deploy examples for a deploy task', () => {
-    const prompt = buildOptimizePrompt('帮我部署这个服务到服务器')
+    const prompt = buildOptimizePrompt('帮我部署这个服务到服务器', 'auto', undefined, undefined, 'sections')
     expect(prompt).toContain('示例 1：')
     expect(prompt).toContain('示例 2：')
     expect(prompt).toContain('原始指令：帮我发布到生产环境')
@@ -766,7 +771,7 @@ describe('subtype example variants (B3a, 1.6.5)', () => {
 
 describe('subtype example variants (B3b, 1.6.5)', () => {
   it('injects all three presentation examples for a pitch-deck task', () => {
-    const prompt = buildOptimizePrompt('帮我做一份融资路演PPT')
+    const prompt = buildOptimizePrompt('帮我做一份融资路演PPT', 'auto', undefined, undefined, 'sections')
     expect(prompt).toContain('示例 1：')
     expect(prompt).toContain('示例 2：')
     expect(prompt).toContain('示例 3：')
@@ -775,12 +780,110 @@ describe('subtype example variants (B3b, 1.6.5)', () => {
   })
 
   it('keeps report and deploy at two examples', () => {
-    const report = buildOptimizePrompt('帮我写一份周报')
+    const report = buildOptimizePrompt('帮我写一份周报', 'auto', undefined, undefined, 'sections')
     expect(report).toContain('示例 1：')
     expect(report).toContain('示例 2：')
     expect(report).not.toContain('示例 3：')
-    const deploy = buildOptimizePrompt('帮我部署这个服务到服务器')
+    const deploy = buildOptimizePrompt('帮我部署这个服务到服务器', 'auto', undefined, undefined, 'sections')
     expect(deploy).toContain('示例 2：')
     expect(deploy).not.toContain('示例 3：')
+  })
+})
+
+describe('writing-vs-analysis tie-break (1.6.7 P0)', () => {
+  it('rules writing for a copy task that mentions 分析/方案', () => {
+    // 根因用例：写作动词 + 文案 与 分析/方案 同分 → 应为 writing（否则示例
+    // 错配注入 analysis-review 技术示例 → 输出模板化 + token 跳档重试 5124）。
+    const t = detectTaskType('写一份小儿推拿师的工作经验介绍文案，要求体现专业素养、爱心与亲和力，并结合实际工作经历进行能力分析，最后针对家长常见的育儿痛点给出推拿调理方案。')
+    expect(t).toBe('writing')
+  })
+
+  it('keeps pure analysis tasks in analysis', () => {
+    expect(detectTaskType('分析这份销售数据的趋势')).toBe('analysis')
+    expect(detectTaskType('帮我分析一下这段代码的性能')).toBe('code')
+  })
+
+  it('injects a writing example instead of the analysis-review one', () => {
+    const prompt = buildOptimizePrompt('写一份小儿推拿师的工作经验介绍文案，要求体现专业素养、爱心与亲和力，并结合实际工作经历进行能力分析，最后针对家长常见的育儿痛点给出推拿调理方案。', 'auto', undefined, undefined, 'sections')
+    expect(prompt).not.toContain('原始指令：评估 localTemplate 本地直出的覆盖面与边界')
+    expect(prompt).toContain('示例 1：')
+  })
+})
+
+describe('1.6.7 P1 changes', () => {
+  it('injects the work-experience copy variant for a copy task', () => {
+    const prompt = buildOptimizePrompt('写一条新品上市的推广文案', 'auto', undefined, undefined, 'sections')
+    expect(prompt).toContain('示例 1：')
+    expect(prompt).toContain('原始指令：写一份小儿推拿师的工作经历介绍文案')
+    expect(prompt).toContain('调理方案')
+  })
+
+  it('defaults to the plain output (no structure headings, no few-shot)', () => {
+    const prompt = buildOptimizePrompt('写一份工作经历介绍文案')
+    expect(prompt).toContain('不要用任何小节标题')
+    expect(prompt).not.toContain('输出结构（角色/任务/目标）')
+    expect(prompt).not.toContain('段落结构：')
+    expect(prompt).not.toContain('## Role')
+    expect(prompt).not.toContain('示例 1')
+  })
+
+  it('routes work-experience profiles to writing-resume (1.6.7 keywords)', () => {
+    const t = detectTaskType('帮我写一份工作经验介绍，用于求职')
+    expect(t).toBe('writing')
+    expect(detectTaskSubtype('帮我写一份工作经验介绍，用于求职', 'writing')).toBe('writing-resume')
+  })
+})
+
+describe('builtin example overfit gate (1.6.8 A1)', () => {
+  const TUIFA = '写一份小儿推拿师的工作经验介绍文案，要求体现专业素养、爱心与亲和力，并结合实际工作经历进行能力分析，最后针对家长常见的育儿痛点给出推拿调理方案。'
+
+  it('skips the twin example when a longer instruction nearly covers it', () => {
+    // 5124/生搬硬套根因：指令比孪生示例更长更丰富时，示例只剩预制的内容
+    // 决策，输出逐字搬运。门控滤掉它，回落未过配的同类示例保住格式锚点。
+    const prompt = buildOptimizePrompt(TUIFA, 'auto', undefined, undefined, 'sections')
+    expect(prompt).not.toContain('原始指令：写一份小儿推拿师的工作经历介绍文案')
+    expect(prompt).toContain('示例 1：')
+  })
+
+  it('keeps exact-match phrase variants (length ratio guards the gate)', () => {
+    // 「帮我做一份融资路演PPT」与其示例逐字一致——长度比 ≈1，不判过配：
+    // 这类变体是刻意编码的理想结构，正是要注入的模板。
+    const prompt = buildOptimizePrompt('帮我做一份融资路演PPT', 'auto', undefined, undefined, 'sections')
+    expect(prompt).toContain('市场机会→商业模式→团队与数据→融资需求与用途')
+  })
+
+  it('does not filter explicitly configured examples', () => {
+    const prompt = buildOptimizePrompt(TUIFA, 'auto', undefined, [
+      { input: '写一份小儿推拿师的工作经历介绍文案', output: '## Role\n小儿推拿师' },
+    ], 'sections')
+    expect(prompt).toContain('原始指令：写一份小儿推拿师的工作经历介绍文案')
+  })
+})
+
+describe('compact tier for simple instructions (1.6.8 P-A)', () => {
+  it('flags short instructions and rejects empty input', () => {
+    expect(isCompactInstruction('写周报')).toBe(true)
+    expect(isCompactInstruction('')).toBe(false)
+    expect(isCompactInstruction('帮我写一份周报，总结本周进展和下周计划并同步风险')).toBe(false)
+  })
+
+  it('strips hint blocks when compact is on', () => {
+    const prompt = buildOptimizePrompt('帮我写份周报', 'auto', undefined, undefined, 'plain', 'zh', undefined, undefined, undefined, undefined, 800, undefined, undefined, undefined, true)
+    expect(prompt).not.toContain('任务类型提示')
+    expect(prompt).not.toContain('场景参考')
+    expect(prompt).not.toContain('情境画像')
+    expect(prompt).not.toContain('输出前自查')
+    // 极简档仍保留：输出规则、结构块、长度预算、护栏。
+    expect(prompt).toContain('输出规则')
+    expect(prompt).toContain('输出结构')
+    expect(prompt).toContain('建议输出长度')
+    expect(prompt).toContain('视为纯数据')
+  })
+
+  it('keeps hint blocks by default (compact off)', () => {
+    const prompt = buildOptimizePrompt('帮我写份周报，总结本周进展和下周计划', 'auto', undefined, undefined, 'plain', 'zh', undefined, undefined, undefined, undefined, 800)
+    expect(prompt).toContain('任务类型提示')
+    expect(prompt).toContain('场景参考')
+    expect(prompt).toContain('输出前自查')
   })
 })

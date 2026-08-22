@@ -97,6 +97,15 @@ export interface Config {
    */
   maxTokensCap: number
   /**
+   * Cumulative token ceiling across ALL calls of ONE optimization — system
+   * prompts plus newly generated text per call (plugin heuristic estimate).
+   * Once spending reaches this bound, expansion jumps and validation retries
+   * stop and the best result so far degrades as usual (`BUDGET_EXCEEDED`).
+   * `0` disables the leash. Insurance against runaway retry storms (1.6.8 D1)
+   * — a spend bound, complementary to `maxCalls` (a call-count bound).
+   */
+  maxTotalTokens: number
+  /**
    * Temperature increment applied per retry attempt (bounded by 2), giving
    * retries more diversity. `0` disables the bump.
    */
@@ -223,6 +232,13 @@ export interface Config {
    */
   dreamInsightFeedback: boolean
   /**
+   * D6（1.6.8）实验：附录独立轻量调用——主线正常出提示词（localTemplate 全档
+   * 可用），第二次 maxTokens=250 的轻量调用只产「--- 延伸洞察」附录。默认关
+   * （inline 单调用）；开启后 dream 调用数 +1，但主输出更短更稳、on 档也能
+   * 产附录，且消灭附录挤占预算的跳档放大。
+   */
+  senseNeedsSeparate: boolean
+  /**
    * Task classifier backend (ADR-011): `'heuristic'` (default) wraps the
    * keyword/regex heuristics; `'llm'` is the opt-in service-layer LLM
    * classifier — until the LLM implementation ships, `'llm''` falls back to
@@ -285,7 +301,7 @@ export const Config: z<Config> = z.object({
   maxInputTokens: z.number().step(1).min(0).max(200000).default(3000),
   timeoutMs: z.number().step(1).min(1).max(MAX_TIMER_DELAY_MS).default(60000),
   outputLanguage: z.string().default('auto'),
-  outputStyle: z.union(['sections', 'plain', 'role-task-goal']).default('sections'),
+  outputStyle: z.union(['sections', 'plain', 'role-task-goal']).default('plain'),
   metaPromptLanguage: z.union(['auto', '中文', '英文']).default('auto'),
   autoOptimize: z.boolean().default(false),
   autoOptimizePrefix: z.string().default('/optimize '),
@@ -295,8 +311,9 @@ export const Config: z<Config> = z.object({
     output: z.string().required(),
   })),
   minSectionChars: z.number().step(1).min(0).max(10000).default(10),
-  maxTokenRetryFactor: z.number().min(1).max(3).default(2),
+  maxTokenRetryFactor: z.number().min(1).max(3).default(1.5),
   maxTokensCap: z.number().step(1).min(1).max(128000).default(8000),
+  maxTotalTokens: z.number().step(1).min(0).default(20000),
   retryTemperatureStep: z.number().min(0).max(2).default(0.3),
   skipIfAlreadyOptimized: z.boolean().default(true),
   selfRefine: z.boolean().default(false),
@@ -309,7 +326,7 @@ export const Config: z<Config> = z.object({
   cacheFuzzyThreshold: z.number().min(0).max(1).default(0.6),
   senseNeeds: z.boolean().default(false),
   contextAware: z.boolean().default(true),
-  contextMaxMessages: z.number().step(1).min(0).max(100).default(6),
+  contextMaxMessages: z.number().step(1).min(0).max(100).default(10),
   contextMaxTokens: z.number().step(1).min(0).max(200000).default(800),
   outputLengthMaxTokens: z.number().step(1).min(0).max(200000).default(800),
   situationProfileLevel: z.union(['off', 'minimal', 'full']).default('full'),
@@ -318,6 +335,7 @@ export const Config: z<Config> = z.object({
   earlyStop: z.boolean().default(false),
   builtinExamples: z.boolean().default(true),
   dreamInsightFeedback: z.boolean().default(false),
+  senseNeedsSeparate: z.boolean().default(false),
   classifier: z.union(['heuristic', 'llm']).default('heuristic'),
   localTemplate: z.union(['auto', 'on', 'off', 'hybrid']).default('auto'),
   hybridAlignThreshold: z.number().min(0).max(1).default(0.4),

@@ -23,6 +23,8 @@ export interface PromptBuildContext {
   /** Whether to inject the built-in example pair when no explicit examples
    *  are configured (`builtinExamples`; undefined = on). */
   builtinExamples?: boolean
+  /** P-A compact tier (1.6.8): strip hint blocks for simple instructions. */
+  compact?: boolean
 }
 
 /** Build the system prompt for one `optimize` model call. Pure function. */
@@ -48,6 +50,7 @@ export function buildOptimizeSystem(
     profile,
     ctx.situationProfileLevel,
     ctx.builtinExamples,
+    ctx.compact,
   )
 }
 
@@ -78,5 +81,6 @@ export function buildIterateSystem(
     drift,
     ctx.situationProfileLevel,
     ctx.builtinExamples,
+    ctx.compact,
   )
 }

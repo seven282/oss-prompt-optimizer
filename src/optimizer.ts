@@ -10,7 +10,7 @@ import { Config, type Config as ConfigType } from './config.js'
 import { OptimizeError, OptimizeErrorCode, type OptimizeErrorCode as OptimizeErrorCodeType } from './errors.js'
 import { MaxTokensErrorWithPartial } from './llm.js'
 import { PROMPT_OPTIMIZER_EVENTS, type OptimizeMethod } from './events.js'
-import { detectLanguage, type MetaLanguage } from './meta.js'
+import { detectLanguage, isCompactInstruction, type MetaLanguage } from './meta.js'
 import {
   assertInput,
   diagnoseSections,
@@ -56,6 +56,12 @@ const EARLY_STOP_MIN_SECTION_CHARS = 40
 /** 早停加固：允许早停的输出总长下限（防"骨架长、正文短"误伤——1.4.5）。 */
 const EARLY_STOP_MIN_OUTPUT = 120
 
+/** P-A 简单指令档的输出预算上限（token）。 */
+const COMPACT_OUTPUT_TOKENS = 400
+
+/** D6（1.6.8）separate 档：附录独立调用的输出硬帽。 */
+const APPENDIX_ONLY_TOKENS = 250
+
 /** Defensive copy of a result before it enters or leaves the cache, so a
  *  caller's mutation can never corrupt stored entries (nested sections too). */
 function cloneOptimizeResult(result: OptimizeResult): OptimizeResult {
@@ -72,6 +78,9 @@ function cloneOptimizeResult(result: OptimizeResult): OptimizeResult {
  * prompt — deep goal, implicit constraints, quality criteria, likely
  * follow-ups — each labeled as inference, never mixed into the prompt body.
  */
+/** D2（1.6.8）：回填洞察存储截断上限——注册表原文回放进后续 system，无上限会逐轮膨胀。 */
+const DREAM_FEEDBACK_MAX_CHARS = 200
+
 function senseNeedsBlock(metaLanguage: MetaLanguage): string {
   return metaLanguage === 'en'
     ? `\n\nNeeds sensing (dream mode): after completing the optimized prompt, append a clearly marked appendix at the end:\n\n--- Extended insights (AI-inferred, optional, NOT facts) ---\n· Deep goal: infer the result the user really wants to achieve\n· Implicit constraints: infer unstated limits and prerequisites\n· Quality criteria: infer the expected quality of the result\n· Likely follow-ups: infer what the user may ask next\n\nRules: separate the appendix with \`---\` and place it after the prompt; label every inference as inference and never mix it into the prompt body above; if the instruction is already clear enough and there is nothing new to infer, omit the appendix.`
@@ -203,6 +212,8 @@ export interface OptimizeResult {
   sections?: { name: string; content: string }[]
   /** Estimated token count of the optimized prompt (successful results only). */
   outputTokens?: number
+  /** Estimated token count of the senseNeeds appendix when present (1.6.8 D5-b). */
+  appendixTokens?: number
   /** Whether the result came from the local zero-token template path (1.5.6). */
   local?: boolean
   /**
@@ -231,6 +242,8 @@ export interface OptimizeStats {
   callCount: number
   lastRunCalls: number
   lastInputTokens: number
+  /** Estimated appendix tokens of the last senseNeeds run (1.6.8 D5-b). */
+  lastAppendixTokens: number
 }
 
 /**
@@ -289,6 +302,7 @@ export class PromptOptimizerService extends Service {
     totalDurationMs: 0,
     maxDurationMs: 0,
     lastOutputTokens: 0,
+    lastAppendixTokens: 0,
     /** Per-call timing breakdown (A+B 测量): last single model call, totals. */
     lastCallMs: 0,
     totalCallMs: 0,
@@ -366,7 +380,7 @@ export class PromptOptimizerService extends Service {
   }
 
   /** The per-call prompt-build context (config fields + resolved language + optional context). */
-  private promptContext(metaLanguage: MetaLanguage, context?: string): PromptBuildContext {
+  private promptContext(metaLanguage: MetaLanguage, context?: string, compact = false): PromptBuildContext {
     return {
       outputStyle: this.config.outputStyle,
       extraInstructions: this.config.extraInstructions,
@@ -377,6 +391,7 @@ export class PromptOptimizerService extends Service {
       maxOutputTokens: this.config.outputLengthMaxTokens,
       situationProfileLevel: this.config.situationProfileLevel,
       builtinExamples: this.config.builtinExamples,
+      compact,
     }
   }
 
@@ -508,9 +523,13 @@ export class PromptOptimizerService extends Service {
   /**
    * Cache key for one request: FNV-1a over what is actually fed to the model
    * (provider + model + the no-diagnosis system prompt + truncated input +
-   * truncated context + optional scope). Sampling/budget knobs (temperature,
-   * maxTokens…) intentionally do NOT participate — an identical request gets
-   * the same validated result regardless of them.
+   * truncated context + optional scope + outputLanguage). Sampling/budget
+   * knobs (temperature, maxTokens…) intentionally do NOT participate — an
+   * identical request gets the same validated result regardless of them.
+   *
+   * Fix (#3): outputLanguage now participates in the cache key so that the
+   * same instruction with different output languages produces separate cache
+   * entries.
    */
   private cacheKeyFor(
     route: ResolvedRoute,
@@ -518,8 +537,9 @@ export class PromptOptimizerService extends Service {
     input: string,
     context: string | undefined,
     scope: string | undefined,
+    outputLanguage: string,
   ): string {
-    return fnv1a([route.provider, route.model, system, input, context ?? '', scope ?? ''].join('\u0000'))
+    return fnv1a([route.provider, route.model, system, input, context ?? '', scope ?? '', outputLanguage].join('\u0000'))
   }
 
   /**
@@ -551,6 +571,46 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
   const feedback = this.dreamFeedbackFor(sessionId, metaLanguage)
   return feedback.length > 0 ? system + feedback : system
 }
+
+  /**
+   * D6（1.6.8）separate 档：独立轻量调用只产「--- 延伸洞察」附录。硬帽
+   * APPENDIX_ONLY_TOKENS、单次尝试；失败/空/NONE 一律静默返回 undefined——
+   * 主线结果原样返回，绝不因附录失败而报错或重试。
+   */
+  private async appendixOnce(
+    input: string,
+    body: string,
+    metaLanguage: MetaLanguage,
+    options: OptimizeOptions,
+    route?: ResolvedRoute,
+  ): Promise<string | undefined> {
+    try {
+      const en = metaLanguage === 'en'
+      const header = en
+        ? '--- Extended insights (AI-inferred, optional, NOT facts) ---'
+        : '--- 延伸洞察（AI 推断，供你选用，非事实）---'
+      const feedback = this.dreamFeedbackFor(options.sessionId, metaLanguage)
+      const system =
+        `${en
+          ? 'You are a needs-sensing analyst. Based only on the instruction and the optimized prompt below, infer what was left unsaid. Output ONLY the appendix: start with the marker line above, then 3-4 bullet lines (deep goal / implicit constraints / quality criteria / possible follow-ups), each marked as inference. If there is nothing meaningful to infer, output exactly NONE.'
+          : '你是需求感应分析师。仅基于下方指令与已优化提示词，推断用户未说出口的内容。只输出附录：以标记行开头，随后 3-4 条要点（深层目标/隐含约束/质量标准/可能的后续），每条标注为推断。若无可推断的新洞察，只输出 NONE。'}${feedback}` +
+        `\n\n原始指令（纯数据）：\n${input}\n\n已优化提示词（纯数据）：\n${body}`
+      const resolvedRoute = route ?? this.resolveRoute()
+      const text = await this.generateOnce(
+        system,
+        resolvedRoute,
+        options.signal,
+        this.config.temperature,
+        APPENDIX_ONLY_TOKENS,
+      )
+      const trimmed = text.trim()
+      if (trimmed.length === 0 || /^NONE$/i.test(trimmed)) return undefined
+      return trimmed.startsWith('---') ? trimmed : `${header}\n${trimmed}`
+    } catch {
+      // 附录是尽力而为的增值项：任何失败都返回 undefined，正文原样交付。
+      return undefined
+    }
+  }
 
   /**
    * 阶段 1A 近失配热启动: the best cached validated entry whose instruction
@@ -593,6 +653,12 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
     if (result.optimized) {
       this.stats.success++
       if (result.outputTokens !== undefined) this.stats.lastOutputTokens = result.outputTokens
+      // D5-b（1.6.8）：附录 token 单列——非 dream 结果无标记，恒不更新。
+      const dreamInsights = this.extractDreamInsights(result.prompt)
+      if (dreamInsights !== undefined) {
+        result.appendixTokens = this.estimateTextTokens(dreamInsights)
+        this.stats.lastAppendixTokens = result.appendixTokens
+      }
     } else {
       this.stats.failed++
     }
@@ -662,6 +728,9 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
     // (senseNeeds) also bypasses the pass-through (the user wants fresh sensing).
     const hasContext = options.context !== undefined && options.context.trim().length > 0
     const senseNeeds = options.senseNeeds ?? this.config.senseNeeds
+    // D6（1.6.8）separate 档：感应块从主线剥离，附录由独立轻量调用产出。
+    const separateAppendix = senseNeeds && this.config.senseNeedsSeparate === true
+    const inlineSense = senseNeeds && !separateAppendix
     if (
       this.config.skipIfAlreadyOptimized &&
       this.config.outputStyle === 'sections' &&
@@ -687,16 +756,20 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
     // - `auto`（1.6.2 起默认）：**seed 优化**——本地参考模板 + LLM 感知目标，
     //   输出经目标对齐校验；省 token（~600-1300 vs 全量 ~1300-2300），非 0 token
     // 门控拒绝的指令仍回落下方完整 LLM 管线。
+    // D1（1.6.8）：senseNeeds 不再整体绕过本地路径——seed/on 渲染与造梦附录可
+    // 组合（单次调用同时产出精修正文＋附录）；仅 on/hybrid 的零调用直出在 dream
+    // 下回落精修档，保证附录有机会生成。
     const localMode = options.localTemplate ?? this.config.localTemplate
-    if (localMode !== 'off' && !senseNeeds) {
+    if (localMode !== 'off') {
       const gate = localTemplateGate(rawInput, localMode as LocalTemplateMode, options.context)
       if (gate.ok && gate.subtype !== undefined) {
         const metaLanguage = this.resolveMetaLanguage(rawInput)
         const seed = buildLocalTemplate(rawInput, gate.subtype, metaLanguage, options.context)
         this.stats.local++
-        const profile = buildSituationProfile(rawInput, options.context)
-        const align = goalAnchorsScore(profile)
-        if (localMode === 'on' || (localMode === 'hybrid' && align >= this.config.hybridAlignThreshold)) {
+        // Build profile only when needed (for refineLocal or hybrid check).
+        // Fix (#5): Defer profile construction to avoid unnecessary work when
+        // localMode === 'on' (returns directly) or hybrid aligns (returns directly).
+        if (localMode === 'on' && !senseNeeds) {
           // role-task-goal（1.6.5）：本地直出也按三要素形态输出（四段 seed 折叠）。
           const out = this.config.outputStyle === 'role-task-goal'
             ? toRoleTaskGoal(seed, metaLanguage === 'en')
@@ -711,8 +784,26 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
             outputTokens: this.estimateTextTokens(out),
           }
         }
+        // hybrid mode: build profile for alignment check.
+        const profile = buildSituationProfile(rawInput, options.context)
+        const align = goalAnchorsScore(profile)
+        if (localMode === 'hybrid' && align >= this.config.hybridAlignThreshold && !senseNeeds) {
+          const out = this.config.outputStyle === 'role-task-goal'
+            ? toRoleTaskGoal(seed, metaLanguage === 'en')
+            : seed
+          this.emitCompleted('optimize', rawInput, { prompt: out, optimized: true, retries: 0, local: true, outputTokens: this.estimateTextTokens(out) }, 0)
+          return {
+            prompt: out,
+            optimized: true,
+            retries: 0,
+            local: true,
+            sections: this.sectionsOf(out),
+            outputTokens: this.estimateTextTokens(out),
+          }
+        }
+        // auto mode or hybrid with low alignment: refine via LLM.
         const refinedStartedAt = Date.now()
-        const refined = await this.refineLocal(seed, rawInput, metaLanguage, options, profile)
+        const refined = await this.refineLocal(seed, rawInput, metaLanguage, options, profile, senseNeeds && !separateAppendix)
         this.emitCompleted('optimize', rawInput, refined, Date.now() - refinedStartedAt)
         return refined
       }
@@ -721,6 +812,8 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
     input = truncateByTokens(input, this.config.maxInputTokens, (text) => this.estimateTextTokens(text))
     const metaLanguage = this.resolveMetaLanguage(rawInput)
     const outputLanguage = options.outputLanguage ?? this.config.outputLanguage
+    // P-A 简单指令分档：极简系统提示词 + 输出预算降档（400 tok）。
+    const compactTier = isCompactInstruction(rawInput)
     const startedAt = Date.now()
     // 情境感知: the truncated input's profile (with conversation role cues),
     // merged with the session registry when a sessionId is given (P2).
@@ -740,10 +833,11 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
         // 缓存键必须覆盖"真正发给模型的内容"（C-1 修复）：dream 回填与 senseNeeds
         // 都参与键——否则同 session 第二次调用会命中不含洞察的陈旧缓存，
         // dreamInsightFeedback 回填失效。
-        this.withSenseNeeds(baseSystem, senseNeeds, metaLanguage) + this.dreamFeedbackFor(options.sessionId, metaLanguage),
+        this.withSenseNeeds(baseSystem, inlineSense, metaLanguage) + this.dreamFeedbackFor(options.sessionId, metaLanguage),
         input,
         options.context,
         options.cacheScope,
+        outputLanguage,
       )
       const hit = this.cache.get(cacheKey)
       if (hit !== undefined && !options.enrich) {
@@ -776,8 +870,8 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
       (outputLanguage, diagnosis) =>
         this.withDreamFeedback(
           this.withSenseNeeds(
-            buildOptimizeSystem(this.promptContext(metaLanguage, options.context), input, outputLanguage, diagnosis, profile),
-            senseNeeds,
+            buildOptimizeSystem(this.promptContext(metaLanguage, options.context, compactTier), input, outputLanguage, diagnosis, profile),
+            inlineSense,
             metaLanguage,
           ),
           options.sessionId,
@@ -788,7 +882,17 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
       metaLanguage,
       profile,
       preResolvedRoute,
+      compactTier,
     )
+    // D6 separate 档：主线成功后追加轻量附录调用（失败静默，正文原样返回）。
+    if (result.optimized && separateAppendix) {
+      const appendix = await this.appendixOnce(rawInput, result.prompt, metaLanguage, options, preResolvedRoute)
+      if (appendix !== undefined) {
+        result.prompt = `${result.prompt}\n\n${appendix}`
+        result.appendixTokens = this.estimateTextTokens(appendix)
+        this.stats.lastAppendixTokens = result.appendixTokens
+      }
+    }
     if (result.optimized && cacheKey !== undefined) {
       this.cache.set(cacheKey, { result: cloneOptimizeResult(result), input, context: options.context })
     }
@@ -797,7 +901,11 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
     if (result.optimized && options.sessionId !== undefined && this.config.dreamInsightFeedback) {
       const insights = this.extractDreamInsights(result.prompt)
       if (insights !== undefined) {
-        this.dreamInsightRegistry.set(options.sessionId, { insights, ts: Date.now() })
+        // D2（1.6.8）：存储即截断——回填按原文进后续 system，超长会逐轮膨胀。
+        const stored = insights.length > DREAM_FEEDBACK_MAX_CHARS
+          ? `${insights.slice(0, DREAM_FEEDBACK_MAX_CHARS)}…`
+          : insights
+        this.dreamInsightRegistry.set(options.sessionId, { insights: stored, ts: Date.now() })
         // 容量上限（C-5 修复）：与 goalRegistry 对齐，超限逐出最旧条目。
         if (this.dreamInsightRegistry.size > PromptOptimizerService.DREAM_REGISTRY_MAX) {
           const [oldestKey] = this.dreamInsightRegistry.keys() as unknown as [string]
@@ -834,6 +942,11 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
     const outputLanguage = options.outputLanguage ?? this.config.outputLanguage
     const startedAt = Date.now()
     const senseNeeds = options.senseNeeds ?? this.config.senseNeeds
+    // P-A：迭代指令同样分档。
+    const compactTier = isCompactInstruction(instruction)
+    // D6（1.6.8）separate 档：迭代路径同样支持附录独立调用。
+    const separateAppendix = senseNeeds && this.config.senseNeedsSeparate === true
+    const inlineSense = senseNeeds && !separateAppendix
     // 情境感知: the next instruction's profile (with conversation role cues,
     // merged with the session registry when a sessionId is given — P2) and
     // the goal drift vs the previous result; the drift line goes into the
@@ -852,10 +965,11 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
       cacheKey = this.cacheKeyFor(
         preResolvedRoute,
         // C-1 修复（同 optimize）：dream 回填纳入缓存键，防止命中无洞察的陈旧结果。
-        this.withSenseNeeds(baseSystem, senseNeeds, metaLanguage) + this.dreamFeedbackFor(options.sessionId, metaLanguage),
+        this.withSenseNeeds(baseSystem, inlineSense, metaLanguage) + this.dreamFeedbackFor(options.sessionId, metaLanguage),
         `${last}\u0000${next}`,
         options.context,
         options.cacheScope,
+        outputLanguage,
       )
       const hit = this.cache.get(cacheKey)
       if (hit !== undefined && !options.enrich) {
@@ -869,8 +983,8 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
       (outputLanguage, diagnosis) =>
         this.withDreamFeedback(
           this.withSenseNeeds(
-            buildIterateSystem(this.promptContext(metaLanguage, options.context), last, next, outputLanguage, diagnosis, nextProfile, drift),
-            senseNeeds,
+            buildIterateSystem(this.promptContext(metaLanguage, options.context, compactTier), last, next, outputLanguage, diagnosis, nextProfile, drift),
+            inlineSense,
             metaLanguage,
           ),
           options.sessionId,
@@ -881,7 +995,17 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
       metaLanguage,
       nextProfile,
       preResolvedRoute,
+      compactTier,
     )
+    // D6 separate 档：迭代成功后追加轻量附录调用（失败静默，正文原样返回）。
+    if (result.optimized && separateAppendix) {
+      const appendix = await this.appendixOnce(next, result.prompt, metaLanguage, options, preResolvedRoute)
+      if (appendix !== undefined) {
+        result.prompt = `${result.prompt}\n\n${appendix}`
+        result.appendixTokens = this.estimateTextTokens(appendix)
+        this.stats.lastAppendixTokens = result.appendixTokens
+      }
+    }
     if (result.optimized && cacheKey !== undefined) {
       this.cache.set(cacheKey, { result: cloneOptimizeResult(result), input: `${last}\u0000${next}`, context: options.context })
     }
@@ -902,6 +1026,7 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
     metaLanguage: MetaLanguage,
     profile: SituationProfile | undefined,
     route?: ResolvedRoute,
+    compactTier = false,
   ): Promise<OptimizeResult> {
     const resolvedRoute = route ?? this.resolveRoute()
     this.runCallCount = 0
@@ -917,6 +1042,11 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
       ? Math.min(configuredMaxTokens, Math.max(256, Math.ceil(soft * (fast ? 1.2 : 1.5))))
       : configuredMaxTokens
     let effectiveMaxTokens = firstBudget
+    // P-A 简单指令降档：极简系统提示词配套更小的输出预算。
+    // 显式传入的 options.maxTokens 是调用方的明确选择，不降档。
+    if (compactTier && options.maxTokens === undefined) {
+      effectiveMaxTokens = Math.min(effectiveMaxTokens, COMPACT_OUTPUT_TOKENS)
+    }
     const outputLanguage = options.outputLanguage ?? this.config.outputLanguage
     let lastError: Error | undefined
     let lastDiagnosis: string | undefined
@@ -929,6 +1059,8 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
     // call plus every expansion and validation retry counts; exceeding it
     // degrades to the fallback with TOO_MANY_CALLS (bounds worst-case cost).
     let callCount = 0
+    // D1（1.6.8）累计 token 预算：system＋每次新生成文本；续传前缀不重复计费。
+    let spentTokens = 0
     // The validation retry budget (`maxRetries`) and the max-tokens
     // auto-expansion are independent: a truncated output grows
     // `effectiveMaxTokens` by the factor up to `maxTokensCap` WITHOUT
@@ -943,11 +1075,22 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
         )
         break
       }
+      // D1 累计预算门：跳档扩容与校验重试共用这道闸——花费到达上限后不再
+      // 发起新调用，走既有降级路径返回当前最优（错误码 BUDGET_EXCEEDED）。
+      if (this.config.maxTotalTokens > 0 && spentTokens >= this.config.maxTotalTokens) {
+        lastError = new OptimizeError(
+          OptimizeErrorCode.BUDGET_EXCEEDED,
+          `prompt-optimizer: exceeded the cumulative token budget (${spentTokens}/${this.config.maxTotalTokens})`,
+        )
+        break
+      }
       const temperature = Math.min(MAX_TEMPERATURE, baseTemperature + this.config.retryTemperatureStep * attempt)
+      const systemUsed = buildSystem(outputLanguage, attempt > 0 ? lastDiagnosis : undefined)
+      const resumeLenBefore = resumed.length
       try {
         callCount++
         const prompt = await this.generateOnce(
-          buildSystem(outputLanguage, attempt > 0 ? lastDiagnosis : undefined),
+          systemUsed,
           resolvedRoute,
           options.signal,
           temperature,
@@ -955,6 +1098,8 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
           resumed.length > 0 ? resumed : undefined,
         )
         const full = resumed.length > 0 ? resumed + prompt : prompt
+        // D1 计费：system ＋ 本次新生成部分（续传前缀不计第二次）。
+        spentTokens += this.estimateTextTokens(systemUsed) + this.estimateTextTokens(full.slice(resumeLenBefore))
         const valid = validateOutput(full, this.config.outputStyle, this.config.minSectionChars)
         if (valid) {
           // 纯净性（1.6.3 P0）：结构通过，但输出可能夹带元内容/方法论附录
@@ -1040,6 +1185,9 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
         }
       } catch (error) {
         if (error instanceof MaxTokensError && this.config.maxTokenRetryFactor > 1) {
+          // D1：触顶调用同样计费——system＋已生成的截断片段（partial 将成为
+          // 下一次的续传前缀，成功路径不再重复计费）。
+          spentTokens += this.estimateTextTokens(systemUsed) + this.estimateTextTokens(error.partial ?? '')
           // Jump expansion (跳档) + resume (断点续传): grow the effective
           // maxTokens by the factor up to maxTokensCap, keeping the partial
           // text so the next call continues instead of regenerating.
@@ -1137,13 +1285,21 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
     metaLanguage: MetaLanguage,
     options: OptimizeOptions,
     profile: SituationProfile,
+    senseNeeds = false,
   ): Promise<OptimizeResult> {
     const en = metaLanguage === 'en'
     const route = this.resolveRoute()
     const signal = options.signal
     const temperature = this.config.temperature
-    const attempt = (diagnosis?: string): Promise<string> =>
-      this.generateOnce(buildRefinePrompt(localPrompt, input, en, profile, diagnosis, this.config.outputStyle), route, signal, temperature, this.config.maxTokens)
+    // D1（1.6.8）：dream 下单次 seed 精修调用同时产出附录（withSenseNeeds 追加感应块）。
+    const attempt = (diagnosis?: string): Promise<string> => {
+      const system = this.withSenseNeeds(
+        buildRefinePrompt(localPrompt, input, en, profile, diagnosis, this.config.outputStyle),
+        senseNeeds,
+        metaLanguage,
+      )
+      return this.generateOnce(system, route, signal, temperature, this.config.maxTokens)
+    }
     let text: string
     try {
       text = await attempt()

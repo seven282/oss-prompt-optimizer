@@ -84,34 +84,75 @@ export function detectTaskType(input: string): TaskType {
   // new max wins ties (strictly-greater comparison keeps the earlier kind).
   const { item, score } = bestScoreByKeywords(kinds.map((kind) => ({ kind, keywords: TASK_KEYWORDS[kind] })), lower)
   if (item === undefined) return 'other'
-  // 1.5.5 歧义消解：写作动词（写/撰写/起草/编写/拟…）是写作类强信号——
-  // 当它与 ops 类词（如「发布/上线」，1.5.2 新增）打平时，应判 writing
-  // （「帮我写一份新产品发布公告」→ writing-copy，而非 ops-deploy）。
-  // 仅在平局或 ops 未领先时应用，避免破坏「发布到生产环境」等纯运维指令
-  // 的 ops 判定；code 类技术词优先不受影响（迭代顺序在前，平局仍 code 赢）。
-  if (item.kind === 'ops' && score === 1 && WRITING_VERB_RE.test(lower)) {
-    return 'writing'
-  }
-  return item.kind
+  // Unified tie-break: writing verbs (写/撰写/起草/编写/拟…) are strong
+  // writing-category signals — when the winning category ties with writing,
+  // writing wins. This covers both ops-tie and analysis-tie cases with a
+  // single function (unified from 1.5.5 + 1.6.7).
+  return resolveWritingTieBreak(item.kind, score, lower)
 }
 
-/** Explicit writing verbs — strong writing-category signal (1.5.5 tie-break). */
+/**
+ * Explicit writing verbs — strong writing-category signal (1.5.5 tie-break).
+ * When a writing verb appears in the instruction and the winning category
+ * ties with writing, writing wins. This prevents "帮我写一份新产品发布公告"
+ * from being classified as ops-deploy (发布) instead of writing-copy.
+ */
 const WRITING_VERB_RE = /写|撰写|起草|编写|拟写|草拟|润色|翻译/i
 
-/** Per-category role/format hints injected as the `{{任务类型}}` block (zh). */
-const TASKTYPE_ZH: Record<Exclude<TaskType, 'other'>, string> = {
-  code: '任务类型提示：这是编程/开发类任务。角色请定在资深技术专家级别（资深工程师、架构师），输出中写清语言、代码可运行性与必要注释。\n角色写法建议：能力导向更实用——用「精通/熟悉/擅长」描述技术栈与专长，比「你是工程师」可执行得多；能力一句为限、紧扣任务，别罗列完整技术栈。\n区块侧重：重点打磨 Task 与 Format（可运行性、交付物），Role 一句带过即可。',
-  writing: '任务类型提示：这是写作/文案类任务。角色请定在对应领域的资深撰稿人或编辑，输出中明确文体、篇幅、语气与目标读者。\n角色写法建议：身份＋文体——先给出身份（如「资深撰稿人」），再把文体、篇幅、语气交代清楚。\n区块侧重：用心写 Role 与 Context（身份、受众、语气），Format 按常规保留。',
-  analysis: '任务类型提示：这是分析/研究类任务。角色请定在分析师或研究员，输出中明确结论先行、给出依据与数据来源、说明分析维度。\n角色写法建议：身份＋方法——给出身份（如「分析师/研究员」），并说清分析方法（如「结论先行、数据支撑」）。\n区块侧重：Task 与 Context 是重点（方法、数据来源），Format 记得结论先行。',
-  ops: '任务类型提示：这是执行/操作类任务。角色请定在执行者或运维角色，输出中明确步骤顺序、前置条件与完成检查。\n角色写法建议：行为约束＋步骤——把执行边界和步骤顺序说清（如「先确认环境、按清单操作、完成后自检」）。\n区块侧重：Task 与 Format 是重点（步骤、命令、回滚），Role 保持简洁。',
+/**
+ * Resolve category tie-breaks in favor of writing when a writing verb is present.
+ *
+ * Logic (unified from 1.5.5 + 1.6.7):
+ * - Compute writing's score independently.
+ * - If the winning category ties with writing AND a writing verb appears,
+ *   return 'writing' (writing verbs are strong intent signals).
+ * - Otherwise return the original winner.
+ *
+ * Important: code category always wins ties (iteration order priority),
+ * regardless of writing verbs. This preserves "写一个部署脚本" → code.
+ *
+ * This prevents misclassification like:
+ *   "帮我写一份新产品发布公告" → ops (发布) instead of writing
+ *   "写…文案…进行能力分析"    → analysis (分析) instead of writing
+ */
+function resolveWritingTieBreak(
+  winner: TaskType,
+  winnerScore: number,
+  lower: string,
+): TaskType {
+  // Code always wins ties (iteration order priority), even with writing verbs.
+  // "写一个部署脚本" → code, not writing.
+  if (winner === 'other' || winner === 'writing' || winner === 'code') return winner
+  // Only apply tie-break when a writing verb is present.
+  if (!WRITING_VERB_RE.test(lower)) return winner
+  // Compute writing's score independently for comparison.
+  const writingScore = TASK_KEYWORDS.writing.reduce(
+    (n, kw) => n + (lower.includes(kw.toLowerCase()) ? 1 : 0),
+    0,
+  )
+  // Tie-break: writing wins when scores are equal AND both > 0.
+  if (winnerScore === writingScore && winnerScore > 0) return 'writing'
+  return winner
 }
 
-/** Per-category role/format hints injected as the `{{任务类型}}` block (en). */
+/** Per-category role/format hints injected as the `{{任务类型}}` block (zh).
+ *  B1（1.6.8）：三行压一行——「角色写法建议」与结构块的角色公式、自查块的
+ *  角色检查语义重复，删除；保留类型声明与一句区块侧重。注入的规定性语句
+ *  越少，模型逐句填空的模板腔越轻。 */
+const TASKTYPE_ZH: Record<Exclude<TaskType, 'other'>, string> = {
+  code: '任务类型提示：这是编程/开发类任务。区块侧重：Task 与 Format 是重点（可运行性、交付物），Role 一句带过。',
+  writing: '任务类型提示：这是写作/文案类任务。区块侧重：用心写 Role 与 Context（身份、受众、语气），Format 按常规保留。',
+  analysis: '任务类型提示：这是分析/研究类任务，结论先行、给出依据与数据来源；区块侧重：Task 与 Context 是重点，Format 记得结论先行。',
+  ops: '任务类型提示：这是执行/操作类任务。区块侧重：Task 与 Format 是重点（步骤、命令、回滚），Role 保持简洁。',
+}
+
+/** Per-category role/format hints injected as the `{{任务类型}}` block (en).
+ *  Mirrors the zh compression (see TASKTYPE_ZH). */
 const TASKTYPE_EN: Record<Exclude<TaskType, 'other'>, string> = {
-  code: 'Task-type hint: this is a coding/development task. Set the role at a senior technical level (senior engineer, architect) and make the output explicit about the language, runnability of the code, and any required comments.\nRole-writing tip: capability-oriented works better — describe the stack and expertise with "proficient in / familiar with…" rather than a bare "you are an engineer"; keep the capability statement to one sentence, tied to the task, and skip the full technology-stack list.\nSection emphasis: polish the Task and Format sections (runnability, deliverable); one concise sentence in the Role section is enough.',
-  writing: 'Task-type hint: this is a writing task. Set the role at a senior writer or editor for the domain and make the output explicit about the genre, length, tone, and target reader.\nRole-writing tip: identity + genre — name the persona (e.g. "senior copywriter") first, then pin down the genre, length, and tone.\nSection emphasis: spend the care on Role and Context (persona, audience, tone); keep Format as usual.',
-  analysis: 'Task-type hint: this is an analysis/research task. Set the role at an analyst or researcher and make the output explicit about leading with the conclusion, citing evidence and data sources, and listing the analysis dimensions.\nRole-writing tip: identity + method — name the persona (e.g. "analyst / researcher") and the approach (e.g. "lead with the conclusion, back it with data").\nSection emphasis: Task and Context matter most (method, data source); make Format lead with the conclusion.',
-  ops: 'Task-type hint: this is an execution/operations task. Set the role at an executor or ops persona and make the output explicit about step order, prerequisites, and completion checks.\nRole-writing tip: behavior + steps — spell out the execution boundaries and the step order (e.g. "verify the environment first, follow the checklist, self-check when done").\nSection emphasis: Task and Format matter most (steps, commands, rollback); keep Role concise.',
+  code: 'Task-type hint: this is a coding/development task. Section emphasis: Task and Format matter most (runnability, deliverables), keep Role brief.',
+  writing: 'Task-type hint: this is a writing task. Section emphasis: spend the care on Role and Context (persona, audience, tone), keep Format usual.',
+  analysis: 'Task-type hint: this is an analysis/research task; lead with conclusions backed by evidence and data sources. Section emphasis: Task and Context matter most, let Format lead with the conclusion.',
+  ops: 'Task-type hint: this is an execution/operations task. Section emphasis: Task and Format matter most (steps, commands, rollback), keep Role concise.',
 }
 
 /**
@@ -276,74 +317,61 @@ export function matchScene(query: string): TaskSubtype | undefined {
 /** Section-style structure paragraph (the default output shape). */
 const STRUCTURE_SECTIONS = `段落结构：
 - 用四个段落组织结果，标题固定为英文：## Role、## Task、## Context、## Format。
-- 全文保持精炼：删掉重复表述、空话与无意义的假设，一个要点一句话说完。
-- 正文按句断行：每句或每个要点独占一行，段落间空一行；不要留下超长单行。
-- ## Role：设定与任务强相关的具体角色（「身份＋能力＋行为」三要素；不必以"你是"开头；能力或行为约束往往更可执行）。指令已明确执行主体就沿用，否则按任务类型与领域推断（代码→资深工程师、文案→资深撰稿人），体现所需专业度；能力陈述简短、不重复 Task；避免空泛角色。
-- ## Task：用明确动词描述任务，必要时拆成可执行步骤；目标要具体、可衡量；说清完成标准。
-- ## Context：补充背景、约束、目标受众与质量标准；不虚构事实，不重复指令已含信息；仅当信息确实缺失时才声明假设；没有额外背景或约束时写「无额外背景，按通用标准执行」，不必硬凑。
-- ## Format：规定输出结构、格式、长度与风格（四项齐全，未明确的给合理默认）；保留指令中的格式与长度要求；输出分类与 Task 维度一一对应、顺序一致。`
+- 全文精炼：一个要点一句话；正文按句断行，段落间空一行。
+- 按任务复杂度组织：简单任务不拆步骤、不硬凑全部要素；复杂任务才分层展开。`
 
 /** Plain-style structure paragraph (no headings, continuous prose). */
 const STRUCTURE_PLAIN = `输出结构：
-- 输出是一段完整、连贯、可直接交给 AI 执行的提示词正文。
-- 正文依次覆盖：角色定位（与任务强相关、避免空泛；「身份＋能力＋行为」三要素，不必以"你是"开头）、任务与步骤（含完成标准）、背景与约束（不虚构事实，仅信息缺失时声明假设；无额外信息时一句带过）、输出格式与长度（未明确处给合理默认）。
-- 正文要精炼——删重复表述、空话与无意义假设，一个要点一句话说完；输出分类与任务维度一一对应、顺序一致。
+- 输出是一段完整、连贯、可直接交给 AI 执行的提示词正文，依次覆盖角色定位、任务与完成标准、约束、输出格式与长度，按需取舍。
 - 正文按句断行——每句或每个要点一行，段落间空一行；避免超长单行。
-- 不要用任何小节标题（如 ##、###）或「角色：」「任务：」等字段标签——需要分点就用普通段落或列表，绝不输出标题行。`
+- 不要用任何小节标题（如 ##、###）或「角色：」「任务：」等字段标签——需要分点就用普通段落或列表，绝不输出标题行。
+- 按任务复杂度组织：简单任务不拆步骤、不硬凑全部要素；复杂任务才分层展开。`
 
-/** Section-mode pre-output self-check. */
-const SELFCHECK_SECTIONS = `- 输出前自查：四段标题是否齐全、每段是否有实质内容；角色是否强相关、不空泛、带能力或行为描述；Context 是否无虚构；Format 是否覆盖结构、格式、长度、风格；有没有重复表述、空话与多余假设（长度能短则短）；正文是否按句断行、无超长单行。以上每一条都要过一遍再交。`
+/** Section-mode pre-output self-check.
+ *  P-E（1.6.8）：六问压两问——「长度是否足以直接执行」这类问句会催写满；
+ *  改为正向长度观「在锚点内说清即止」。细则性检查（角色公式/虚构/断行）由
+ *  结构块与失败诊断路径承担，自查只保留形态与成本两条。 */
+const SELFCHECK_SECTIONS = `- 输出前自查：四段标题是否齐全且各有实质内容，有无虚构、空话与重复？在长度锚点内说清即止——不凑满字数，也不缺执行要素。`
 
 /** Plain-mode pre-output self-check. */
-const SELFCHECK_PLAIN = `- 输出前自查：正文是否完整覆盖上述四个方面（完成标准、假设、格式默认都包含）；长度是否足以直接执行；有没有出现小节标题或字段标签；角色是否带能力或行为描述；有没有重复表述、空话与多余假设（能短则短）；是否按句断行、无超长单行。都确认过再输出。`
+const SELFCHECK_PLAIN = `- 输出前自查：角色定位、任务与完成标准、约束、输出格式四要素是否都已说清，且没有小节标题、空话与重复？在长度锚点内说清即止——不凑满字数，也不缺执行要素。`
 
 /** Role/Task/Goal structure paragraph (1.6.5, parseable three-element form). */
 const STRUCTURE_RTG = `输出结构（角色/任务/目标）：
-- 用三行标签组织结果，标签为中文：角色：、任务：、目标：。
-- 角色：一句话定位执行主体（身份＋能力＋行为，与任务强相关、避免空泛；不必以"你是"开头）。
-- 任务：用明确动词描述要做什么，必要时拆成可执行步骤，说清完成标准。
-- 目标：一行合并背景约束与产出规格——补充受众、约束、质量标准，并规定输出格式、长度与风格；不虚构事实，不重复指令已含信息；没有额外背景时一句带过，不必硬凑。
-- 全文保持精炼：删掉重复表述、空话与无意义的假设，一个要点一句话说完。
-- 正文按句断行：每句或每个要点独占一行，段落间空一行；不要留下超长单行。`
+- 用三行标签组织结果，标签为中文：角色：、任务：、目标：。角色一句定位执行主体；任务给动词与完成标准；目标合并受众约束与产出规格。
+- 全文精炼：一个要点一句话；正文按句断行，段落间空一行。
+- 按任务复杂度组织：简单任务不拆步骤、不硬凑全部要素；复杂任务才分层展开。`
 
-/** Role/Task/Goal pre-output self-check (1.6.5). */
-const SELFCHECK_RTG = `- 输出前自查：角色、任务、目标三行标签是否齐全、每节是否有实质内容；角色是否强相关、不空泛；任务是否可执行、有完成标准；目标是否合并了背景约束与产出规格、无虚构；有没有重复表述、空话与多余假设（长度能短则短）；是否按句断行、无超长单行。以上每一条都要过一遍再交。`
+/** Role/Task/Goal pre-output self-check (see SELFCHECK_SECTIONS for P-E rationale). */
+const SELFCHECK_RTG = `- 输出前自查：角色：/任务：/目标：三行标签是否齐全且各有实质内容，有无虚构、空话与重复？在长度锚点内说清即止——不凑满字数，也不缺执行要素。`
 
 /** English section-style structure paragraph (the default output shape). */
 const STRUCTURE_SECTIONS_EN = `Section structure:
 - Organize the result into four sections, with headings fixed in English: ## Role, ## Task, ## Context, ## Format.
-- Keep the whole thing concise: cut repeated statements, filler, and meaningless assumptions; say each point in one sentence.
-- Break lines by sentence: each sentence or bullet on its own line, with a blank line between paragraphs; don't leave overlong single lines.
-- ## Role: set a specific role strongly tied to the task, using the "identity + capability + behavior" formula — no need to start with "you are", and a capability or behavior clause is equally valid and often more actionable. Reuse an explicit executor from the instruction when present; otherwise infer one from the task type and domain (e.g. senior engineer for coding, senior copywriter for writing), reflecting the required expertise; keep capability statements brief and free of requirements already covered in ## Task; avoid generic roles like "AI assistant".
-- ## Task: describe the task with clear verbs, breaking it into executable steps when necessary; the goal must be specific and measurable; state the completion criteria.
-- ## Context: add background, constraints, target audience, and quality standards; never invent facts or repeat what the instruction already states; state assumptions only when information is genuinely missing; when there is no extra background or constraints, write "no extra context — apply general standards" instead of padding.
-- ## Format: specify the output structure, format, length, and style (all four, with reasonable defaults where unspecified); keep any format/length requirements from the instruction; the output categories must mirror the dimensions required in ## Task, in the same order.`
+- Keep it terse: one point per sentence; break lines by sentence with a blank line between paragraphs.
+- Scale with complexity: skip step breakdowns and unused elements for simple tasks; expand in layers only for complex ones.`
 
 /** English plain-style structure paragraph (no headings, continuous prose). */
 const STRUCTURE_PLAIN_EN = `Output structure:
-- The output is a complete, coherent prompt body ready to hand directly to an AI for execution.
-- The body covers, in order: the role (strongly tied to the task, not generic; prefer the "identity + capability + behavior" formula — "you are" is optional), the task and its steps (including completion criteria), necessary background and constraints (no invented facts; state assumptions only when information is missing; skip padding when nothing extra applies), and the output format and length (with reasonable defaults where unspecified).
-- Keep the body concise — cut repeated statements, filler, and meaningless assumptions; say each point in one sentence; the output categories must mirror the dimensions required by the task, in the same order.
+- The output is one complete, coherent prompt body covering — as needed — the role, the task with completion criteria, constraints, and output format and length.
 - Break lines by sentence — each sentence or bullet on its own line, with a blank line between paragraphs; avoid overlong single lines.
-- Don't use any subsection headings (such as ## or ###) or field labels like "Role:" or "Task:" — even when breaking the content into points, use plain paragraphs or lists, never heading lines.`
+- Don't use any subsection headings (such as ## or ###) or field labels like "Role:" or "Task:" — even when breaking the content into points, use plain paragraphs or lists, never heading lines.
+- Scale with complexity: skip step breakdowns and unused elements for simple tasks; expand in layers only for complex ones.`
 
 /** English section-mode pre-output self-check. */
-const SELFCHECK_SECTIONS_EN = `- Self-check before output: do all four section headings exist with substantive content? Is the role tightly tied to the task, not generic, and backed by a capability or behavior clause? Does the context avoid invented facts? Does the format cover structure, format, length, and style? Are there repeated statements, filler, or meaningless assumptions (keep it as short as the requirements allow)? Are lines broken by sentence without overlong single lines? Run through each one before you finish.`
+const SELFCHECK_SECTIONS_EN = `- Self-check before output: are all four headings present with substantive content, free of invented facts and filler? Stay within the length anchor — never pad to fill it, never drop an execution essential.`
 
 /** English plain-mode pre-output self-check. */
-const SELFCHECK_PLAIN_EN = `- Self-check before output: does the body cover all four aspects above (completion criteria, assumptions, and format defaults included)? Is it long enough to be executed directly? Does it contain any section headings or field labels? Does the role include a capability or behavior clause? Are there repeated statements, filler, or meaningless assumptions (keep it as short as the requirements allow)? Are lines broken by sentence without overlong single lines? Confirm each one before output.`
+const SELFCHECK_PLAIN_EN = `- Self-check before output: are the role, task with completion criteria, constraints, and output format all clearly stated, free of headings, filler, and repetition? Stay within the length anchor — never pad to fill it, never drop an execution essential.`
 
 /** Role/Task/Goal structure paragraph (1.6.5, parseable three-element form). */
 const STRUCTURE_RTG_EN = `Output structure (Role / Task / Goal):
-- Organize the result into three labeled lines, with labels fixed in English: Role:, Task:, Goal:.
-- Role: pin the executor in one sentence (identity + capability + behavior; tightly tied to the task, not generic; no need to start with "you are").
-- Task: describe what to do with clear verbs, breaking it into executable steps when necessary; state the completion criteria.
-- Goal: merge background, constraints and the output spec into one line — audience, constraints, quality standards, plus the output format, length and style; never invent facts or repeat the instruction; when nothing extra applies, keep it to one short line instead of padding.
-- Keep the whole thing concise: cut repeated statements, filler, and meaningless assumptions; say each point in one sentence.
-- Break lines by sentence: each sentence or bullet on its own line, with a blank line between paragraphs; don't leave overlong single lines.`
+- Organize the result into three labeled lines, with labels fixed in English: Role:, Task:, Goal:. Role pins the executor; Task gives verbs and completion criteria; Goal merges audience, constraints, and the output spec.
+- Keep it terse: one point per sentence; break lines by sentence with a blank line between paragraphs.
+- Scale with complexity: skip step breakdowns and unused elements for simple tasks; expand in layers only for complex ones.`
 
 /** Role/Task/Goal pre-output self-check (1.6.5). */
-const SELFCHECK_RTG_EN = `- Self-check before output: do the Role:, Task:, Goal: labels all exist with substantive content? Is the role tightly tied to the task, not generic? Is the task executable with completion criteria? Does the goal merge background constraints and the output spec without inventing facts? Are there repeated statements, filler, or meaningless assumptions (keep it as short as the requirements allow)? Are lines broken by sentence without overlong single lines? Run through each one before you finish.`
+const SELFCHECK_RTG_EN = `- Self-check before output: are the Role:/Task:/Goal: labels present with substantive content, free of invented facts and filler? Stay within the length anchor — never pad to fill it, never drop an execution essential.`
 
 /**
  * Placeholder-to-block-key mapping for efficient template rendering.
@@ -426,20 +454,20 @@ const BUILTIN_SUBTYPE_EXAMPLES: Record<MetaLanguage, Partial<Record<TaskSubtype,
     'code-bugfix': [
       {
         input: '定位并修复 @src/cache.ts 的报错',
-        output: '## Role\n资深 TypeScript 工程师，精通类型检查与缓存模块设计，先保证可运行再优化。\n\n## Task\n对 @src/cache.ts 做完整错误诊断与最小修复：先静态检查与代码走读定位全部报错点，逐条列出错误类型与触发条件；再做最小修复，保持导出接口/函数签名/缓存语义（LRU+TTL、键值存储）完全不变，每处改动附注释说明依据；最后运行 tsc --noEmit 与相关单测，确认报错消除且无新增警告或行为变更。\n\n## Context\n@src/cache.ts 是纯函数缓存层（fnv1a 哈希 + bigramJaccard + LRU/TTL，无 harness 依赖）。未提供具体报错信息与环境——无法精确定位时采取最保守修复，并说明推断依据与可复现步骤。\n\n## Format\n依次输出三部分：①根因分析（短条目）②改动点（文件+行号+修改前后对比）③测试结果；涉及代码提供可直接运行的完整 TypeScript 片段。',
+        output: '## Role\n资深 TypeScript 工程师，精通类型检查与缓存模块设计，先保证可运行再优化。\n\n## Task\n对 @src/cache.ts 做完整错误诊断与最小修复：静态检查定位全部报错点并逐条列出类型与触发条件→最小修复（导出接口、函数签名、缓存语义不变，改动附依据）→跑 tsc --noEmit 与相关单测验证。\n\n## Context\n未提供具体报错与环境——无法精确定位时取最保守修复，说明推断依据。\n\n## Format\n①根因分析（短条目）②改动点（修改前后对比）③测试结果；代码可直接运行。',
       },
     ],
     'analysis-review': [
       {
         input: '评估 localTemplate 本地直出的覆盖面与边界',
-        output: '## Role\n资深提示词插件架构师，熟悉 localTemplate 本地直出机制与 token 成本模型。\n\n## Task\n评估 1.5.6 本地直出覆盖面与边界，输出系统化结论：先梳理门控规则（子类命中 + 可抽取信号）；再对照 21 个可直出子类与 4 个永不直出（创作/演讲/研究/预测）的边界；最后评估「本地直出 + LLM 精修」混合两档的收益。\n\n## Context\n1.5.6 已实现本地直出：零 token 零延迟；本地路径不读上下文；/optimize-stats 的 LOCAL:<n> 可观测。实际直出 token 为 0，非 ≤1000。\n\n## Format\n结构化清单：①直出判定标准（确定性/无依赖/可规则化 ↔ 现有门控）②可直出 vs 必须 LLM 的边界（附实际 token）③上下文感知关闭的适用条件与风险④按优先级列出优化项（模板缺口→门控阈值→评估）。重点突出可直出与不可直出的边界。',
+        output: '## Role\n资深提示词插件架构师，熟悉 localTemplate 本地直出机制与 token 成本模型。\n\n## Task\n评估本地直出的覆盖面与边界：梳理门控规则（子类命中＋可抽取信号）→划清可直出与必须走 LLM 的边界→评估「本地直出＋LLM 精修」混合档收益。\n\n## Context\n直出为零 token 零延迟；本地路径不读上下文。\n\n## Format\n结构化清单：①判定标准对照 ②可直出 vs 必须 LLM 边界 ③关闭上下文感知的条件与风险 ④按优先级列优化项。',
       },
       {
         // 1.6.4：模板四段诊断（Role/Task/Context/Format 逐段评估重构）。
         // 用词规避 1.6.3 hasMetaContent 模式（「优化标准」「核心约束逻辑」
         // 「定"谁来说"」等），防止模型模仿输出元内容附录。
         input: '诊断并重构一个模板的 Role、Task、Context、Format 四段，输出优化方案文档',
-        output: '## Role\n资深提示词工程专家，熟悉四段（Role/Task/Context/Format）设计约束与可检验标准，先诊断再重构。\n\n## Task\n对给定模板做逐段诊断与重构：先分别指出 ## Role / ## Task / ## Context / ## Format 每段的具体缺陷（模糊表达、约束缺失、逻辑混乱、可检验性不足）并说明对执行效果的影响；再以四段定位框架（Role 决定发言者身份、Task 决定任务内容、Context 决定信息基础、Format 决定呈现方式）为每段建立判定标准；随后给出每段的优化方案（改进后目标表述、改写示例、需补充的约束）；最后输出完整文档。\n\n## Context\n目标模板需先提供或引用；以四段设计哲学为基准（Role 身份能力行为、Task 动词步骤产出物、Context 前置信息场景约束、Format 结构格式粒度）；避免空泛建议，每个优化点对应可执行的检查清单。\n\n## Format\n输出 Markdown 文档：模板总览、逐段分析（问题-原因-优化方案）、优化后的完整模板正文、优化前后效果对比表。',
+        output: '## Role\n资深提示词工程专家，熟悉四段设计约束与可检验标准，先诊断再重构。\n\n## Task\n逐段诊断并重构给定模板：指出每段具体缺陷及影响→以四段定位框架建立判定标准→给出各段优化方案（目标表述、改写示例、补充约束）→输出完整文档。\n\n## Context\n以四段设计哲学为基准；避免空泛建议，每个优化点对应可执行检查清单。\n\n## Format\nMarkdown 文档：模板总览、逐段分析（问题-原因-方案）、优化后的完整模板正文、前后对比表。',
       },
     ],
     'writing-report': [
@@ -463,6 +491,11 @@ const BUILTIN_SUBTYPE_EXAMPLES: Record<MetaLanguage, Partial<Record<TaskSubtype,
       {
         input: '写一条新品上市的推广文案',
         output: '## Role\n资深营销文案，擅长抓核心卖点与行动号召。\n\n## Task\n撰写新品上市推广文案：提炼核心卖点、面向目标人群、给出明确行动号召。\n\n## Context\n面向目标消费者，投放于社交媒体；语气有感染力、篇幅精炼。\n\n## Format\n标题 + 正文 + 备选标题。',
+      },
+      {
+        // 1.6.7 P1：个人简介/工作经历文案变体（求职场景，贴小儿推拿师等职业介绍）。
+        input: '写一份小儿推拿师的工作经历介绍文案，用于个人简介或求职',
+        output: '## Role\n资深文案兼职业顾问，把专业资质与经历转化为有说服力的介绍。\n\n## Task\n撰写工作经历介绍文案：先梳理核心亮点（资质/年限/擅长），再分层叙述经历与能力，最后给出常见问题调理方案。\n\n## Context\n面向家长与机构负责人；突出认证、年限、成功案例与反馈。\n\n## Format\n四部分：概况资质 / 经历能力（含数据案例）/ 职业分析与手法特色 / 调理方案（分症状列要点）；300-500 字。',
       },
     ],
     'writing-resume': [
@@ -545,17 +578,17 @@ const BUILTIN_SUBTYPE_EXAMPLES: Record<MetaLanguage, Partial<Record<TaskSubtype,
     'code-bugfix': [
       {
         input: 'Locate and fix the errors in @src/cache.ts',
-        output: '## Role\nSenior TypeScript engineer, proficient in type checking and cache-module design; make it run first, then optimize.\n\n## Task\nDiagnose and minimally fix @src/cache.ts: statically check and walk the code to locate every error, listing each error type and trigger condition; then apply the minimal fix that keeps the exported interfaces, function signatures and cache semantics (LRU+TTL, key-value storage) unchanged, annotating the rationale for each change; finally run tsc --noEmit and the related unit tests to confirm the errors are gone with no new warnings or behavior changes.\n\n## Context\n@src/cache.ts is a pure-function cache layer (fnv1a hash + bigramJaccard + LRU/TTL, no harness dependency). No concrete error message or environment is provided — when the root cause cannot be pinpointed, apply the most conservative fix and state the inference basis and reproduction steps.\n\n## Format\nOutput three parts in order: ① root-cause analysis (short bullets) ② changes (file + line + before/after) ③ test results; include a directly runnable complete TypeScript snippet wherever code is involved.',
+        output: '## Role\nSenior TypeScript engineer, proficient in type checking and cache-module design; make it run first, then optimize.\n\n## Task\nDiagnose and minimally fix @src/cache.ts: statically locate every error and list each type and trigger condition → apply the minimal fix keeping exported interfaces and cache semantics unchanged, annotating each change → run tsc --noEmit and related tests.\n\n## Context\nNo concrete error message or environment given — apply the most conservative fix when the root cause is unclear, stating the inference basis.\n\n## Format\n① root-cause analysis (short bullets) ② changes (before/after) ③ test results; include a runnable complete snippet.',
       },
     ],
     'analysis-review': [
       {
         input: 'Assess the coverage and boundaries of localTemplate local rendering',
-        output: '## Role\nSenior prompt-plugin architect, familiar with the localTemplate local-render mechanism and the token cost model.\n\n## Task\nAssess the coverage and boundaries of the 1.5.6 local render and produce a systematic conclusion: first walk the gate rules (subcategory match + extractable signals); then compare the 21 renderable subcategories against the 4 never-rendered ones (creative/speech/research/forecast); finally weigh the hybrid two-tier benefit of "local render + LLM refine".\n\n## Context\n1.5.6 already ships local render: zero tokens, zero latency; the local path never reads conversation context; /optimize-stats exposes LOCAL:<n>. Actual local-render tokens are 0, not ≤1000.\n\n## Format\nStructured checklist: ① render criteria (deterministic / context-free / rule-izable ↔ the existing gate) ② the renderable-vs-LLM boundary with actual tokens ③ when turning context-awareness off is appropriate and its risks ④ prioritized next steps (template gaps → gate thresholds → evaluation). Highlight the renderable / not-renderable boundary.',
+        output: '## Role\nSenior prompt-plugin architect, familiar with the localTemplate local-render mechanism and the token cost model.\n\n## Task\nAssess the coverage and boundaries of local rendering: walk the gate rules (subcategory match + extractable signals) → draw the renderable-vs-LLM boundary → weigh the hybrid "local render + LLM refine" benefit.\n\n## Context\nLocal render costs zero tokens with zero latency; it never reads conversation context.\n\n## Format\nStructured checklist: ① render criteria ② renderable-vs-LLM boundary ③ when disabling context-awareness is appropriate ④ prioritized next steps.',
       },
       {
         input: 'Diagnose and restructure the Role, Task, Context and Format sections of a template, outputting an optimization document',
-        output: '## Role\nSenior prompt-engineering expert, familiar with the design constraints and testability criteria of the four sections (Role/Task/Context/Format); diagnose first, then restructure.\n\n## Task\nDiagnose and restructure the given template section by section: first identify the concrete defect of each of ## Role / ## Task / ## Context / ## Format (vague wording, missing constraints, muddled logic, weak testability) and how it hurts execution; then build criteria per section on the four-section positioning frame (Role defines who speaks, Task defines what to do, Context defines what it is based on, Format defines how to present); then give the optimization for each section (revised target wording, rewrite example, constraints to add); finally output the complete document.\n\n## Context\nThe target template must be provided or referenced first; benchmark against the four-section design philosophy (Role identity+capability+behavior, Task verb+steps+deliverable, Context prerequisites+scenario+constraints, Format structure+granularity); avoid vague advice; every optimization point maps to an executable checklist.\n\n## Format\nOutput a Markdown document: template overview, per-section analysis (problem → cause → optimization), the restructured template in full, and a before/after comparison table.',
+        output: '## Role\nSenior prompt-engineering expert, familiar with the design constraints and testability criteria of the four sections; diagnose first, then restructure.\n\n## Task\nDiagnose and restructure the template section by section: identify concrete defects of each section and their impact → build criteria on the four-section positioning frame → give per-section optimizations → output the complete document.\n\n## Context\nBenchmark against the four-section design philosophy; every optimization point maps to an executable checklist.\n\n## Format\nMarkdown document: overview, per-section analysis (problem → cause → optimization), the restructured template in full, before/after comparison.',
       },
     ],
     'writing-report': [
@@ -579,6 +612,11 @@ const BUILTIN_SUBTYPE_EXAMPLES: Record<MetaLanguage, Partial<Record<TaskSubtype,
       {
         input: 'Write a launch promo for a new product',
         output: '## Role\nSenior copywriter, skilled at surfacing core selling points and calls to action.\n\n## Task\nWrite a product-launch promo: distill the core selling point, target the audience, and give a clear call to action.\n\n## Context\nFor target consumers on social media; an engaging tone with a tight length.\n\n## Format\nHeadline + body + alternative headlines.',
+      },
+      {
+        // 1.6.7 P1: work-experience/profile copy variant (job-seeking contexts).
+        input: 'Write a work-experience profile for a pediatric massage therapist, for a bio or a job application',
+        output: '## Role\nSenior copywriter and career consultant, turning credentials and experience into a persuasive profile.\n\n## Task\nWrite a work-experience profile: surface core highlights (credentials / years / specialties), walk through experience and capabilities, then give treatment plans for common problems.\n\n## Context\nFor parents and clinic managers; highlight certifications, years, success cases and feedback.\n\n## Format\nFour parts: profile & credentials / experience & capabilities (with data and cases) / professional analysis & technique signature / treatment plans (per symptom); 300-500 words.',
       },
     ],
     'writing-resume': [
@@ -659,20 +697,66 @@ const BUILTIN_SUBTYPE_EXAMPLES: Record<MetaLanguage, Partial<Record<TaskSubtype,
   },
 }
 
+/**
+ * 过配门控（A1，1.6.8）：内置示例与原始指令主题几乎重合时不再注入该示例。
+ * 根因实测：推拿文案指令命中为其定制的孪生示例后，输出逐字搬运示例内容
+ * （「先梳理核心亮点，再分层叙述…」）——示例越像输入，克隆压力越大，
+ * 「不要照抄」免责声明压不过 few-shot 模仿。判定用双条件，缺一不判过配：
+ * 1. 覆盖率：|bigrams(示例input) ∩ bigrams(指令)| / |bigrams(示例input)| ≥ 阈值。
+ *    不用 Jaccard——它会被长指令稀释（推拿对实测仅 ≈0.17，无法区分）；
+ *    覆盖率直接衡量「示例被指令覆盖了多少」（推拿对 ≈0.56，无关对 <0.2）。
+ * 2. 长度比：指令长度 > 示例 input × 比例阈值。指令携带了示例没有的细节时，
+ *    示例只剩预制的内容决策，与用户需求纯竞争；而「帮我做一份融资路演PPT」
+ *    这类与示例逐字一致的短语变体（长度比 ≈1）是刻意编码的理想结构，必须保留。
+ */
+const EXAMPLE_OVERFIT_CONTAINMENT = 0.45
+const EXAMPLE_OVERFIT_LENGTH_RATIO = 1.3
+
+function exampleOverfits(exampleInput: string, instruction: string): boolean {
+  const norm = (s: string) => s.replace(/\s+/g, '').toLowerCase()
+  const e = norm(exampleInput)
+  const u = norm(instruction)
+  if (e.length === 0 || u.length === 0) return false
+  if (u.length <= e.length * EXAMPLE_OVERFIT_LENGTH_RATIO) return false
+  const grams = (s: string): Set<string> => {
+    const set = new Set<string>()
+    if (s.length === 1) {
+      set.add(s)
+      return set
+    }
+    for (let i = 0; i < s.length - 1; i++) set.add(s.slice(i, i + 2))
+    return set
+  }
+  const ge = grams(e)
+  const gu = grams(u)
+  let overlap = 0
+  for (const g of ge) if (gu.has(g)) overlap++
+  return overlap / ge.size >= EXAMPLE_OVERFIT_CONTAINMENT
+}
+
 /** Pick the built-in example pair for a language + task type (+ subtype). */
 function resolveBuiltinExamples(
   en: boolean,
   taskType: TaskType | undefined,
   subtype: TaskSubtype | undefined,
+  instruction?: string,
 ): readonly PromptExample[] {
+  // 过配门控只作用于内置回退路径；显式配置的 examples 是用户的明确选择，不过滤。
+  const pick = (pairs: readonly PromptExample[]): readonly PromptExample[] =>
+    instruction === undefined ? pairs : pairs.filter((p) => !exampleOverfits(p.input, instruction))
   const subtypeSet = en ? BUILTIN_SUBTYPE_EXAMPLES.en : BUILTIN_SUBTYPE_EXAMPLES.zh
   if (subtype !== undefined) {
     const sub = subtypeSet[subtype]
-    if (sub !== undefined) return sub
+    if (sub !== undefined) {
+      const kept = pick(sub)
+      // 子类候选全被门控滤掉 → 回落大类示例继续过滤（大类更通用、主题重合更低），
+      // 而不是注入空块：保住格式锚点，只丢克隆源。
+      if (kept.length > 0) return kept
+    }
   }
   const set = en ? BUILTIN_EXAMPLES.en : BUILTIN_EXAMPLES.zh
   const key = taskType !== undefined && taskType !== 'other' ? taskType : 'writing'
-  return [set[key]]
+  return pick([set[key]])
 }
 
 // The role-document skeletons live in templates.ts (the data layer); they are
@@ -709,7 +793,9 @@ function metaBlocks(
   subtype: TaskSubtype | undefined,
   drift: GoalDrift | undefined,
   level: SituationProfileLevel | undefined,
+  rawInput: string,
   builtinExamples?: boolean,
+  compact?: boolean,
 ): MetaBlocks {
   const pinned = language !== undefined && language !== 'auto' && language.length > 0
   const langRule = pinned ? `- 输出语言固定为：${language}。\n` : ''
@@ -720,9 +806,10 @@ function metaBlocks(
   // Explicit examples win; otherwise fall back to the built-in pair matched to
   // the task type and role-document language — unless `builtinExamples` is
   // explicitly false (1.4.6: short-instruction scenarios may want no example).
+  // A1 过配门控只作用于内置回退：显式 examples 是用户的明确选择，不过滤。
   const effectiveExamples = examples !== undefined && examples.length > 0
     ? examples
-    : (builtinExamples === false ? [] : resolveBuiltinExamples(en, taskType, subtype))
+    : (builtinExamples === false ? [] : resolveBuiltinExamples(en, taskType, subtype, rawInput))
   // role-task-goal（1.6.5 折叠注入）：内置示例为四段形态——RTG 模式下把示例
   // output 折叠为三要素标签再注入，作为三要素输出的 few-shot 引导
   // （plain 无标题形态仍禁用示例）。
@@ -739,31 +826,29 @@ function metaBlocks(
         ? `- The previous output had the following problems; this output must fix them: ${diagnosis.trim()}\n`
         : `- 上次输出存在以下问题，本次输出必须修正：${diagnosis.trim()}\n`)
     : ''
-  const taskTypeBlock = taskType !== undefined && taskType !== 'other'
+  // P-A 简单指令极简档：compact 时砍掉任务类型/场景参考/情境画像/自查四块，
+  // 只留骨架＋输出规则＋结构块＋护栏＋原始指令。
+  const taskTypeBlock = !compact && taskType !== undefined && taskType !== 'other'
     ? `${en ? TASKTYPE_EN[taskType] : TASKTYPE_ZH[taskType]}\n`
     : ''
-  // `detectTaskSubtype` 仅在非 other 类型下命中，但 `taskType` 本身可能是
-  // `'other'`（子类为 undefined）——子类提示只在子类命中时注入即可。
-  const subtypeBlock = subtype !== undefined
-    ? (en
-        ? `- Subtype hint: this instruction falls into the 【${subtypeLabel(subtype, true)}】 category.\n`
-        : `- 子类提示：该指令属于【${subtypeLabel(subtype, false)}】类任务。\n`)
-    : ''
-  // 场景骨架（1.5.1）：子类命中时注入 SUB_TOPIC_TEMPLATES，给模型一个可直接
-  // 填充的 Role/Task/Format 骨架（ADR-009 内容级门控——仅命中时注入）。
-  const sceneBlock = subtype !== undefined
-    ? `${en ? SUB_TOPIC_TEMPLATES[subtype].en : SUB_TOPIC_TEMPLATES[subtype].zh}\n`
-    : ''
-  // 角色参考（1.4.9）：画像无显式角色（低置信）时给模型一个可直接采用的角色
-  // 三要素参考——与任务类型提示并列注入，不进情境画像。
-  const roleLibraryBlock = taskType !== undefined && taskType !== 'other'
-    ? `${en ? ROLE_LIBRARY[taskType].en : ROLE_LIBRARY[taskType].zh}\n`
-    : ''
+  // B2 合并块（1.6.8）：子类提示＋角色参考＋场景骨架三块语义重叠——都在回答
+  // 「这个任务长什么样」，压成一行场景参考。子类命中 → 标签+角色+骨架一行；
+  // 仅大类命中 → 只保留角色参考行。ADR-009 内容级门控不变（仅命中时注入）。
+  const sceneRefBlock =
+    !compact && subtype !== undefined && taskType !== undefined && taskType !== 'other'
+      ? (en
+          ? `- Scene reference: 【${subtypeLabel(subtype, true)}】 · ${ROLE_LIBRARY[taskType].en} · ${SUB_TOPIC_TEMPLATES[subtype].en}\n`
+          : `- 场景参考：【${subtypeLabel(subtype, false)}】类 · ${ROLE_LIBRARY[taskType].zh} · ${SUB_TOPIC_TEMPLATES[subtype].zh}\n`)
+      : taskType !== undefined && taskType !== 'other'
+        ? `${en ? ROLE_LIBRARY[taskType].en : ROLE_LIBRARY[taskType].zh}\n`
+        : ''
   const lengthBlock = maxOutputTokens !== undefined && maxOutputTokens > 0
     ? (en
-        ? `- Suggested output length: no more than ${maxOutputTokens} tokens. Soft guideline — be as concise as the task allows, never pad to fill it.\n`
-        : `- 建议输出长度不超过 ${maxOutputTokens} token。此为软约束：在覆盖完整的前提下尽量精简，不要刻意凑满。\n`)
+        ? `- Suggested output length: no more than ${maxOutputTokens} tokens (${lengthAnchor(maxOutputTokens, true)}). Soft guideline — be as concise as the task allows, never pad to fill it.\n`
+        : `- 建议输出长度不超过 ${maxOutputTokens} token（${lengthAnchor(maxOutputTokens, false)}）。此为软约束：在覆盖完整的前提下尽量精简，不要刻意凑满。\n`)
     : ''
+  // 情境块在 compact 档下保留：它承载会话级目标沿用与用户显式约束——是意图
+  // 而非脚手架；短追问（「输出全文」）依赖它注入注册目标。
   const situationBlock = profile !== undefined ? renderSituationBlock(profile, en, drift, level) : ''
   return {
     structure: outputStyle === 'plain'
@@ -771,17 +856,19 @@ function metaBlocks(
       : outputStyle === 'role-task-goal'
         ? (en ? STRUCTURE_RTG_EN : STRUCTURE_RTG)
         : (en ? STRUCTURE_SECTIONS_EN : STRUCTURE_SECTIONS),
-    selfCheck: outputStyle === 'plain'
-      ? (en ? SELFCHECK_PLAIN_EN : SELFCHECK_PLAIN)
-      : outputStyle === 'role-task-goal'
-        ? (en ? SELFCHECK_RTG_EN : SELFCHECK_RTG)
-        : (en ? SELFCHECK_SECTIONS_EN : SELFCHECK_SECTIONS),
+    selfCheck: compact
+      ? ''
+      : outputStyle === 'plain'
+        ? (en ? SELFCHECK_PLAIN_EN : SELFCHECK_PLAIN)
+        : outputStyle === 'role-task-goal'
+          ? (en ? SELFCHECK_RTG_EN : SELFCHECK_RTG)
+          : (en ? SELFCHECK_SECTIONS_EN : SELFCHECK_SECTIONS),
     langRule,
     extra,
     exampleBlock,
     diagnosis: diagnosisBlock,
     context: buildContextBlock(context ?? '', metaLanguage, outputStyle),
-    taskType: `${taskTypeBlock}${subtypeBlock}${roleLibraryBlock}${sceneBlock}`,
+    taskType: `${taskTypeBlock}${sceneRefBlock}`,
     length: lengthBlock,
     situation: situationBlock,
   }
@@ -809,6 +896,31 @@ function renderBlocks(template: string, blocks: MetaBlocks): string {
   }
 
   return result
+}
+
+/**
+ * 简单指令分档（P-A，1.6.8）：归一化后 ≤16 字符视为简单指令——系统提示词
+ * 走极简档（不注入任务类型/场景参考/情境画像/自查），输出预算同步降档。
+ * 依据「自由度匹配」原则：脚手架密度应与任务复杂度成正比，而不是对一切
+ * 输入施加同密度规定。
+ */
+const COMPACT_TIER_MAX_CHARS = 16
+
+export function isCompactInstruction(input: string): boolean {
+  const norm = input.replace(/\s+/g, '').toLowerCase()
+  return norm.length > 0 && norm.length <= COMPACT_TIER_MAX_CHARS
+}
+
+/**
+ * Human-perceivable anchor paired with the token budget (B3, 1.6.8). zh uses
+ * the plugin-conservative CJK ratio (~1.5 tokens per char, floored to 50);
+ * en uses the common ~0.75 words/token heuristic (floored to 25 words). The
+ * anchor deliberately under-shoots: a soft guideline that errs terse never
+ * triggers truncation retries.
+ */
+function lengthAnchor(tokens: number, en: boolean): string {
+  if (en) return `roughly ${Math.max(25, Math.floor((tokens * 0.75) / 25) * 25)} words`
+  return `中文约 ${Math.max(50, Math.floor(tokens / 1.5 / 50) * 50)} 字以内`
 }
 
 /**
@@ -848,7 +960,7 @@ export function buildOptimizePrompt(
   language?: string,
   extraInstructions?: string,
   examples?: readonly PromptExample[],
-  outputStyle: 'sections' | 'plain' | 'role-task-goal' = 'sections',
+  outputStyle: 'sections' | 'plain' | 'role-task-goal' = 'plain',
   metaLanguage: MetaLanguage = 'zh',
   diagnosis?: string,
   templates: TemplateSet = DEFAULT_TEMPLATES,
@@ -858,10 +970,11 @@ export function buildOptimizePrompt(
   profile?: SituationProfile,
   level?: SituationProfileLevel,
   builtinExamples?: boolean,
+  compact?: boolean,
 ): string {
   const template = metaLanguage === 'en' ? templates.optimizeEn : templates.optimizeZh
   const resolvedProfile = profile ?? buildSituationProfile(input, context)
-  const rendered = renderBlocks(template, metaBlocks(language, extraInstructions, examples, outputStyle, metaLanguage, diagnosis, context, taskType ?? resolvedProfile.task.type, maxOutputTokens, resolvedProfile, resolvedProfile.task.subtype, undefined, level, builtinExamples))
+  const rendered = renderBlocks(template, metaBlocks(language, extraInstructions, examples, outputStyle, metaLanguage, diagnosis, context, taskType ?? resolvedProfile.task.type, maxOutputTokens, resolvedProfile, resolvedProfile.task.subtype, undefined, level, input, builtinExamples, compact))
   return rendered.replace('{{原始指令}}', input)
 }
 
@@ -895,7 +1008,7 @@ export function buildIteratePrompt(
   language?: string,
   extraInstructions?: string,
   examples?: readonly PromptExample[],
-  outputStyle: 'sections' | 'plain' | 'role-task-goal' = 'sections',
+  outputStyle: 'sections' | 'plain' | 'role-task-goal' = 'plain',
   metaLanguage: MetaLanguage = 'zh',
   diagnosis?: string,
   templates: TemplateSet = DEFAULT_TEMPLATES,
@@ -906,10 +1019,11 @@ export function buildIteratePrompt(
   drift?: GoalDrift,
   level?: SituationProfileLevel,
   builtinExamples?: boolean,
+  compact?: boolean,
 ): string {
   const template = metaLanguage === 'en' ? templates.iterateEn : templates.iterateZh
   const resolvedProfile = profile ?? buildSituationProfile(instruction, context)
-  const rendered = renderBlocks(template, metaBlocks(language, extraInstructions, examples, outputStyle, metaLanguage, diagnosis, context, taskType ?? resolvedProfile.task.type, maxOutputTokens, resolvedProfile, resolvedProfile.task.subtype, drift, level, builtinExamples))
+  const rendered = renderBlocks(template, metaBlocks(language, extraInstructions, examples, outputStyle, metaLanguage, diagnosis, context, taskType ?? resolvedProfile.task.type, maxOutputTokens, resolvedProfile, resolvedProfile.task.subtype, drift, level, instruction, builtinExamples, compact))
   return rendered.replace(/\{\{上次结果\}\}|\{\{迭代指令\}\}/g, (match) =>
     match === '{{上次结果}}' ? lastResult : instruction,
   )

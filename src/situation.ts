@@ -236,7 +236,7 @@ const TASK_SUBTYPES: Record<Exclude<TaskType, 'other'>, readonly { key: TaskSubt
     { key: 'writing-translate', zh: '翻译', en: 'translation', keywords: ['翻译', '译成', 'translate'] },
     { key: 'writing-creative', zh: '创作', en: 'creative writing', keywords: ['故事', '小说', '诗', '剧本', '散文'] },
     { key: 'writing-polish', zh: '润色/改写', en: 'polish/rewrite', keywords: ['润色', '改写', '修改措辞', '优化表达', '回复', '摘要', '缩写', 'polish', 'rewrite'] },
-    { key: 'writing-resume', zh: '简历', en: 'resume', keywords: ['简历', '自我介绍', '求职', 'resume', 'cv'] },
+    { key: 'writing-resume', zh: '简历', en: 'resume', keywords: ['简历', '自我介绍', '求职', '个人简介', '工作经验', '工作经历', 'resume', 'cv'] },
     { key: 'writing-speech', zh: '演讲/讲稿', en: 'speech', keywords: ['演讲', '讲稿', '致辞', '发言', '演示稿', 'speech', 'presentation'] },
     { key: 'writing-presentation', zh: '演示/PPT', en: 'presentation', keywords: ['ppt', '幻灯片', '述职', '路演', '宣讲', '演示文稿', 'presentation', 'slide', 'deck', 'pitch', 'keynote'] },
   ],
@@ -447,15 +447,28 @@ function extractExpertise(input: string): string | undefined {
   return undefined
 }
 
+/**
+ * P-D（1.6.8）受众噪声门控：「针对家长常见的育儿痛点给出推拿调理方案」这类
+ * 捕获会把谓语/问题从句整段当受众注入画像。真实受众是短的名词短语——含
+ * 动词性/问题性/交付物标记或超长即拒收，继续扫下一个候选。
+ */
+const AUDIENCE_NOISE_RE = /痛点|给出|方案|分析|生成|撰写|输出|实现|提供|优化|介绍|文案|报告/
+
+function isPlausibleAudience(phrase: string): boolean {
+  const trimmed = phrase.trim()
+  if (trimmed.length === 0 || trimmed.length > 12) return false
+  return !AUDIENCE_NOISE_RE.test(trimmed)
+}
+
 /** Extract an audience phrase, or `undefined`. */
 function extractAudience(input: string): string | undefined {
   for (const match of input.matchAll(ZH_AUDIENCE)) {
     const phrase = match.slice(1).find((g) => g !== undefined && g.length > 0)
-    if (phrase !== undefined) return phrase
+    if (phrase !== undefined && isPlausibleAudience(phrase)) return phrase
   }
   for (const match of input.matchAll(EN_AUDIENCE)) {
     const phrase = match.slice(1).find((g) => g !== undefined && g.length > 0)
-    if (phrase !== undefined) return phrase.trim()
+    if (phrase !== undefined && isPlausibleAudience(phrase)) return phrase.trim()
   }
   return undefined
 }

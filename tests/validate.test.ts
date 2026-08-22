@@ -245,8 +245,9 @@ describe('constants', () => {
 })
 
 describe('estimateTokens', () => {
-  it('counts CJK characters as one token each', () => {
-    expect(estimateTokens('你是一名产品经理')).toBe(8)
+  it('counts CJK characters as ~1.5 tokens each', () => {
+    // CJK chars: 8 * 1.5 = 12
+    expect(estimateTokens('你是一名产品经理')).toBe(12)
   })
 
   it('counts ASCII runs as one token per four characters', () => {
@@ -255,7 +256,8 @@ describe('estimateTokens', () => {
   })
 
   it('mixes CJK and ASCII', () => {
-    expect(estimateTokens('你好 world')).toBe(2 + 2)
+    // CJK: 2 * 1.5 = 3, ASCII: 5 / 4 = 2 (rounded up)
+    expect(estimateTokens('你好 world')).toBe(3 + 2)
   })
 })
 
@@ -267,9 +269,10 @@ describe('truncateByTokens', () => {
   })
 
   it('truncates over-budget input with a token marker', () => {
+    // CJK chars are ~1.5 tokens each; 3 tokens fits 2 chars
     const result = truncateByTokens('你是一名产品经理，负责分析需求', 3, estimate)
     expect(result).toContain('超出 3 token')
-    expect(result.startsWith('你是一')).toBe(true)
+    expect(result.startsWith('你是')).toBe(true)
     expect(result).not.toContain('产品经理')
   })
 

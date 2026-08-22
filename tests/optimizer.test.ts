@@ -43,6 +43,7 @@ const DEFAULT_CONFIG: Config = {
   minSectionChars: 10,
   maxTokenRetryFactor: 2,
   maxTokensCap: 8000,
+  maxTotalTokens: 20000,
   retryTemperatureStep: 0.3,
   skipIfAlreadyOptimized: false,
   selfRefine: false,
@@ -69,6 +70,7 @@ const DEFAULT_CONFIG: Config = {
   earlyStopTailGrowth: 48,
   builtinExamples: true,
   dreamInsightFeedback: false,
+  senseNeedsSeparate: false,
   classifier: 'heuristic',
   localTemplate: 'off',
   hybridAlignThreshold: 0.4,
@@ -144,7 +146,7 @@ describe('PromptOptimizerService.optimize', () => {
   it('returns the optimized prompt on a well-formed model output', async () => {
     const state = makeCtx([textStream(FOUR_SECTIONS)])
     const service = makeService(state)
-    const result = await service.optimize('帮我写一份 PRD', { signal: new AbortController().signal })
+    const result = await service.optimize('帮我写一份 PRD 文档，面向中小企业客户，需覆盖目标与验收标准', { signal: new AbortController().signal })
     expect(result.optimized).toBe(true)
     expect(result.prompt).toBe(FOUR_SECTIONS)
     expect(result.retries).toBe(0)
@@ -384,7 +386,7 @@ describe('PromptOptimizerService.optimize', () => {
       textStream(FOUR_SECTIONS),
     ])
     const service = makeService(state)
-    const result = await service.optimize('x')
+    const result = await service.optimize('帮我根据以下要点整理一份完整的实施方案，覆盖目标、约束与验收标准。')
     expect(result.optimized).toBe(true)
     expect(result.retries).toBe(0)
     expect(state.streamCalls).toHaveLength(2)
@@ -399,7 +401,7 @@ describe('PromptOptimizerService.optimize', () => {
       textStream(FOUR_SECTIONS),
     ])
     const service = makeService(state)
-    const result = await service.optimize('x')
+    const result = await service.optimize('帮我根据以下要点整理一份完整的实施方案，覆盖目标、约束与验收标准。')
     expect(result.optimized).toBe(true)
     expect(result.retries).toBe(0)
     expect(state.streamCalls.map((c) => c.maxTokens)).toEqual([1200, 2400, 4800])
@@ -411,14 +413,49 @@ describe('PromptOptimizerService.optimize', () => {
       textStream('', { type: 'finish', reason: { kind: 'max-tokens' } }),
     ])
     const service = makeService(state, { ...DEFAULT_CONFIG, maxTokensCap: 2000 })
-    await expect(service.optimize('x')).rejects.toThrow(/maxTokens/)
+    await expect(service.optimize('帮我根据以下要点整理一份完整的实施方案，覆盖目标、约束与验收标准。')).rejects.toThrow(/maxTokens/)
     expect(state.streamCalls.map((c) => c.maxTokens)).toEqual([1200, 2000])
+  })
+
+  it('stops retrying when the cumulative token budget runs out (D1)', async () => {
+    // 预算门在第二次调用前拦下：system＋生成量累计到达 maxTotalTokens 即止，
+    // 按既有降级路径返回（BUDGET_EXCEEDED），不再跳档扩容。
+    const state = makeCtx([
+      textStream('', { type: 'finish', reason: { kind: 'max-tokens' } }),
+      textStream(FOUR_SECTIONS),
+    ])
+    const service = makeService(state, { ...DEFAULT_CONFIG, maxTotalTokens: 50 })
+    const result = await service.optimize('x')
+    expect(result.optimized).toBe(false)
+    expect(result.errorCode).toBe('BUDGET_EXCEEDED')
+    expect(state.streamCalls).toHaveLength(1)
+  })
+
+  it('runs simple instructions on the compact tier (P-A)', async () => {
+    // 短指令 → 极简系统提示词（无任务类型/场景参考/自查）＋ 输出预算降档 400。
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    const service = makeService(state)
+    const result = await service.optimize('写周报')
+    expect(result.optimized).toBe(true)
+    expect(state.streamCalls[0]?.maxTokens).toBe(400)
+    const system = state.streamCalls[0]?.system ?? ''
+    expect(system).not.toContain('任务类型提示')
+    expect(system).not.toContain('场景参考')
+    expect(system).toContain('原始指令：')
+  })
+
+  it('keeps full hint blocks for non-compact instructions (P-A)', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    const service = makeService(state)
+    await service.optimize('帮我写一份周报，总结本周进展和下周计划并同步风险')
+    expect(state.streamCalls[0]?.maxTokens).toBe(1200)
+    expect(state.streamCalls[0]?.system).toContain('任务类型提示')
   })
 
   it('does not expand when maxTokensCap is at or below maxTokens', async () => {
     const state = makeCtx([textStream('', { type: 'finish', reason: { kind: 'max-tokens' } })])
     const service = makeService(state, { ...DEFAULT_CONFIG, maxTokensCap: 1000 })
-    await expect(service.optimize('x')).rejects.toThrow(/maxTokens/)
+    await expect(service.optimize('帮我根据以下要点整理一份完整的实施方案，覆盖目标、约束与验收标准。')).rejects.toThrow(/maxTokens/)
     expect(state.streamCalls).toHaveLength(1)
   })
 
@@ -1251,9 +1288,74 @@ describe('dream insight feedback (1.4.9)', () => {
     await service.optimize('write a plan', { sessionId: 's1', senseNeeds: true })
     expect(state.streamCalls[0].system).toContain('Needs sensing (dream mode)')
     const second = await service.optimize('write a plan', { sessionId: 's1' })
-    expect(second.optimized).toBe(true)
+    expect(state.streamCalls).toHaveLength(2)
     expect(state.streamCalls[1].system).toContain('Previous AI-inferred insights')
     expect(state.streamCalls[1].system).toContain('Deep goal: X')
+  })
+})
+
+describe('dream × localTemplate composition (1.6.8 D1/D2)', () => {
+  it('composes seed refinement with the dream appendix under senseNeeds (D1)', async () => {
+    // auto 档：seed 精修单次调用同时产出正文＋附录——不再整体绕过本地路径。
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    const service = makeService(state, { ...DEFAULT_CONFIG, localTemplate: 'auto' })
+    const result = await service.optimize('帮我写周报', { signal: new AbortController().signal, senseNeeds: true })
+    expect(result.optimized).toBe(true)
+    expect(result.local).toBe(true)
+    expect(state.streamCalls).toHaveLength(1)
+    const system = state.streamCalls[0]?.system ?? ''
+    expect(system).toContain('本地参考模板')
+    expect(system).toContain('延伸洞察')
+  })
+
+  it('falls back from on-mode direct render to refinement under dream (D1)', async () => {
+    // on 直出无模型调用、无法产附录——dream 下回落精修档。
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    const service = makeService(state, { ...DEFAULT_CONFIG, localTemplate: 'on' })
+    const result = await service.optimize('帮我写周报', { signal: new AbortController().signal, senseNeeds: true })
+    expect(result.local).toBe(true)
+    expect(state.streamCalls).toHaveLength(1)
+    expect(state.streamCalls[0]?.system).toContain('延伸洞察')
+  })
+
+  it('keeps zero-token direct render when dream is off (regression)', async () => {
+    const state = makeCtx([])
+    const service = makeService(state, { ...DEFAULT_CONFIG, localTemplate: 'on' })
+    const result = await service.optimize('帮我写周报', { signal: new AbortController().signal })
+    expect(result.local).toBe(true)
+    expect(state.streamCalls).toHaveLength(0)
+  })
+
+  it('truncates stored dream insights before replay (D2)', async () => {
+    const LONG_TAIL = '截断线之后的长尾标记句子XYZ'
+    const longAppendix = `--- 延伸洞察（AI 推断，供你选用，非事实）---\n· 深层目标：推断用户真正想达成的结果\n${'填充内容。'.repeat(30)}${LONG_TAIL}`
+    const state = makeCtx([
+      textStream(`${FOUR_SECTIONS}\n\n${longAppendix}`),
+      textStream(FOUR_SECTIONS),
+    ])
+    const service = makeService(state, { ...DEFAULT_CONFIG, dreamInsightFeedback: true })
+    await service.optimize('写一份完整的方案说明文档', { sessionId: 's9', senseNeeds: true })
+    const second = await service.optimize('换一个完全不同的主题重写', { sessionId: 's9' })
+    expect(second.optimized).toBe(true)
+    const system = state.streamCalls[1]?.system ?? ''
+    expect(system).toContain('上一轮 AI 推断洞察')
+    expect(system).toContain('…') // 存储即截断
+    expect(system).not.toContain(LONG_TAIL) // 超出 200 字的尾部不回放
+  })
+
+  it('separate mode moves the appendix to a light 250-token call (D6)', async () => {
+    // separate 档：主线不带感应块正常优化，第二次轻量调用只产附录。
+    const appendixText = '--- 延伸洞察（AI 推断，供你选用，非事实）---\n· 深层目标：推断用户真正想达成的结果'
+    const state = makeCtx([textStream(FOUR_SECTIONS), textStream(appendixText)])
+    const service = makeService(state, { ...DEFAULT_CONFIG, senseNeedsSeparate: true })
+    const result = await service.optimize('帮我写一份周报，总结本周进展与风险', { signal: new AbortController().signal, senseNeeds: true })
+    expect(result.optimized).toBe(true)
+    expect(state.streamCalls).toHaveLength(2)
+    expect(state.streamCalls[1]?.maxTokens).toBe(250)
+    expect(state.streamCalls[0]?.system).not.toContain('需求感应（造梦模式）')
+    expect(state.streamCalls[1]?.system).toContain('需求感应分析师')
+    expect(result.prompt).toContain('延伸洞察')
+    expect(result.appendixTokens).toBeGreaterThan(0)
   })
 })
 

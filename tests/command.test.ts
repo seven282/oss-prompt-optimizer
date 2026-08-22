@@ -21,6 +21,7 @@ Markdown`
 const DEFAULT_CONFIG: Config = {
   temperature: 0.2,
   maxTokens: 1200,
+  senseNeedsSeparate: false,
   maxRetries: 1,
   maxCalls: 4,
   maxInputChars: 4000,
@@ -34,6 +35,7 @@ const DEFAULT_CONFIG: Config = {
   minSectionChars: 0,
   maxTokenRetryFactor: 2,
   maxTokensCap: 8000,
+  maxTotalTokens: 20000,
   retryTemperatureStep: 0.3,
   skipIfAlreadyOptimized: false,
   selfRefine: false,
@@ -297,13 +299,13 @@ describe('/optimize-stats command', () => {
   it('reports the last run output tokens as a machine token', async () => {
     const { commands } = makeService(() => textStream(FOUR_SECTIONS))
     // Before any run the counters are zero.
-    expect(await stats(commands).handler(invocation(''))).toMatchObject({ kind: 'success', text: 'OPTIMIZE_STATS:TOKENS:0|INPUT:0|CALLS:0|LASTMSCALL:0|LOCAL:0|REFINED:0' })
+    expect(await stats(commands).handler(invocation(''))).toMatchObject({ kind: 'success', text: 'OPTIMIZE_STATS:TOKENS:0|INPUT:0|CALLS:0|LASTMSCALL:0|LOCAL:0|REFINED:0|APPX:0' })
     const optimize = commands.find((c) => c.name === 'optimize')!
     await optimize.handler(invocation('帮我写周报'))
     const result = await stats(commands).handler(invocation(''))
     expect(result).toMatchObject({ kind: 'success' })
     const text = (result as { text: string }).text
-    expect(text).toMatch(/OPTIMIZE_STATS:TOKENS:\d+\|INPUT:\d+\|CALLS:1\|LASTMSCALL:\d+\|LOCAL:\d+\|REFINED:\d+/)
+    expect(text).toMatch(/OPTIMIZE_STATS:TOKENS:\d+\|INPUT:\d+\|CALLS:1\|LASTMSCALL:\d+\|LOCAL:\d+\|REFINED:\d+\|APPX:\d+/)
   })
 })
 

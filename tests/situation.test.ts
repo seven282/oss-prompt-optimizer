@@ -392,3 +392,18 @@ describe('writing-presentation subtype (1.6.4)', () => {
     expect(detectTaskSubtype('帮我写个汇报', 'writing')).toBe('writing-report')
   })
 })
+
+describe('audience noise gate (1.6.8 P-D)', () => {
+  it('rejects clause fragments captured by 针对/面向', () => {
+    // 「针对家长常见的育儿痛点给出推拿调理方案」曾被整段当受众注入画像。
+    const profile = buildSituationProfile(
+      '写一份小儿推拿师的工作经验介绍文案，要求体现专业素养、爱心与亲和力，并结合实际工作经历进行能力分析，最后针对家长常见的育儿痛点给出推拿调理方案。',
+    )
+    expect(profile.role.audience).toBeUndefined()
+  })
+
+  it('keeps genuine short audience phrases', () => {
+    const profile = buildSituationProfile('面向产品经理，写一份 PRD 文档')
+    expect(profile.role.audience).toBe('产品经理')
+  })
+})

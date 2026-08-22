@@ -133,6 +133,10 @@ export function plainHeadingsMessage(): string {
  * "总结：" afterword. Detection is deliberately conservative — heading-level
  * and strong-marker patterns only, so a legit prompt that merely *mentions*
  * one of these words is not flagged.
+ *
+ * Fix (#2): Only scan the last 300 characters to avoid false positives
+ * on legitimate prompt content that mentions these words in the body.
+ * Meta content typically appears at the end (afterword, summary, etc.).
  */
 const META_CONTENT_PATTERNS: RegExp[] = [
   // 章节级方法论标题：如「Role（角色设定）优化标准」「Task（任务描述）优化标准」
@@ -145,9 +149,27 @@ const META_CONTENT_PATTERNS: RegExp[] = [
   /定["“'](谁来说|说什么|基于什么说|怎么说|说给谁听)/,
 ]
 
-/** Whether `text` contains meta/methodology content beyond the prompt itself. */
+/**
+ * Maximum characters to scan from the end of the output for meta content.
+ * Meta content (afterwords, summaries, methodology notes) typically appears
+ * at the end of the output, not in the middle of the prompt body.
+ */
+const META_CONTENT_SCAN_TAIL = 300
+
+/**
+ * Whether `text` contains meta/methodology content beyond the prompt itself.
+ *
+ * Fix (#2): Only scans the last META_CONTENT_SCAN_TAIL characters to avoid
+ * false positives. For example, a prompt that says "分析方法：结论先行、
+ * 数据支撑" in the Context section should NOT be flagged as meta content —
+ * only appendices like "优化标准：..." or "总结：..." at the end are flagged.
+ */
 export function hasMetaContent(text: string): boolean {
-  return META_CONTENT_PATTERNS.some((pattern) => pattern.test(text))
+  // Scan only the tail to avoid false positives on body content.
+  const tail = text.length > META_CONTENT_SCAN_TAIL
+    ? text.slice(-META_CONTENT_SCAN_TAIL)
+    : text
+  return META_CONTENT_PATTERNS.some((pattern) => pattern.test(tail))
 }
 
 /** Stable failure message when the output carries meta/methodology content. */
@@ -252,8 +274,13 @@ export function truncateInput(input: string, maxChars: number): string {
 
 /**
  * Heuristic token estimate without a tokenizer: CJK and other wide code points
- * count as one token each, ASCII runs count as one token per four characters.
+ * count as ~1.5 tokens each (conservative; actual models use 2-3 for CJK due
+ * to UTF-8 byte width), ASCII runs count as one token per four characters.
  * Used as a fallback when the harness `tokenMeter` service is unavailable.
+ *
+ * Fix (#6): Increased CJK coefficient from 1 to 1.5 to reduce premature
+ * truncation. The old coefficient (1) underestimated CJK token usage,
+ * causing `maxInputTokens` to cut instructions too aggressively.
  */
 export function estimateTokens(text: string): number {
   let wide = 0
@@ -264,7 +291,9 @@ export function estimateTokens(text: string): number {
     if (code < 0x80) ascii += 1
     else wide += 1
   }
-  return wide + Math.ceil(ascii / 4)
+  // CJK chars: ~1.5 tokens each (conservative; actual is 2-3).
+  // ASCII: 1 token per 4 chars (standard BPE heuristic).
+  return Math.ceil(wide * 1.5) + Math.ceil(ascii / 4)
 }
 
 /**

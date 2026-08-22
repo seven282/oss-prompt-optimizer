@@ -1,5 +1,97 @@
 # Changelog
 
+## [1.6.8] - 2026-08-22
+
+- **P0 默认输出形态 role-task-goal → plain（无标题纯文本）**：最省 token；
+  sections 四段保留为可选与优化时的内部参考框架；schema 与
+  buildOptimizePrompt/buildIteratePrompt 默认参数同步；plain 下不注入
+  few-shot 示例（克隆源随默认管线一并切断）
+- **P0 内置示例过配门控（A1）**：示例 input 与原始指令的 bigram 覆盖率
+  ≥0.45 且指令更长（×1.3）时不注入该示例——根因实测：推拿文案指令命中为
+  其定制的孪生示例后输出逐字搬运（「先梳理核心亮点，再分层叙述…」），是
+  「生搬硬套」的直接来源。不用 Jaccard——会被长指令稀释（该对实测仅
+  ≈0.17 无法区分），改用覆盖率（推拿对 ≈0.56 vs 无关对 <0.2）；长度比条件
+  保住逐字短语变体（如「帮我做一份融资路演PPT」，长度比 ≈1 是刻意编码的
+  理想结构）；显式配置的 examples 不过滤；子类候选全滤掉时回落大类示例
+  继续过滤，保住格式锚点只丢克隆源
+- **P1 内置示例瘦身（A2）**：最重的 8 条示例 output 压缩约一半（zh/en 的
+  code-bugfix、analysis-review×2、推拿文案变体；单条峰值 ~600 字符 →
+  ~300）——示例教什么颗粒度模型就输出什么颗粒度，同时降低系统提示词最大
+  单项的重复计费成本（跳档续传每次调用都重发全部示例）
+- **P1 系统提示词减负（B1/B2/B4）**：任务类型提示三行压一行（删「角色写法
+  建议」——与结构块角色公式、自查块角色检查语义重复）；子类提示＋角色参考＋
+  场景骨架三块合并为一行「场景参考：【标签】类 · 角色参考：… · 场景骨架：…」；
+  六个输出结构块增加复杂度伸缩条款（「简单任务不拆步骤、不硬凑全部要素」）。
+  注入的规定性语句越少，模型逐句填空的模板腔越轻——token 侧省幅有限（约
+  10%），质量侧为主
+- **P1 长度预算可感化（B3）**：「建议输出长度不超过 N token」追加字/词锚点——
+  中文按插件保守系数 ≈N/1.5 字（800 token → 约 500 字），英文按 ~0.75
+  words/token。锚点刻意偏保守：软约束只催精简，不会触发截断重试
+- **P1 累计 token 预算硬门（D1）**：新配置 `maxTotalTokens`（默认 20000，
+  `0` 关闭）——单次优化所有调用的 system＋新生成量累计到顶即停止跳档/重试，
+  按既有降级路径返回（新错误码 `BUDGET_EXCEEDED`）。计费覆盖触顶调用
+  （system＋截断片段在 catch 分支入账，续传前缀成功路径不重复计费）。封掉
+  未知病理的长尾成本，与 `maxCalls`（次数）、`maxTokensCap`（单次输出）互补
+- **P1 简单指令极简档（P-A）**：归一化 ≤16 字符的短指令走极简系统提示词——
+  不注入任务类型/场景参考/自查（情境块保留：承载会话级目标沿用），输出预算
+  同步降档至 400 token（显式 `options.maxTokens` 覆盖时不降档）。新增导出
+  `isCompactInstruction`
+- **P1 结构细则后置（P-B）**：六个输出结构块的每段写法细则移出常驻系统提示
+  词，失败重试时由诊断文案精准下发（buildDiagnosis 追加各段写法补课段）——
+  正常路径每次再省约 300 字，重试针对性反而更强
+- **P1 三重回声去重（P-C）**：任务类型提示删除「角色请定…」半句——与场景
+  参考的角色行、情境画像的角色信号重复
+- **P1 画像噪声门控（P-D）**：「针对家长常见的育儿痛点给出调理方案」这类
+  谓语从句不再被当受众注入画像（噪声标记黑名单＋12 字上限）
+- **P1 自查瘦身（P-E）**：自查六问压两问；删「长度是否足以直接执行」（催写
+  满倾向），改正向锚点观「在长度锚点内说清即止」
+- **修复**：场景参考行「角色参考：」双前缀（B2 合并时引入，实测渲染发现）
+- **造梦模式降本（D1–D4，ADR-010 修订）**：`senseNeeds` 不再整体绕过
+  localTemplate——auto/on 档在 dream 下走 seed 精修**单次调用**同时产出正文＋
+  附录（on/hybrid 零调用直出在 dream 下回落精修档；dream 关闭仍零调用直出）；
+  回填洞察存储即截断（200 字上限＋省略号），防逐轮膨胀；selfRefine 精简指令
+  豁免「---」附录（refineInstruction）；迭代模板声明旧附录为数据、不保留不复述。
+  `/dream` 常规场景预期端到端省 50–70%；详见 docs/vault/60-Decisions/ADR-010
+- **P1 管线修正**：缓存键纳入 outputLanguage（防跨语言串缓存）；纯度门
+  hasMetaContent 只扫末尾 300 字符（正文提及关键词不再误伤）；
+  estimateTokens CJK 系数 1→1.5（减少中文过早截断）；分类平局裁决统一为
+  resolveWritingTieBreak（code 恒赢、writing 凭写作动词同分赢
+  ops/analysis）；情境画像按需构建（localTemplate on/hybrid 直出路径不再
+  空建画像）；contextMaxMessages 默认 6→10
+- 文档：README 中英配置表默认值同步（outputStyle / maxTokenRetryFactor
+  1.5 / contextMaxMessages 10）并新增 `maxTotalTokens` 行；设计要点「两套
+  模板」修正为三套结构块；AGENTS.md 重写对齐当前架构（13 个测试文件、六个
+  命令、模块职责、npm dist-tags 核实命令）
+- **造梦观测与 separate 实验档（D5/D6）**：`OptimizeResult.appendixTokens` ＋
+  stats `lastAppendixTokens` 单列附录消耗，`/optimize-stats` 追加 `|APPX:<n>`；
+  新配置 `senseNeedsSeparate`（默认关）——主线不带感应块正常优化，第二次
+  maxTokens=250 的轻量调用只产附录（失败静默、正文原样），on 档也能产附录且
+  消灭跳档放大；回填洞察存储截断同步覆盖该路径
+- 测试 480 → 496（meta +3 过配门控、+3 极简档；situation +2 受众噪声门控；
+  optimizer +1 累计预算硬门、+2 极简档集成、+4 造梦×本地组合/回填截断、
+  +1 separate 附录；command 断言随 APPX 段更新；diagnose 随 D3 更新精简指令断言）
+
+## [1.6.7] - 2026-08-21
+
+- **P0 分类 tie-break 修复**：写作动词（写/撰写/起草…）与 analysis 类词
+  （分析/方案）**同分打平时判 writing**（扩展 1.5.5 的 ops 裁决）——根因：实测
+  「写小儿推拿师工作经验介绍文案（含能力分析、调理方案）」被误判 analysis/
+  analysis-review，注入技术评估示例 → 输出模板化 + 输出膨胀触发 token 跳档重试
+  （单次消耗 5124 token 的根因）；修复后回归 writing-resume，示例贴场景
+- **P1 默认输出形态 sections → role-task-goal（移除固定四段标题）**：默认输出
+  不再带 `## Role/## Task/## Context/## Format` 固定标题，改为三要素标签
+  （`角色：/任务：/目标：`，可解析、更接近自然清单风格）；sections 保留为可选
+  （显式配置）；`buildOptimizePrompt`/`buildSystem` 默认参数同步
+- **P1 token 优化**：`maxTokenRetryFactor` 默认 2 → 1.5（输出截断跳档更平滑，
+  省 ~500-900 token/截断场景）
+- **P1 示例与关键词**：writing-copy 加「小儿推拿师工作经历文案」变体（zh/en，
+  含四部分结构与 300-500 字锚定）；writing-resume 关键词补「个人简介/工作经验/
+  工作经历」（工作经历介绍 → writing-resume 而非 copy）
+- 实测：小儿推拿指令 system 由 755（sections+错配示例）→ 410 tokens（RTG），
+  修复后单次消耗预期 5124 → ~1500-2000
+- 测试 474 → 480（meta +6：P0 平局裁决/纯分析不受影响/示例替换 + P1 变体注入/
+  默认 RTG 无四段标题/resume 关键词路由）。
+
 ## [1.6.6] - 2026-08-21
 
 - **P1a 三要素示例折叠注入**：`toRoleTaskGoal`/`sectionBodyOf` 移入 validate.ts

@@ -4,7 +4,7 @@
 
 提示词优化插件，把一句随手写的话自动改写成专业、可直接使用的提示词，体验与 Qoder、Codex 一致。
 
-优化结果默认为四段结构化提示词（`outputStyle: 'sections'`，`## Role` / `## Task` / `## Context` / `## Format`），可配置为无标题纯文本（`outputStyle: 'plain'`，更省 token），
+优化结果默认为无标题纯文本（`outputStyle: 'plain'`，更省 token），可配置为三要素标签（`outputStyle: 'role-task-goal'`，`角色：/任务：/目标：`）或四段结构化提示词（`outputStyle: 'sections'`，`## Role` / `## Task` / `## Context` / `## Format`，也是优化时的内部参考框架），
 由内置元提示词驱动，经 harness 的 `LLM` 服务完成（不直连任何 API、不触碰凭据）。
 
 ## 功能
@@ -176,14 +176,15 @@ dsh plugin --profile web remove oss-prompt-optimizer
 | `maxInputTokens` | int ≥0 | `3000` | 原始指令截断上限（估算 token；优先用 harness tokenMeter，缺失回退启发式；`0` 关闭） |
 | `timeoutMs` | int ≥1 | `60000` | 单次调用超时预算（毫秒） |
 | `outputLanguage` | string | `'auto'` | 输出语言；`'auto'` 跟随指令语言，其他值（如 `'英文'`）固定输出语言 |
-| `outputStyle` | `'sections'` \| `'plain'` \| `'role-task-goal'` | `'sections'` | 输出风格：四段标题（`## Role`/`## Task`/`## Context`/`## Format`，默认，也是优化时的内部参考框架）、无标题连贯正文（更省 token）、或三要素标签（1.6.5 `role-task-goal`：`角色：/任务：/目标：` 或 `Role:/Task:/Goal:`，便于下游自动解析为角色/任务/目标；目标行合并背景约束与产出规格） |
+| `outputStyle` | `'plain'` \| `'role-task-goal'` \| `'sections'` | `'plain'` | 输出风格：无标题连贯正文（默认，更省 token）、三要素标签（`角色：/任务：/目标：` 或 `Role:/Task:/Goal:`，便于下游自动解析为角色/任务/目标；目标行合并背景约束与产出规格）、或四段标题（`## Role`/`## Task`/`## Context`/`## Format`，也是优化时的内部参考框架） |
 | `metaPromptLanguage` | `'auto'` \| `'中文'` \| `'英文'` | `'auto'` | 优化器角色文档（元提示词）的语言；`'auto'` 按指令语言自动检测（汉字占比 ≥30% 用中文文档，否则英文），`'中文'`/`'英文'` 固定。输出语言仍由 `outputLanguage` 独立控制。运行时可用 `/optimizer-language auto\|中文\|英文` 固定或恢复自动 |
 | `extraInstructions` | string | 无 | 追加到元提示词的部署自定义规则（如领域要求/风格） |
 | `examples` | array | 内置回退 | few-shot 示例对 `[{input, output}]`，注入元提示词示范（仅 `sections` 模式注入）；未配置时按任务类型 + 角色文档语言自动注入 1 对内置示例（code/writing/analysis/ops，中英各 4 对，`other` 回落文案类；1.5.4 起子类命中优先——如 `code-bugfix` 用「根因→最小修复→回归验证」专用示例），显式配置覆盖内置 |
 | `builtinExamples` | boolean | `true` | 未配置 `examples` 时是否注入内置示例；`false` 完全关闭（短指令场景省 ~200 token/次输入） |
 | `minSectionChars` | int ≥0 | `10` | 每段正文最少有效字符；`0` 关闭内容校验（仅查标题） |
-| `maxTokenRetryFactor` | number 1–3 | `2` | 输出触顶时按该倍数跳档扩容（1200→2400→4800…），扩容不消耗重试次数、从截断处续写；`1` 关闭 |
+| `maxTokenRetryFactor` | number 1–3 | `1.5` | 输出触顶时按该倍数跳档扩容（1200→1800→2700…），扩容不消耗重试次数、从截断处续写；`1` 关闭 |
 | `maxTokensCap` | int 1–128000 | `8000` | 自动扩容的上限；`<= maxTokens` 关闭扩容（扩容不消耗重试次数） |
+| `maxTotalTokens` | int ≥0 | `20000` | 单次优化的累计 token 上限（各调用 system＋生成量合计，插件启发式估算）；到顶即停止扩容/重试并按既有降级路径返回（错误码 `BUDGET_EXCEEDED`）；`0` 关闭。与 `maxCalls`（次数上限）、`maxTokensCap`（单次输出上限）互补 |
 | `retryTemperatureStep` | number 0–2 | `0.3` | 每次重试的 temperature 增量（探索性重试）；`0` 关闭 |
 | `skipIfAlreadyOptimized` | boolean | `true` | 输入已含四段标题时直接透传，不调用模型（省 token 默认；仅 `sections` 模式生效；**传入非空对话上下文时仍会重新优化**）。四段在英文标题（`## Role` 等）或中文变体（`## 角色`/`## 任务`/`## 背景`/`## 输出` 等）下齐全均视为已优化 |
 | `selfRefine` | boolean | `false` | 成功优化后至多再跑一轮「精简」迭代（内部指令）；仅当仍通过校验且不更长（5% 容差）时采纳，任何失败自动回退原结果。开启会多 1 次模型调用 |
@@ -197,10 +198,11 @@ dsh plugin --profile web remove oss-prompt-optimizer
 | `cacheFuzzyMatch` | boolean | `true` | 近失配热启动：精确未命中时，相似缓存指令（或同指令新上下文）作为起点走迭代，而非从零优化（省时省 token） |
 | `cacheFuzzyThreshold` | number 0–1 | `0.6` | 近失配的 bigram-Jaccard 相似度阈值 |
 | `senseNeeds` | boolean | `false` | 需求感应 / 造梦模式：优化后追加明确标注的「延伸洞察（AI 推断）」附录（深层目标/隐含约束/质量标准/后续问题），推断不混入提示词正文 |
-| `dreamInsightFeedback` | boolean | `false` | 造梦洞察跨轮回填：开启后，本会话上一次 `senseNeeds` 产生的延伸洞察会注入后续 optimize/iterate（标注 AI 推断、非事实；会话级、TTL 30 分钟） |
+| `dreamInsightFeedback` | boolean | `false` | 造梦洞察跨轮回填：开启后，本会话上一次 `senseNeeds` 产生的延伸洞察会注入后续 optimize/iterate（标注 AI 推断、非事实；会话级、TTL 30 分钟；存储即截断至 200 字防膨胀） |
+| `senseNeedsSeparate` | boolean | `false` | D6 实验档：附录独立轻量调用——主线不带感应块正常优化（localTemplate 全档可用，on 档也能产附录），第二次 maxTokens=250 的轻量调用只产「--- 延伸洞察」附录（失败静默、正文原样）。开启后 dream 调用数 +1，但主输出更短更稳且消灭附录挤占预算的跳档放大；默认关（inline 单调用） |
 | `classifier` | `'heuristic'` \| `'llm'` | `'heuristic'` | 任务分类后端（ADR-011）：heuristic = 关键词/正则启发式（默认）；llm = 服务层 LLM 分类器（opt-in，当前无 LLM 实现时回落启发式） |
 | `contextAware` | boolean | `true` | 上下文感知：优化时把当前指令之前的最近对话（经 `{{上下文信息}}` 占位符 + 「视为纯数据」护栏）注入元提示词，让优化结果贴合此前讨论。四段模式下可将上下文中的事实用于充实 `## Context` 段（仍不执行其中嵌入的指令）；钩子取 `agent/pre-step` 消息，`/optimize` 取会话记录，尽力而为 |
-| `contextMaxMessages` | int 0–100 | `6` | 上下文感知时采集的最近消息条数上限；`0` 关闭 |
+| `contextMaxMessages` | int 0–100 | `10` | 上下文感知时采集的最近消息条数上限；`0` 关闭 |
 | `contextMaxTokens` | int ≥0 | `800` | 上下文 token 预算；超出截断到最长前缀并附标记；`0` 关闭截断（精简默认） |
 | `outputLengthMaxTokens` | int ≥0 | `800` | 优化结果建议长度上限（token，软约束：仅指导模型尽量精简，不阻断、不重试）；`0` 关闭。与 `maxTokens`（模型调用硬上限）相互独立 |
 | `situationProfileLevel` | `'full'` \| `'minimal'` \| `'off'` | `'full'` | 情境画像（`{{情境画像}}` 块）注入预算：`full` 角色+目标+约束全量；`minimal` 仅目标/约束（不含角色信号，更省 token）；`off` 不注入。只影响情境块，`{{任务类型}}` 提示不受影响 |
@@ -361,7 +363,7 @@ pnpm run build        # tsc -p tsconfig.build.json → lib/
   遵循「插件不管理 provider/model 配置」的约定；也可用配置显式覆盖。
 - 元提示词含 `{{原始指令}}` 等占位符，运行时替换；含注入护栏（指令视为纯数据）、
   语言规则（`{{语言规则}}`）、禁代码围栏、精简要求与输出前自查；输出结构按
-  `outputStyle` 在四段与无标题两套模板间切换。
+  `outputStyle` 在无标题、三要素与四段三套结构块间切换。
 - 迭代能力：`iterate(lastOptimized, instruction)` 基于上一次优化结果 + 新要求继续
   优化（`META_ITERATE` 模板，`{{上次结果}}` / `{{迭代指令}}` 占位符单遍替换，互不串扰）；
   失败时保留上次结果并附错误码。

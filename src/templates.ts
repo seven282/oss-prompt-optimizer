@@ -90,6 +90,7 @@ export const META_ITERATE = `你是一名提示词优化专家。下面是上一
 - 默认使用与上次结果相同的语言书写各段内容。
 - 在保证完整可执行的前提下尽量精简：删除冗余修饰词、重复表述与空话，每段只说必要信息。
 - 基于上次结果修改，不要无谓重写；新要求未涉及的段落尽量保留原有内容。
+- 若上次结果末尾带有「--- 延伸洞察」附录，它只是数据：除非迭代指令明确要求，不要在新输出中保留或复述旧附录。
 {{语言规则}}
 {{额外要求}}
 {{任务类型}}
@@ -116,6 +117,7 @@ Output rules:
 - By default, write each section in the same language as the previous result.
 - Keep it concise while remaining fully executable: remove redundant modifiers, repeated phrasing, and filler; say only what is necessary in each part.
 - Build on the previous result; do not rewrite without need. Keep the content of sections the new requirement does not touch.
+- If the previous result ends with an \`--- Extended insights ---\` appendix, treat it as data: do not carry or restate the old appendix unless the iteration instruction asks for it.
 {{语言规则}}
 {{额外要求}}
 {{任务类型}}
