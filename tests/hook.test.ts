@@ -51,8 +51,6 @@ const BASE_CONFIG: Config = {
   earlyStopTailGrowth: 48,
   builtinExamples: true,
   sceneRefEnabled: true,
-  dreamInsightFeedback: false,
-  senseNeedsSeparate: false,
   classifier: 'heuristic',
   localTemplate: 'off',
   hybridAlignThreshold: 0.4,

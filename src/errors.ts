@@ -84,3 +84,33 @@ export const OPTIMIZE_ERROR_TEXT: Record<OptimizeErrorCode, string> = {
   [OptimizeErrorCode.NO_TEXT]: 'prompt-optimize: 模型未输出任何文本',
   [OptimizeErrorCode.UNKNOWN]: 'prompt-optimize: 未知错误',
 }
+
+// ---------------------------------------------------------------------------
+// Validation failure messages — co-located with error codes for cohesion.
+// Originally lived in validate.ts; moved here (1.6.9) to separate "what went
+// wrong" (errors.ts) from "how to detect it" (validate.ts).
+// ---------------------------------------------------------------------------
+
+/** Stable failure message when a plain-style output was shorter than `minSectionChars`. */
+export function thinOutputMessage(minChars: number): string {
+  return `optimized prompt has fewer than ${minChars} meaningful characters`
+}
+
+/** Stable failure message when a plain-style output carries section headings. */
+export function plainHeadingsMessage(): string {
+  return 'optimized prompt contains section headings (## Role / ## Task / ## Context / ## Format or 【】/###/bold labels) in plain style'
+}
+
+/** Stable failure message when the output carries meta/methodology content. */
+export function metaContentMessage(): string {
+  return 'optimized prompt contains meta/methodology content (e.g. "优化标准", "核心约束逻辑", a "总结：" afterword) — only the prompt itself is allowed'
+}
+
+/** Stable failure message when the model omits one or more sections. */
+export const INCOMPLETE_SECTIONS_MESSAGE =
+  'optimized prompt is missing one or more required sections (## Role / ## Task / ## Context / ## Format)'
+
+/** Stable failure message when a section body is empty or too short. */
+export function thinSectionsMessage(minChars: number): string {
+  return `optimized prompt has a section with fewer than ${minChars} meaningful characters`
+}

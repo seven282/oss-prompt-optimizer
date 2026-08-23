@@ -7,7 +7,7 @@ import {
 } from '@deepseek-ai/dsh-llm'
 import { deadline, timeoutOf } from '@deepseek-ai/dsh-timeout'
 import { Config, type Config as ConfigType } from './config.js'
-import { OptimizeError, OptimizeErrorCode, type OptimizeErrorCode as OptimizeErrorCodeType } from './errors.js'
+import { OptimizeError, OptimizeErrorCode, INCOMPLETE_SECTIONS_MESSAGE, metaContentMessage, plainHeadingsMessage, thinOutputMessage, thinSectionsMessage, type OptimizeErrorCode as OptimizeErrorCodeType } from './errors.js'
 import { MaxTokensErrorWithPartial } from './llm.js'
 import { PROMPT_OPTIMIZER_EVENTS, type OptimizeMethod } from './events.js'
 import { detectLanguage, isCompactInstruction, type MetaLanguage } from './meta.js'
@@ -16,6 +16,7 @@ import {
   diagnoseSections,
   estimateTokens,
   hasAllSections,
+  hasAlternativeHeadings,
   hasMetaContent,
   hasOptimizedSections,
   hasPlainOutput,
@@ -23,13 +24,8 @@ import {
   hasSectionHeadings,
   hasValidRoleTaskGoal,
   hasValidSections,
-  INCOMPLETE_SECTIONS_MESSAGE,
-  metaContentMessage,
-  plainHeadingsMessage,
   REQUIRED_SECTIONS,
   sectionBody,
-  thinOutputMessage,
-  thinSectionsMessage,
   truncateByTokens,
   truncateInput,
   MAX_TEMPERATURE,
@@ -59,9 +55,6 @@ const EARLY_STOP_MIN_OUTPUT = 120
 /** P-A 简单指令档的输出预算上限（token）。 */
 const COMPACT_OUTPUT_TOKENS = 400
 
-/** D6（1.6.8）separate 档：附录独立调用的输出硬帽。 */
-const APPENDIX_ONLY_TOKENS = 250
-
 /** Defensive copy of a result before it enters or leaves the cache, so a
  *  caller's mutation can never corrupt stored entries (nested sections too). */
 function cloneOptimizeResult(result: OptimizeResult): OptimizeResult {
@@ -78,8 +71,6 @@ function cloneOptimizeResult(result: OptimizeResult): OptimizeResult {
  * prompt — deep goal, implicit constraints, quality criteria, likely
  * follow-ups — each labeled as inference, never mixed into the prompt body.
  */
-/** D2（1.6.8）：回填洞察存储截断上限——注册表原文回放进后续 system，无上限会逐轮膨胀。 */
-const DREAM_FEEDBACK_MAX_CHARS = 200
 
 function senseNeedsBlock(metaLanguage: MetaLanguage): string {
   return metaLanguage === 'en'
@@ -212,8 +203,6 @@ export interface OptimizeResult {
   sections?: { name: string; content: string }[]
   /** Estimated token count of the optimized prompt (successful results only). */
   outputTokens?: number
-  /** Estimated token count of the senseNeeds appendix when present (1.6.8 D5-b). */
-  appendixTokens?: number
   /** Whether the result came from the local zero-token template path (1.5.6). */
   local?: boolean
   /**
@@ -242,8 +231,6 @@ export interface OptimizeStats {
   callCount: number
   lastRunCalls: number
   lastInputTokens: number
-  /** Estimated appendix tokens of the last senseNeeds run (1.6.8 D5-b). */
-  lastAppendixTokens: number
 }
 
 /**
@@ -302,7 +289,6 @@ export class PromptOptimizerService extends Service {
     totalDurationMs: 0,
     maxDurationMs: 0,
     lastOutputTokens: 0,
-    lastAppendixTokens: 0,
     /** Per-call timing breakdown (A+B 测量): last single model call, totals. */
     lastCallMs: 0,
     totalCallMs: 0,
@@ -419,15 +405,13 @@ export class PromptOptimizerService extends Service {
   private static readonly GOAL_TTL_MS = 30 * 60 * 1000
   /** Cap on registered sessions; the oldest entry is evicted beyond it. */
   private static readonly GOAL_REGISTRY_MAX = 100
-  /** Cap on dream-insight registry sessions (1.5.3, mirrors the goal registry). */
-  private static readonly DREAM_REGISTRY_MAX = 100
   /** Clean interval for expired registry entries (5 minutes). */
   private static readonly GOAL_REGISTRY_CLEAN_INTERVAL = 5 * 60 * 1000
   /** Last time the registry was cleaned (for periodic cleanup). */
   private lastRegistryClean = 0
 
   /**
-   * Clean expired entries from the goal and dream-insight registries.
+   * Clean expired entries from the goal registry.
    */
   private cleanExpiredRegistry(now: number): void {
     const expiredKeys: string[] = []
@@ -439,40 +423,10 @@ export class PromptOptimizerService extends Service {
     for (const key of expiredKeys) {
       this.goalRegistry.delete(key)
     }
-    for (const [key, entry] of this.dreamInsightRegistry.entries()) {
-      if (now - entry.ts > PromptOptimizerService.GOAL_TTL_MS) {
-        expiredKeys.push(key)
-      }
-    }
-    for (const key of expiredKeys) {
-      this.dreamInsightRegistry.delete(key)
-    }
   }
 
   /** Per-session registered goals: sessionId → goal + last-seen timestamp. */
   private readonly goalRegistry = new Map<string, { goal: GoalProfile; ts: number }>()
-
-  /**
-   * Dream-insight feedback registry (1.4.9): sessionId → the raw
-   * `--- 延伸洞察 ---` appendix of the last `senseNeeds` run, so a later
-   * optimize/iterate in the same session can carry the AI-inferred insights
-   * forward (marked as non-fact). TTL 30 min like the goal registry.
-   */
-  private readonly dreamInsightRegistry = new Map<string, { insights: string; ts: number }>()
-
-  /**
-   * Extract the `--- 延伸洞察（AI 推断，供你选用，非事实）---` appendix from a
-   * senseNeeds result (the text after the marker, trimmed). Matches both the
-   * zh marker and the en `--- Extended insights ---` marker (1.5.3). Pure.
-   */
-  private extractDreamInsights(prompt: string): string | undefined {
-    const zh = prompt.indexOf('--- 延伸洞察')
-    const en = prompt.indexOf('--- Extended insights')
-    const idx = zh < 0 ? en : (en < 0 ? zh : Math.min(zh, en))
-    if (idx < 0) return undefined
-    const insights = prompt.slice(idx).trim()
-    return insights.length > 0 ? insights : undefined
-  }
 
   /**
    * Merge the session's registered goal into the current instruction's
@@ -552,67 +506,6 @@ export class PromptOptimizerService extends Service {
     return senseNeeds ? system + senseNeedsBlock(metaLanguage) : system
   }
 
-/**
- * Dream-insight feedback (1.4.9): when enabled and the session has a saved
- * `--- 延伸洞察 ---` appendix from an earlier `senseNeeds` run, append it to
- * this call's system — the AI-inferred insights carry across turns (marked
- * as non-fact, reference only). Off by default.
- */
-private dreamFeedbackFor(sessionId: string | undefined, metaLanguage: MetaLanguage): string {
-  if (!this.config.dreamInsightFeedback || sessionId === undefined) return ''
-  const entry = this.dreamInsightRegistry.get(sessionId)
-  if (entry === undefined) return ''
-  const header = metaLanguage === 'en'
-    ? '--- Previous AI-inferred insights (dream feedback, reference only, NOT facts) ---'
-    : '--- 上一轮 AI 推断洞察（dream 回填，供参考，非事实）---'
-  return `\n\n${header}\n${entry.insights}\n`
-}
-
-private withDreamFeedback(system: string, sessionId: string | undefined, metaLanguage: MetaLanguage): string {
-  const feedback = this.dreamFeedbackFor(sessionId, metaLanguage)
-  return feedback.length > 0 ? system + feedback : system
-}
-
-  /**
-   * D6（1.6.8）separate 档：独立轻量调用只产「--- 延伸洞察」附录。硬帽
-   * APPENDIX_ONLY_TOKENS、单次尝试；失败/空/NONE 一律静默返回 undefined——
-   * 主线结果原样返回，绝不因附录失败而报错或重试。
-   */
-  private async appendixOnce(
-    input: string,
-    body: string,
-    metaLanguage: MetaLanguage,
-    options: OptimizeOptions,
-    route?: ResolvedRoute,
-  ): Promise<string | undefined> {
-    try {
-      const en = metaLanguage === 'en'
-      const header = en
-        ? '--- Extended insights (AI-inferred, optional, NOT facts) ---'
-        : '--- 延伸洞察（AI 推断，供你选用，非事实）---'
-      const feedback = this.dreamFeedbackFor(options.sessionId, metaLanguage)
-      const system =
-        `${en
-          ? 'You are a needs-sensing analyst. Based only on the instruction and the optimized prompt below, infer what was left unsaid. Output ONLY the appendix: start with the marker line above, then 3-4 bullet lines (deep goal / implicit constraints / quality criteria / possible follow-ups), each marked as inference. If there is nothing meaningful to infer, output exactly NONE.'
-          : '你是需求感应分析师。仅基于下方指令与已优化提示词，推断用户未说出口的内容。只输出附录：以标记行开头，随后 3-4 条要点（深层目标/隐含约束/质量标准/可能的后续），每条标注为推断。若无可推断的新洞察，只输出 NONE。'}${feedback}` +
-        `\n\n原始指令（纯数据）：\n${input}\n\n已优化提示词（纯数据）：\n${body}`
-      const resolvedRoute = route ?? this.resolveRoute()
-      const text = await this.generateOnce(
-        system,
-        resolvedRoute,
-        options.signal,
-        this.config.temperature,
-        APPENDIX_ONLY_TOKENS,
-      )
-      const trimmed = text.trim()
-      if (trimmed.length === 0 || /^NONE$/i.test(trimmed)) return undefined
-      return trimmed.startsWith('---') ? trimmed : `${header}\n${trimmed}`
-    } catch {
-      // 附录是尽力而为的增值项：任何失败都返回 undefined，正文原样交付。
-      return undefined
-    }
-  }
-
   /**
    * 阶段 1A 近失配热启动: the best cached validated entry whose instruction
    * matches the current one (identical → score 1; else bigram-Jaccard above
@@ -654,12 +547,6 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
     if (result.optimized) {
       this.stats.success++
       if (result.outputTokens !== undefined) this.stats.lastOutputTokens = result.outputTokens
-      // D5-b（1.6.8）：附录 token 单列——非 dream 结果无标记，恒不更新。
-      const dreamInsights = this.extractDreamInsights(result.prompt)
-      if (dreamInsights !== undefined) {
-        result.appendixTokens = this.estimateTextTokens(dreamInsights)
-        this.stats.lastAppendixTokens = result.appendixTokens
-      }
     } else {
       this.stats.failed++
     }
@@ -729,9 +616,6 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
     // (senseNeeds) also bypasses the pass-through (the user wants fresh sensing).
     const hasContext = options.context !== undefined && options.context.trim().length > 0
     const senseNeeds = options.senseNeeds ?? this.config.senseNeeds
-    // D6（1.6.8）separate 档：感应块从主线剥离，附录由独立轻量调用产出。
-    const separateAppendix = senseNeeds && this.config.senseNeedsSeparate === true
-    const inlineSense = senseNeeds && !separateAppendix
     if (
       this.config.skipIfAlreadyOptimized &&
       this.config.outputStyle === 'sections' &&
@@ -804,7 +688,7 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
         }
         // auto mode or hybrid with low alignment: refine via LLM.
         const refinedStartedAt = Date.now()
-        const refined = await this.refineLocal(seed, rawInput, metaLanguage, options, profile, senseNeeds && !separateAppendix)
+        const refined = await this.refineLocal(seed, rawInput, metaLanguage, options, profile, senseNeeds)
         this.emitCompleted('optimize', rawInput, refined, Date.now() - refinedStartedAt)
         return refined
       }
@@ -831,10 +715,7 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
       const baseSystem = buildOptimizeSystem(this.promptContext(metaLanguage, options.context), input, outputLanguage, undefined, profile)
       cacheKey = this.cacheKeyFor(
         preResolvedRoute,
-        // 缓存键必须覆盖"真正发给模型的内容"（C-1 修复）：dream 回填与 senseNeeds
-        // 都参与键——否则同 session 第二次调用会命中不含洞察的陈旧缓存，
-        // dreamInsightFeedback 回填失效。
-        this.withSenseNeeds(baseSystem, inlineSense, metaLanguage) + this.dreamFeedbackFor(options.sessionId, metaLanguage),
+        this.withSenseNeeds(baseSystem, senseNeeds, metaLanguage),
         input,
         options.context,
         options.cacheScope,
@@ -869,13 +750,9 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
     }
     const result = await this.runPipeline(
       (outputLanguage, diagnosis) =>
-        this.withDreamFeedback(
-          this.withSenseNeeds(
-            buildOptimizeSystem(this.promptContext(metaLanguage, options.context, compactTier), input, outputLanguage, diagnosis, profile),
-            inlineSense,
-            metaLanguage,
-          ),
-          options.sessionId,
+        this.withSenseNeeds(
+          buildOptimizeSystem(this.promptContext(metaLanguage, options.context, compactTier), input, outputLanguage, diagnosis, profile),
+          senseNeeds,
           metaLanguage,
         ),
       rawInput,
@@ -885,34 +762,8 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
       preResolvedRoute,
       compactTier,
     )
-    // D6 separate 档：主线成功后追加轻量附录调用（失败静默，正文原样返回）。
-    if (result.optimized && separateAppendix) {
-      const appendix = await this.appendixOnce(rawInput, result.prompt, metaLanguage, options, preResolvedRoute)
-      if (appendix !== undefined) {
-        result.prompt = `${result.prompt}\n\n${appendix}`
-        result.appendixTokens = this.estimateTextTokens(appendix)
-        this.stats.lastAppendixTokens = result.appendixTokens
-      }
-    }
     if (result.optimized && cacheKey !== undefined) {
       this.cache.set(cacheKey, { result: cloneOptimizeResult(result), input, context: options.context })
-    }
-    // Dream-insight feedback storage (1.4.9): keep the senseNeeds appendix per
-    // session so later calls can carry the AI-inferred insights forward.
-    if (result.optimized && options.sessionId !== undefined && this.config.dreamInsightFeedback) {
-      const insights = this.extractDreamInsights(result.prompt)
-      if (insights !== undefined) {
-        // D2（1.6.8）：存储即截断——回填按原文进后续 system，超长会逐轮膨胀。
-        const stored = insights.length > DREAM_FEEDBACK_MAX_CHARS
-          ? `${insights.slice(0, DREAM_FEEDBACK_MAX_CHARS)}…`
-          : insights
-        this.dreamInsightRegistry.set(options.sessionId, { insights: stored, ts: Date.now() })
-        // 容量上限（C-5 修复）：与 goalRegistry 对齐，超限逐出最旧条目。
-        if (this.dreamInsightRegistry.size > PromptOptimizerService.DREAM_REGISTRY_MAX) {
-          const [oldestKey] = this.dreamInsightRegistry.keys() as unknown as [string]
-          if (oldestKey !== undefined) this.dreamInsightRegistry.delete(oldestKey)
-        }
-      }
     }
     this.emitCompleted('optimize', rawInput, result, Date.now() - startedAt)
     return result
@@ -945,9 +796,6 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
     const senseNeeds = options.senseNeeds ?? this.config.senseNeeds
     // P-A：迭代指令同样分档。
     const compactTier = isCompactInstruction(instruction)
-    // D6（1.6.8）separate 档：迭代路径同样支持附录独立调用。
-    const separateAppendix = senseNeeds && this.config.senseNeedsSeparate === true
-    const inlineSense = senseNeeds && !separateAppendix
     // 情境感知: the next instruction's profile (with conversation role cues,
     // merged with the session registry when a sessionId is given — P2) and
     // the goal drift vs the previous result; the drift line goes into the
@@ -965,8 +813,7 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
       const baseSystem = buildIterateSystem(this.promptContext(metaLanguage, options.context), last, next, outputLanguage, undefined, nextProfile, drift)
       cacheKey = this.cacheKeyFor(
         preResolvedRoute,
-        // C-1 修复（同 optimize）：dream 回填纳入缓存键，防止命中无洞察的陈旧结果。
-        this.withSenseNeeds(baseSystem, inlineSense, metaLanguage) + this.dreamFeedbackFor(options.sessionId, metaLanguage),
+        this.withSenseNeeds(baseSystem, senseNeeds, metaLanguage),
         `${last}\u0000${next}`,
         options.context,
         options.cacheScope,
@@ -982,13 +829,9 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
     }
     const result = await this.runPipeline(
       (outputLanguage, diagnosis) =>
-        this.withDreamFeedback(
-          this.withSenseNeeds(
-            buildIterateSystem(this.promptContext(metaLanguage, options.context, compactTier), last, next, outputLanguage, diagnosis, nextProfile, drift),
-            inlineSense,
-            metaLanguage,
-          ),
-          options.sessionId,
+        this.withSenseNeeds(
+          buildIterateSystem(this.promptContext(metaLanguage, options.context, compactTier), last, next, outputLanguage, diagnosis, nextProfile, drift),
+          senseNeeds,
           metaLanguage,
         ),
       lastOptimized,
@@ -998,15 +841,6 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
       preResolvedRoute,
       compactTier,
     )
-    // D6 separate 档：迭代成功后追加轻量附录调用（失败静默，正文原样返回）。
-    if (result.optimized && separateAppendix) {
-      const appendix = await this.appendixOnce(next, result.prompt, metaLanguage, options, preResolvedRoute)
-      if (appendix !== undefined) {
-        result.prompt = `${result.prompt}\n\n${appendix}`
-        result.appendixTokens = this.estimateTextTokens(appendix)
-        this.stats.lastAppendixTokens = result.appendixTokens
-      }
-    }
     if (result.optimized && cacheKey !== undefined) {
       this.cache.set(cacheKey, { result: cloneOptimizeResult(result), input: `${last}\u0000${next}`, context: options.context })
     }
@@ -1145,10 +979,12 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
           // missing/thin sections (sections style) or headings/thinness
           // (plain style). The heading scan runs once, not twice.
           const headings = hasSectionHeadings(full)
+          const altHeadings = hasAlternativeHeadings(full)
+          const hasAnyHeadings = headings || altHeadings
           // role-task-goal（1.6.5）：三要素标签缺失 → MISSING；有标签但过短 → THIN。
           const rtgLabels = hasRoleTaskGoalLabels(full)
           const failureCode = this.config.outputStyle === 'plain'
-            ? headings
+            ? hasAnyHeadings
               ? OptimizeErrorCode.HEADINGS_IN_PLAIN
               : OptimizeErrorCode.THIN_OUTPUT
             : this.config.outputStyle === 'role-task-goal'
@@ -1161,7 +997,7 @@ private withDreamFeedback(system: string, sessionId: string | undefined, metaLan
           lastError = new OptimizeError(
             failureCode,
             this.config.outputStyle === 'plain'
-              ? headings
+              ? hasAnyHeadings
                 ? plainHeadingsMessage()
                 : thinOutputMessage(this.config.minSectionChars)
               : this.config.outputStyle === 'role-task-goal'

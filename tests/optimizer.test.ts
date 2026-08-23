@@ -70,8 +70,6 @@ const DEFAULT_CONFIG: Config = {
   earlyStopTailGrowth: 48,
   builtinExamples: true,
   sceneRefEnabled: true,
-  dreamInsightFeedback: false,
-  senseNeedsSeparate: false,
   classifier: 'heuristic',
   localTemplate: 'off',
   hybridAlignThreshold: 0.4,
@@ -1245,119 +1243,6 @@ describe('PromptOptimizerService custom templates', () => {
     const state = makeCtx([])
     expect(() => makeService(state, { ...DEFAULT_CONFIG, templateId: 'custom' }))
       .toThrow(/unknown templateId "custom"/)
-  })
-})
-
-describe('dream insight feedback (1.4.9)', () => {
-  it('carries the senseNeeds appendix into the next call of the same session', async () => {
-    const insight = '--- 延伸洞察（AI 推断，供你选用，非事实）---\n· 深层目标：得到可直接落地的方案\n· 隐含约束：不引入新依赖'
-    const state = makeCtx([textStream(`${FOUR_SECTIONS}\n\n${insight}`), textStream(FOUR_SECTIONS)])
-    const service = makeService(state, { ...DEFAULT_CONFIG, dreamInsightFeedback: true })
-    const first = await service.optimize('帮我写方案', { sessionId: 's1', senseNeeds: true })
-    expect(first.optimized).toBe(true)
-    const second = await service.optimize('继续细化', { sessionId: 's1' })
-    expect(second.optimized).toBe(true)
-    // 第二次调用（同 session、非 senseNeeds）system 应携带上一轮洞察回填
-    expect(state.streamCalls[1].system).toContain('延伸洞察')
-  })
-
-  it('does not inject dream insights when feedback is off', async () => {
-    const insight = '--- 延伸洞察（AI 推断，供你选用，非事实）---\n· 深层目标：目标'
-    const state = makeCtx([textStream(`${FOUR_SECTIONS}\n\n${insight}`), textStream(FOUR_SECTIONS)])
-    const service = makeService(state, { ...DEFAULT_CONFIG, dreamInsightFeedback: false })
-    await service.optimize('帮我写方案', { sessionId: 's1', senseNeeds: true })
-    await service.optimize('继续细化', { sessionId: 's1' })
-    expect(state.streamCalls[1].system).not.toContain('延伸洞察')
-  })
-
-  it('does not serve a stale cache hit once dream insights exist (C-1 fix)', async () => {
-    const insight = '--- 延伸洞察（AI 推断，供你选用，非事实）---\n· 深层目标：得到可直接落地的方案'
-    const state = makeCtx([textStream(`${FOUR_SECTIONS}\n\n${insight}`), textStream(FOUR_SECTIONS)])
-    const service = makeService(state, { ...DEFAULT_CONFIG, dreamInsightFeedback: true })
-    await service.optimize('帮我写方案', { sessionId: 's1', senseNeeds: true })
-    const second = await service.optimize('帮我写方案', { sessionId: 's1' })
-    expect(second.optimized).toBe(true)
-    // 修复前：第二次命中不含洞察的旧缓存（仅 1 次流调用）；修复后：缓存键含
-    // dream 回填 → 不命中 → 重新生成（2 次流调用），且第二次 system 携带洞察。
-    expect(state.streamCalls).toHaveLength(2)
-    expect(state.streamCalls[1].system).toContain('上一轮 AI 推断洞察')
-  })
-
-  it('uses the English dream block and extracts the en marker (M-1 fix)', async () => {
-    const insight = '--- Extended insights (AI-inferred, optional, NOT facts) ---\n· Deep goal: X'
-    const state = makeCtx([textStream(`${FOUR_SECTIONS}\n\n${insight}`), textStream(FOUR_SECTIONS)])
-    const service = makeService(state, { ...DEFAULT_CONFIG, dreamInsightFeedback: true, metaPromptLanguage: '英文' })
-    await service.optimize('write a plan', { sessionId: 's1', senseNeeds: true })
-    expect(state.streamCalls[0].system).toContain('Needs sensing (dream mode)')
-    const second = await service.optimize('write a plan', { sessionId: 's1' })
-    expect(state.streamCalls).toHaveLength(2)
-    expect(state.streamCalls[1].system).toContain('Previous AI-inferred insights')
-    expect(state.streamCalls[1].system).toContain('Deep goal: X')
-  })
-})
-
-describe('dream × localTemplate composition (1.6.8 D1/D2)', () => {
-  it('composes seed refinement with the dream appendix under senseNeeds (D1)', async () => {
-    // auto 档：seed 精修单次调用同时产出正文＋附录——不再整体绕过本地路径。
-    const state = makeCtx([textStream(FOUR_SECTIONS)])
-    const service = makeService(state, { ...DEFAULT_CONFIG, localTemplate: 'auto' })
-    const result = await service.optimize('帮我写周报', { signal: new AbortController().signal, senseNeeds: true })
-    expect(result.optimized).toBe(true)
-    expect(result.local).toBe(true)
-    expect(state.streamCalls).toHaveLength(1)
-    const system = state.streamCalls[0]?.system ?? ''
-    expect(system).toContain('本地参考模板')
-    expect(system).toContain('延伸洞察')
-  })
-
-  it('falls back from on-mode direct render to refinement under dream (D1)', async () => {
-    // on 直出无模型调用、无法产附录——dream 下回落精修档。
-    const state = makeCtx([textStream(FOUR_SECTIONS)])
-    const service = makeService(state, { ...DEFAULT_CONFIG, localTemplate: 'on' })
-    const result = await service.optimize('帮我写周报', { signal: new AbortController().signal, senseNeeds: true })
-    expect(result.local).toBe(true)
-    expect(state.streamCalls).toHaveLength(1)
-    expect(state.streamCalls[0]?.system).toContain('延伸洞察')
-  })
-
-  it('keeps zero-token direct render when dream is off (regression)', async () => {
-    const state = makeCtx([])
-    const service = makeService(state, { ...DEFAULT_CONFIG, localTemplate: 'on' })
-    const result = await service.optimize('帮我写周报', { signal: new AbortController().signal })
-    expect(result.local).toBe(true)
-    expect(state.streamCalls).toHaveLength(0)
-  })
-
-  it('truncates stored dream insights before replay (D2)', async () => {
-    const LONG_TAIL = '截断线之后的长尾标记句子XYZ'
-    const longAppendix = `--- 延伸洞察（AI 推断，供你选用，非事实）---\n· 深层目标：推断用户真正想达成的结果\n${'填充内容。'.repeat(30)}${LONG_TAIL}`
-    const state = makeCtx([
-      textStream(`${FOUR_SECTIONS}\n\n${longAppendix}`),
-      textStream(FOUR_SECTIONS),
-    ])
-    const service = makeService(state, { ...DEFAULT_CONFIG, dreamInsightFeedback: true })
-    await service.optimize('写一份完整的方案说明文档', { sessionId: 's9', senseNeeds: true })
-    const second = await service.optimize('换一个完全不同的主题重写', { sessionId: 's9' })
-    expect(second.optimized).toBe(true)
-    const system = state.streamCalls[1]?.system ?? ''
-    expect(system).toContain('上一轮 AI 推断洞察')
-    expect(system).toContain('…') // 存储即截断
-    expect(system).not.toContain(LONG_TAIL) // 超出 200 字的尾部不回放
-  })
-
-  it('separate mode moves the appendix to a light 250-token call (D6)', async () => {
-    // separate 档：主线不带感应块正常优化，第二次轻量调用只产附录。
-    const appendixText = '--- 延伸洞察（AI 推断，供你选用，非事实）---\n· 深层目标：推断用户真正想达成的结果'
-    const state = makeCtx([textStream(FOUR_SECTIONS), textStream(appendixText)])
-    const service = makeService(state, { ...DEFAULT_CONFIG, senseNeedsSeparate: true })
-    const result = await service.optimize('帮我写一份周报，总结本周进展与风险', { signal: new AbortController().signal, senseNeeds: true })
-    expect(result.optimized).toBe(true)
-    expect(state.streamCalls).toHaveLength(2)
-    expect(state.streamCalls[1]?.maxTokens).toBe(250)
-    expect(state.streamCalls[0]?.system).not.toContain('需求感应（造梦模式）')
-    expect(state.streamCalls[1]?.system).toContain('需求感应分析师')
-    expect(result.prompt).toContain('延伸洞察')
-    expect(result.appendixTokens).toBeGreaterThan(0)
   })
 })
 

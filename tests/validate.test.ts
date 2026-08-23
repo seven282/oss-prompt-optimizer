@@ -12,15 +12,17 @@ import {
   hasSubstantialContent,
   hasValidRoleTaskGoal,
   hasValidSections,
-  INCOMPLETE_SECTIONS_MESSAGE,
-  metaContentMessage,
-  plainHeadingsMessage,
   REQUIRED_SECTIONS,
   sectionBody,
-  thinOutputMessage,
   truncateByTokens,
   truncateInput,
 } from '../src/validate.js'
+import {
+  INCOMPLETE_SECTIONS_MESSAGE,
+  metaContentMessage,
+  plainHeadingsMessage,
+  thinOutputMessage,
+} from '../src/errors.js'
 
 const FOUR_SECTIONS = `## Role
 你是一名资深产品经理。

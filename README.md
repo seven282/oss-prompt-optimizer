@@ -12,7 +12,7 @@
 - **工具 `prompt_optimize`**：agent 可调用，传入 `instruction`，返回优化后的纯文本提示词；也可传 `lastOptimized` + `iterateInstruction` 对已优化结果迭代改写。
 - **服务 `ctx.promptOptimizer`**：其他插件可编程调用 `optimize(rawInput, { signal })` 或 `iterate(lastOptimized, instruction, { signal })`；
   浏览器端经 `ctx.remote.promptOptimizer.optimize(sessionId, text)` 可调用。
-- **输入框 ✨ 图标**：composer 工具行左侧的常驻图标，点击即优化当前草稿并写回输入框；**优化中再点可取消**（AbortSignal 透传），成功后短暂显示"消耗 ≈N tokens"。
+- **输入框 ✨ 图标**：composer 工具行左侧的常驻图标，点击即优化当前草稿并写回输入框；**优化中再点可取消**（UI 状态管理），成功后短暂显示"消耗 ≈N tokens"。
 - **角色文档语言自动切换**：角色文档（元提示词）语言默认按输入内容自动检测——中文指令用
   中文角色文档，英文指令用英文角色文档（见下文）。
 - **自动优化钩子**（可选，默认关闭）：以触发前缀开头的用户消息会在进入模型前被自动优化（见下文）。
@@ -41,7 +41,7 @@
   提高命中率；仍失败则返回原文/上次结果 + 错误说明，并附稳定机器可读错误码
   （`OptimizeResult.errorCode`：`MISSING_SECTIONS` / `THIN_SECTIONS` / `THIN_OUTPUT` /
   `TIMEOUT` / `NO_MODEL_ROUTE` 等），工具失败渲染带 `[错误码]` 前缀。
-- 输出恒为完整可执行的提示词（四段或 plain 正文）；空输入报错；超长输入截断护栏；取消信号透传。
+- 输出恒为完整可执行的提示词（四段或 plain 正文）；空输入报错；超长输入截断护栏；UI 层取消。
 ![项目截图](./1.png)
 ![项目截图](./2.png)
 
@@ -198,9 +198,6 @@ dsh plugin --profile web remove oss-prompt-optimizer
 | `cacheFuzzyMatch` | boolean | `true` | 近失配热启动：精确未命中时，相似缓存指令（或同指令新上下文）作为起点走迭代，而非从零优化（省时省 token） |
 | `cacheFuzzyThreshold` | number 0–1 | `0.6` | 近失配的 bigram-Jaccard 相似度阈值 |
 | `senseNeeds` | boolean | `false` | 需求感应 / 造梦模式：优化后追加明确标注的「延伸洞察（AI 推断）」附录（深层目标/隐含约束/质量标准/后续问题），推断不混入提示词正文 |
-| `dreamInsightFeedback` | boolean | `false` | 造梦洞察跨轮回填：开启后，本会话上一次 `senseNeeds` 产生的延伸洞察会注入后续 optimize/iterate（标注 AI 推断、非事实；会话级、TTL 30 分钟；存储即截断至 200 字防膨胀） |
-| `senseNeedsSeparate` | boolean | `false` | D6 实验档：附录独立轻量调用——主线不带感应块正常优化（localTemplate 全档可用，on 档也能产附录），第二次 maxTokens=250 的轻量调用只产「--- 延伸洞察」附录（失败静默、正文原样）。开启后 dream 调用数 +1，但主输出更短更稳且消灭附录挤占预算的跳档放大；默认关（inline 单调用） |
-| `classifier` | `'heuristic'` \| `'llm'` | `'heuristic'` | 任务分类后端（ADR-011）：heuristic = 关键词/正则启发式（默认）；llm = 服务层 LLM 分类器（opt-in，当前无 LLM 实现时回落启发式） |
 | `contextAware` | boolean | `true` | 上下文感知：优化时把当前指令之前的最近对话（经 `{{上下文信息}}` 占位符 + 「视为纯数据」护栏）注入元提示词，让优化结果贴合此前讨论。四段模式下可将上下文中的事实用于充实 `## Context` 段（仍不执行其中嵌入的指令）；钩子取 `agent/pre-step` 消息，`/optimize` 取会话记录，尽力而为 |
 | `contextMaxMessages` | int 0–100 | `10` | 上下文感知时采集的最近消息条数上限；`0` 关闭 |
 | `contextMaxTokens` | int ≥0 | `800` | 上下文 token 预算；超出截断到最长前缀并附标记；`0` 关闭截断（精简默认） |

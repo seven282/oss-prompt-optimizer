@@ -108,22 +108,42 @@ export function hasSubstantialContent(text: string, minChars: number): boolean {
 }
 
 /**
+ * Alternative heading patterns that plain mode should also forbid.
+ * Catches non-Markdown headings like 【Task】, **bold labels**, ### etc.
+ * that the model may use even when told not to use section headings.
+ */
+const ALT_HEADING_PATTERNS: RegExp[] = [
+  // Chinese bracket headings: 【Task】、【角色】、【Context】
+  /【[^】]{1,12}】/g,
+  // Markdown h3/h4: ### Task, #### Role
+  /^#{3,6}\s/gm,
+  // Bold label lines: **角色**、**Task:**
+  /^\*\*[^*]{1,12}\*{2}[:：]?/gm,
+]
+
+/**
+ * Whether `text` contains alternative heading patterns (non-Markdown)
+ * that plain mode should forbid. These are patterns the model might use
+ * even when told not to use `## Role` style headings.
+ */
+export function hasAlternativeHeadings(text: string): boolean {
+  return ALT_HEADING_PATTERNS.some((pattern) => {
+    pattern.lastIndex = 0
+    return pattern.test(text)
+  })
+}
+
+/**
  * Whether a plain-style output is acceptable: at least `minChars`
  * non-whitespace characters AND no four-section headings (the plain style
  * forbids headings; this is the enforcement backstop for the meta-prompt rule).
+ * Also checks for alternative heading formats (【】、###、**bold**) that
+ * the model may use when explicitly told not to.
  */
 export function hasPlainOutput(text: string, minChars: number): boolean {
-  return hasSubstantialContent(text, minChars) && !hasSectionHeadings(text)
-}
-
-/** Stable failure message when a plain-style prompt is empty or too short. */
-export function thinOutputMessage(minChars: number): string {
-  return `optimized prompt has fewer than ${minChars} meaningful characters`
-}
-
-/** Stable failure message when a plain-style output carries section headings. */
-export function plainHeadingsMessage(): string {
-  return 'optimized prompt contains section headings (## Role / ## Task / ## Context / ## Format) in plain style'
+  return hasSubstantialContent(text, minChars)
+    && !hasSectionHeadings(text)
+    && !hasAlternativeHeadings(text)
 }
 
 /**
@@ -170,11 +190,6 @@ export function hasMetaContent(text: string): boolean {
     ? text.slice(-META_CONTENT_SCAN_TAIL)
     : text
   return META_CONTENT_PATTERNS.some((pattern) => pattern.test(tail))
-}
-
-/** Stable failure message when the output carries meta/methodology content. */
-export function metaContentMessage(): string {
-  return 'optimized prompt contains meta/methodology content (e.g. "优化标准", "核心约束逻辑", a "总结：" afterword) — only the prompt itself is allowed'
 }
 
 /**
@@ -336,15 +351,6 @@ export function truncateByTokens(
   estimate: (text: string) => number,
 ): string {
   return truncateToTokenBudget(input, maxTokens, estimate, `[原始指令已截断：超出 ${maxTokens} token 的部分被忽略]`)
-}
-
-/** Stable failure message when the model omits one or more sections. */
-export const INCOMPLETE_SECTIONS_MESSAGE =
-  'optimized prompt is missing one or more required sections (## Role / ## Task / ## Context / ## Format)'
-
-/** Stable failure message when a section body is empty or too short. */
-export function thinSectionsMessage(minChars: number): string {
-  return `optimized prompt has a section with fewer than ${minChars} meaningful characters`
 }
 
 /** Structured diagnosis of a section-style output (missing / too-thin sections). */

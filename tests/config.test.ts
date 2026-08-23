@@ -44,7 +44,6 @@ describe('Config schema', () => {
       cacheFuzzyMatch: true,
       cacheFuzzyThreshold: 0.6,
       senseNeeds: false,
-      senseNeedsSeparate: false,
       maxInputTokens: 3000,
     })
     expect(value.provider).toBeUndefined()

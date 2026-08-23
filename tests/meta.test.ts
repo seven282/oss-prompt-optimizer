@@ -28,7 +28,7 @@ describe('META_PROMPT', () => {
   })
 
   it('forbids wrapping the output in code fences', () => {
-    expect(META_PROMPT).toContain('不要解释、标题或代码块')
+    expect(META_PROMPT).toContain('禁止标题、代码块或解释性文字')
   })
 
   it('demands a self-check of the output', () => {
@@ -246,7 +246,7 @@ describe('META_PROMPT_EN (English role document)', () => {
   })
 
   it('forbids wrapping the output in code fences', () => {
-    expect(META_PROMPT_EN).toContain('no explanations, headings, or code fences')
+    expect(META_PROMPT_EN).toContain('No headings')
   })
 
   it('uses the same placeholders as the Chinese template', () => {

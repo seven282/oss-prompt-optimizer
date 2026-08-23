@@ -232,20 +232,6 @@ export interface Config {
    */
   sceneRefEnabled: boolean
   /**
-   * Dream-insight feedback (1.4.9): when a session run with `senseNeeds`
-   * produced a `--- 延伸洞察 ---` appendix, keep it per session and inject it
-   * into later optimize/iterate calls (marked as AI-inferred, non-fact).
-   * Off by default — opt in to turn one-shot 造梦 mode into cross-turn context.
-   */
-  dreamInsightFeedback: boolean
-  /**
-   * D6（1.6.8）实验：附录独立轻量调用——主线正常出提示词（localTemplate 全档
-   * 可用），第二次 maxTokens=250 的轻量调用只产「--- 延伸洞察」附录。默认关
-   * （inline 单调用）；开启后 dream 调用数 +1，但主输出更短更稳、on 档也能
-   * 产附录，且消灭附录挤占预算的跳档放大。
-   */
-  senseNeedsSeparate: boolean
-  /**
    * Task classifier backend (ADR-011): `'heuristic'` (default) wraps the
    * keyword/regex heuristics; `'llm'` is the opt-in service-layer LLM
    * classifier — until the LLM implementation ships, `'llm''` falls back to
@@ -342,8 +328,6 @@ export const Config: z<Config> = z.object({
   earlyStop: z.boolean().default(false),
   builtinExamples: z.boolean().default(true),
   sceneRefEnabled: z.boolean().default(true),
-  dreamInsightFeedback: z.boolean().default(false),
-  senseNeedsSeparate: z.boolean().default(false),
   classifier: z.union(['heuristic', 'llm']).default('heuristic'),
   localTemplate: z.union(['auto', 'on', 'off', 'hybrid']).default('auto'),
   hybridAlignThreshold: z.number().min(0).max(1).default(0.4),

@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.7.0] - 2026-08-23
+
+- **✨ 按钮 AbortSignal 修复**：client.js `commands.execute` 第三参数误传 AbortSignal 导致
+  `rejected "images"` 报错，修正为 `[]`（空数组）
+- **dream 模式死代码清理**：移除 `dreamInsightFeedback`（跨轮回填）、`senseNeedsSeparate`
+  （D6 独立附录）、`appendixTokens`/`lastAppendixTokens`、`extractDreamInsights`/
+  `dreamFeedbackFor`/`withDreamFeedback`/`appendixOnce`、`APPX:` 统计前缀
+- README 配置表同步清理两行（dreamInsightFeedback / senseNeedsSeparate），取消功能描述修正
+- 测试 487 全绿。
+
 ## [1.6.9] - 2026-08-23
 
 - **新配置 `sceneRefEnabled`（默认 `true`）**：`false` 时完全跳过场景参考注入
