@@ -165,7 +165,7 @@ window.__ModuleLoader__.load({
               var controller = typeof AbortController === 'function' ? new AbortController() : null
               cancelRef.current = controller
               var signal = controller ? controller.signal : undefined
-              ctx.remote.commands.execute(props.sessionId, '/optimize ' + draft, [])
+              ctx.remote.commands.execute(props.sessionId, '/optimize ' + draft)
                 .then(function (response) {
                   var result = resultOf(response)
                   if (result && result.kind === 'success' && typeof result.text === 'string' && result.text.length > 0) {
@@ -174,7 +174,7 @@ window.__ModuleLoader__.load({
                     setAnnounce('提示词已优化，可点击撤销按钮恢复原文')
                     // 成本可见: read the last run's output tokens and show a
                     // transient hint. Best-effort; a failure is ignored.
-                    ctx.remote.commands.execute(props.sessionId, '/optimize-stats')
+                    ctx.remote.commands.execute(props.sessionId, '/optimize --stats')
                       .then(function (statsResponse) {
                         var statsResult = resultOf(statsResponse)
                         var match = statsResult && typeof statsResult.text === 'string'

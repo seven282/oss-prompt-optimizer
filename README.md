@@ -71,9 +71,9 @@
 
 运行时可通过输入框直接输入命令固定或恢复自动（会话级覆盖，重启回落到配置值）：
 
-- `/optimizer-language auto` —— 恢复自动检测（默认）
-- `/optimizer-language 中文` / `/optimizer-language 英文` —— 固定语言
-- `/optimizer-language status` —— 查询当前模式
+- `/optimize --language auto` —— 恢复自动检测（默认）
+- `/optimize --language 中文` / `/optimize --language 英文` —— 固定语言
+- `/optimize --language status` —— 查询当前模式
 
 配置 `metaPromptLanguage: 'auto' | '中文' | '英文'`（默认 `'auto'`）决定重启后的初始模式；
 显式值（`'中文'`/`'英文'`）固定语言，`'auto'` 跟随输入。
@@ -81,17 +81,10 @@
 ## 自动优化开关（命令方式）
 
 运行时「发送前自动优化」开关可通过输入框直接输入命令控制：
-- `/auto-optimize on` / `/auto-optimize off` / `/auto-optimize toggle` / `/auto-optimize status`
+- `/optimize --auto on` / `/optimize --auto off` / `/optimize --auto toggle` / `/optimize --auto status`
 
 开启后 host 进入「发送前自动优化」模式，`agent/pre-step` 钩子会对**每条**用户
 文本消息做优化（等同于配置 `autoOptimizeAll: true` 的运行时版本）。
-
-## 造梦模式（/dream）
-
-`/dream <指令>` = 标准优化 + **需求感应**：结果在提示词后追加明确标注的
-`--- 延伸洞察（AI 推断，供你选用，非事实）---` 附录（深层目标 / 隐含约束 /
-质量标准 / 可能的后续），推断内容不混入提示词正文、随时可删。
-等价于每次调用传 `senseNeeds: true`。
 
 ## 快速场景模板（/template）
 
@@ -275,7 +268,7 @@ dsh plugin --profile web remove oss-prompt-optimizer
 - **质量保障**：fast 档只省"纠错重试"，**首次输出的四段/内容校验照常执行**；
   `maxCalls: 3` 保留触顶扩容（长输出不截断）；缓存/热启动/上下文/诊断护栏全部保留
 - **时长**：单次模型延迟即总时长——flash 级模型通常 **1.5–4s**；缓存命中 <100ms
-- **观测**：`/optimize-stats` 返回 `TOKENS|INPUT|CALLS|LASTMSCALL`（本次输出 token +
+- **观测**：`/optimize --stats` 返回 `TOKENS|INPUT|CALLS|LASTMSCALL`（本次输出 token +
   输入侧 prompt token + 调用次数 + 末次调用耗时）——先确认瓶颈是模型延迟、输入侧
   成本还是多次调用
 - **前提**：模型须为快速档（flash 级、无 reasoningEffort）；慢/推理模型单次即超
@@ -384,12 +377,12 @@ pnpm run build        # tsc -p tsconfig.build.json → lib/
   API 面不变（`MaxTokensError` 仍从入口导出），端到端测试零改动。
 - 角色文档语言自动检测：`metaPromptLanguage: 'auto'`（默认）按指令非空白字符中汉字
   占比 ≥30% 选择中文/英文角色文档（纯函数 `detectLanguage`，含假名的日文等语言归
-  英文文档）；`'中文'`/`'英文'` 固定语言，`/optimizer-language` 可运行时固定或恢复
+  英文文档）；`'中文'`/`'英文'` 固定语言，`/optimize --language` 可运行时固定或恢复
   自动。检测结果在单次调用内传递（`optimize`/`iterate` 按各自输入检测，`selfRefine`
   沿用本轮语言，重试诊断文案同语言），与 `outputLanguage` 独立。
 - 所有注册（工具、systemPrompt 段落、自动优化钩子、命令）均为 effect 作用域，
   插件卸载自动清理。
-- 命令命名：本插件注册 `/optimize` 与 `/auto-optimize`（短命令，遵循生态惯例）。
+- 命令命名：本插件注册 `/optimize`（短命令，遵循生态惯例）。
   若未来与其他插件冲突，改名需同步 `client.js` 调用、README 与钩子前缀默认值
   （`/optimize `），建议一次性原子变更。
 

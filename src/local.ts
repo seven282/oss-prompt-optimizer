@@ -12,7 +12,7 @@
  */
 
 import { buildSituationProfile, detectMeasurable, detectTaskSubtype, extractMainVerbObject, type SituationProfile } from './situation.js'
-import { ROLE_LIBRARY, SUB_TOPIC_TEMPLATES, type MetaLanguage, type TaskType } from './meta.js'
+import { type MetaLanguage, type TaskType } from './meta.js'
 
 /**
  * Local-render mode. `'auto'` renders only when the gate passes, else LLM;
@@ -51,92 +51,304 @@ const OPEN_SUBTYPES: ReadonlySet<string> = new Set([
 ])
 
 /**
- * Per-subtype finished-output fill rules (1.6.0, P1 丰富度增强): a compact
- * role enrichment + a default context point per subcategory, so a local render
- * reads like a finished prompt (role detail + at least one usable context
- * anchor) instead of a bare skeleton. Applied after `parseSkeleton`; explicit
- * signals from the instruction (role / goal / audience) always win.
+ * Per-subtype finished-output fill rules (2.0, 完整四要素成品): role / task /
+ * context / format — each a finished text fragment ready for direct output.
+ * The `task` field is a template: `{{VO}}` is replaced at render time with
+ * the extracted verb-object from the instruction (e.g. "撰写「周报」").
+ * Explicit signals from the instruction (role / goal / audience) always win
+ * over the static role/context defaults.
  */
-const FILL_RULES: Record<string, { zh: string; en: string }> = {
+interface FillRuleData {
+  /** Finished role sentence (e.g. "作为资深项目助理，擅长简洁有力的要点式周报。") */
+  role: string
+  /** Task template — `{{VO}}` replaced with extracted verb-object at render time. */
+  task: string
+  /** Default context point (omitted when instruction carries its own signals). */
+  context: string
+  /** Finished format specification. */
+  format: string
+}
+
+const FILL_RULES: Record<string, { zh: FillRuleData; en: FillRuleData }> = {
   'code-bugfix': {
-    zh: '角色补全：按「先复现、再定位、后最小修复」推进；上下文要点：修复须保持接口与行为兼容，附回归验证。',
-    en: 'Role: reproduce first, then locate, then apply the minimal fix; Context: keep interfaces and behavior compatible; verify with a regression check.',
+    zh: {
+      role: '作为资深 TypeScript 工程师，精通类型系统与缓存模块设计，先保证修复正确再考虑优化。',
+      task: '定位并最小化修复错误：静态分析定位每个错误并列出触发条件，应用最小修复保持导出接口与缓存语义不变，标注每个改动，运行 tsc --noEmit 及相关测试。',
+      context: '未给出具体错误信息或环境时，根因不明时用最保守修复并说明推断依据。',
+      format: '① 根因分析（简短要点）② 改动（前后对比）③ 测试结果；附可运行的完整代码片段。',
+    },
+    en: {
+      role: 'As a senior TypeScript engineer proficient in type systems and cache module design, prioritize correctness before optimization.',
+      task: 'Locate and minimally fix errors: static analysis to identify each error and its trigger conditions, apply minimal fixes preserving exported interfaces and cache semantics, annotate each change, run tsc --noEmit and related tests.',
+      context: 'When no specific error info or environment is given and root cause is unclear, use the most conservative fix and explain reasoning.',
+      format: '① Root cause analysis (brief points) ② Changes (before/after) ③ Test results; include a runnable code snippet.',
+    },
   },
   'code-feature': {
-    zh: '角色补全：按需求→方案→实现→测试的工程顺序推进；上下文要点：明确验收标准与边界条件。',
-    en: 'Role: follow requirements → design → implementation → tests; Context: state acceptance criteria and edge conditions.',
+    zh: {
+      role: '作为资深全栈工程师，擅长安全认证与会话管理，优先保证安全再优化体验。',
+      task: '实现功能：明确需求边界（邮箱/密码/第三方 OAuth）→ 设计认证流程（JWT/Session）→ 实现后端接口与前端表单 → 写测试覆盖正常/异常路径 → 验证安全（防暴力破解、CSRF）。',
+      context: '说明技术栈、已有用户表结构、部署环境。',
+      format: '完整可运行的代码 + API 文档 + 使用示例，附必要的错误处理与输入校验。',
+    },
+    en: {
+      role: 'As a senior full-stack engineer skilled in authentication and session management, prioritize security before experience.',
+      task: 'Implement the feature: clarify requirements (email/password/third-party OAuth) → design auth flow (JWT/Session) → implement backend API and frontend form → write tests covering normal/exception paths → verify security (brute-force, CSRF).',
+      context: 'State the tech stack, existing user table schema, and deployment environment.',
+      format: 'Complete runnable code + API documentation + usage examples, with error handling and input validation.',
+    },
   },
   'code-refactor': {
-    zh: '角色补全：以「行为等价」为底线重构；上下文要点：说明重构动机、保留的公共 API 与回归范围。',
-    en: 'Role: refactor with behavior equivalence as the floor; Context: state the motivation, preserved public API, and regression scope.',
+    zh: {
+      role: '作为资深工程师，擅长识别代码异常并保持行为等价地重构。',
+      task: '重构函数：识别代码异味（重复/嵌套过深/命名不清）→ 保持外部行为完全不变 → 改进结构与可读性 → 确认所有测试通过。',
+      context: '说明函数所在文件与用途；保持原有接口签名与副作用不变。',
+      format: '① 现状问题列表 ② 重构策略 ③ 重构前后对比 ④ 行为不变说明 + 测试结果。',
+    },
+    en: {
+      role: 'As a senior engineer skilled at identifying code smells and refactoring with behavior equivalence.',
+      task: 'Refactor the function: identify code smells (duplication / deep nesting / unclear naming) → keep external behavior identical → improve structure and readability → confirm all tests pass.',
+      context: 'State the file and purpose of the function; preserve the original interface signature and side effects.',
+      format: '① Current issues ② Refactoring strategy ③ Before/after comparison ④ Behavior-preserved note + test results.',
+    },
   },
   'code-review': {
-    zh: '角色补全：按可读性/安全/性能/测试覆盖四维审查；上下文要点：说明代码用途与重点关注项。',
-    en: 'Role: review across readability, security, performance, and test coverage; Context: state the code purpose and focus areas.',
+    zh: {
+      role: '作为资深代码审查者，逐条检查正确性、可读性、安全性与性能。',
+      task: '审查代码：按正确性 → 可读性 → 安全性 → 性能 → 测试覆盖逐项检查，列出每个问题的严重度（Critical/High/Medium/Low）、位置与修复建议。',
+      context: '说明代码的业务上下文与技术栈；阻塞问题优先标注。',
+      format: '问题清单（严重度 + 位置 + 建议）+ 汇总评价。',
+    },
+    en: {
+      role: 'As a senior code reviewer, itemized review across correctness, readability, security, and performance.',
+      task: 'Review the code: check item by item across correctness → readability → security → performance → test coverage, list each issue with severity (Critical/High/Medium/Low), location, and fix suggestion.',
+      context: 'State the business context and tech stack; flag blocking issues first.',
+      format: 'Issue list (severity + location + suggestion) + summary verdict.',
+    },
   },
   'code-script': {
-    zh: '角色补全：脚本优先可运行、错误可诊断；上下文要点：说明输入输出格式、依赖与运行环境。',
-    en: 'Role: scripts must run first and fail with diagnosable errors; Context: state I/O format, dependencies, and runtime.',
+    zh: {
+      role: '作为资深 Python 工程师，擅长编写健壮的文件操作脚本，脚本优先可运行、错误可诊断。',
+      task: '编写脚本：定义命名规则，处理异常与冲突，记录执行日志。',
+      context: '输入目录与命名规则；不修改原文件（先 dry-run）；说明依赖与运行方式。',
+      format: '直接可运行的 .py 文件 + 顶部使用说明（依赖、运行命令、示例输出）。',
+    },
+    en: {
+      role: 'As a senior Python engineer skilled at writing robust file-operation scripts that run first and fail with diagnosable errors.',
+      task: 'Write the script: define naming rules, handle exceptions and conflicts, log execution.',
+      context: 'Input directory and naming rules; do not modify originals (dry-run first); state dependencies and runtime.',
+      format: 'A directly runnable .py file + top-level usage notes (dependencies, run command, sample output).',
+    },
   },
   'writing-report': {
-    zh: '角色补全：结论先行、要点支撑、按文体控制篇幅；上下文要点：面向汇报对象，聚焦进展与待办。',
-    en: 'Role: lead with the conclusion, back with points, match length to the genre; Context: focus on progress and next steps for the audience.',
+    zh: {
+      role: '作为资深项目助理，擅长简洁有力的要点式周报。',
+      task: '撰写周报：结论先行（本周核心成果），再列出已完成项（附关键结果指标），最后是下周计划与风险预警。',
+      context: '面向团队与管理层，聚焦进度与待办；无数据时如实标注状态。',
+      format: '分节列表，一项一行；标题 + 结构 + 字数控制（300-500 字）。',
+    },
+    en: {
+      role: 'As a senior project assistant skilled in concise point-form weekly reports.',
+      task: 'Write the weekly report: lead with the conclusion (this week\'s core results), list completed items (with key metrics), then next week\'s plan and risk warnings.',
+      context: 'For the team and management; focus on progress and action items; mark status honestly when data is unavailable.',
+      format: 'Sectioned list, one item per line; headline + structure + length cap (300-500 words).',
+    },
   },
   'writing-email': {
-    zh: '角色补全：按目的→称呼→正文→结尾组织；上下文要点：说明收件人与沟通目的、期望语气。',
-    en: 'Role: organize as purpose → greeting → body → sign-off; Context: state the recipient, the purpose, and the expected tone.',
+    zh: {
+      role: '作为专业客户经理，语气礼貌但立场坚定。',
+      task: '撰写邮件：说明到期发票详情，礼貌请求付款，附联系方式与截止日期。',
+      context: '面向长期客户，维护关系；语气得体但明确。',
+      format: '主题行 + 正文 + 结尾签名。',
+    },
+    en: {
+      role: 'As a professional account manager, polite but firm.',
+      task: 'Write the email: state the overdue invoice details, politely request payment, include contact info and deadline.',
+      context: 'For a long-term client; maintain the relationship; tone is professional but clear.',
+      format: 'Subject line + body + closing signature.',
+    },
   },
   'writing-copy': {
-    zh: '角色补全：突出核心卖点、给出明确行动号召；上下文要点：说明产品定位、目标受众与投放渠道。',
-    en: 'Role: highlight key selling points and end with a clear call to action; Context: state product positioning, target audience, and channel.',
+    zh: {
+      role: '作为资深品牌文案，擅长提炼核心卖点并驱动用户行动。',
+      task: '撰写公告：提炼核心优势 → 锁定目标受众 → 给出明确的行动号召（CTA）。',
+      context: '面向社交媒体潜在用户；语气专业热情，不夸大功能。',
+      format: '标题 + 正文段落 + 3 个备选标题。',
+    },
+    en: {
+      role: 'As a senior brand copywriter skilled at distilling key selling points and driving user action.',
+      task: 'Write the announcement: distill core advantages → identify the target audience → deliver a clear call to action (CTA).',
+      context: 'For potential social media users; professional and enthusiastic tone, no exaggeration.',
+      format: 'Headline + body paragraphs + 3 alternative headlines.',
+    },
   },
   'writing-translate': {
-    zh: '角色补全：保义优先、兼顾通顺与术语一致；上下文要点：说明源语言、目标语言与文体约束。',
-    en: 'Role: keep meaning first, then fluency and consistent terminology; Context: state source/target languages and genre constraints.',
+    zh: {
+      role: '作为专业译者，兼顾准确与地道。',
+      task: '翻译给定内容为目标语言：保持术语准确、语气一致、句式自然。',
+      context: '说明文体与用途；术语有约定时优先遵循。',
+      format: '译文 + 关键术语表（如有）。',
+    },
+    en: {
+      role: 'As a professional translator, balancing accuracy and naturalness.',
+      task: 'Translate the given content into the target language: keep terminology accurate, tone consistent, and phrasing natural.',
+      context: 'State the genre and purpose; follow established terminology when available.',
+      format: 'Translation + key glossary (if applicable).',
+    },
   },
   'writing-polish': {
-    zh: '角色补全：保义→调语气→顺表达；上下文要点：说明改动目标（正式化/精炼/亲和）与保留原意的底线。',
-    en: 'Role: keep meaning, adjust tone, then smooth the wording; Context: state the goal (formalize / tighten / warm up) and the keep-meaning floor.',
+    zh: {
+      role: '作为资深编辑，保持原意、优化表达。',
+      task: '润色文案：保持原意 → 调整语气 → 优化措辞与节奏。',
+      context: '说明使用场景与目标读者；保留关键信息。',
+      format: '润色后全文 + 改动说明（每处改动的理由）。',
+    },
+    en: {
+      role: 'As a senior editor, keep meaning and optimize expression.',
+      task: 'Polish the copy: preserve meaning → adjust tone → refine wording and rhythm.',
+      context: 'State the usage scenario and target readers; retain key information.',
+      format: 'Full polished text + change notes (reason for each edit).',
+    },
   },
   'writing-resume': {
-    zh: '角色补全：经历→量化→匹配目标岗位；上下文要点：说明目标岗位与行业，突出可量化的成果。',
-    en: 'Role: turn experience into quantified, role-matched bullets; Context: state the target role and industry; highlight measurable outcomes.',
+    zh: {
+      role: '作为资深职业顾问，擅长将经历转化为量化的亮点。',
+      task: '将经历转化为个人简介：提取核心亮点（证书/年限/专长）→ 量化成果 → 匹配目标岗位要求。',
+      context: '面向招聘方，强调与目标岗位的匹配度；需要岗位方向与亮点数据。',
+      format: '结构化模块 + 要点列表 + 字数限制（500 字内）。',
+    },
+    en: {
+      role: 'As a senior career advisor skilled at turning experience into quantified, role-matched highlights.',
+      task: 'Convert experience into a personal summary: extract key highlights (certifications/years/expertise) → quantify outcomes → match target role requirements.',
+      context: 'For recruiters; emphasize alignment with the target role; need role direction and highlight data.',
+      format: 'Structured modules + bullet points + length cap (within 500 words).',
+    },
   },
   'writing-speech': {
-    zh: '角色补全：主题→结构→口语化表达；上下文要点：说明场合、听众与时长。',
-    en: 'Role: theme → structure → spoken style; Context: state the occasion, the audience, and the duration.',
+    zh: {
+      role: '作为资深演讲稿作者，擅长构建口语化、有感染力的叙事。',
+      task: '撰写演讲稿：开场（致谢/定调）→ 回顾（数据+故事）→ 感恩（团队/伙伴）→ 展望（目标+号召）→ 结尾（有力收束）。',
+      context: '面向全体员工；语气温暖、激励、口语化；时长 8-10 分钟。',
+      format: '分节结构 + 时长标注 + 开场/结尾的金句建议。',
+    },
+    en: {
+      role: 'As a senior speechwriter skilled at building spoken-word, compelling narratives.',
+      task: 'Write the speech: opening (gratitude / tone-setting) → review (data + stories) → appreciation (team / partners) → outlook (goals + call to action) → closing (powerful finish).',
+      context: 'For all employees; warm, inspiring, conversational tone; duration 8-10 minutes.',
+      format: 'Sectioned structure + duration notes + opening/closing quote suggestions.',
+    },
   },
   'writing-presentation': {
-    zh: '角色补全：面向受众组织信息，突出数据与成果，控制页数与节奏；上下文要点：说明场合（求职/述职/汇报）、受众与时长。',
-    en: 'Role: organize information for the audience, highlight data and outcomes, control page count and pace; Context: state the occasion (interview / review / report), audience, and duration.',
+    zh: {
+      role: '作为演示内容架构师，擅长将信息组织为受众友好的视觉叙事。',
+      task: '构建演示：明确受众与目的（述职/汇报/评审）→ 搭建内容框架（KPI 达成 + 亮点项目 + 不足反思 + 下阶段规划）→ 逐页结构设计 → 视觉与话术要点。',
+      context: '面向管理层/评审委员会；时长 15-20 分钟；突出量化成果。',
+      format: '内容框架 + 页面结构 + 设计建议 + 演示话术。',
+    },
+    en: {
+      role: 'As a presentation content architect skilled at organizing information into audience-friendly visual narratives.',
+      task: 'Build the presentation: clarify audience and purpose (review / report / evaluation) → set up content framework (KPIs + highlight projects + reflections + next-phase plan) → per-page structure → visual and delivery tips.',
+      context: 'For management / review committee; duration 15-20 minutes; highlight quantified results.',
+      format: 'Content framework + page structure + design suggestions + delivery notes.',
+    },
   },
   'analysis-data': {
-    zh: '角色补全：清洗→指标→趋势→结论，结论先行；上下文要点：说明数据来源、时间范围与关键维度。',
-    en: 'Role: clean → metrics → trends → conclusion, conclusion first; Context: state the data source, time range, and key dimensions.',
+    zh: {
+      role: '作为资深数据分析师，擅长趋势解读与因果分析，结论先行、数据支撑。',
+      task: '分析数据：数据清洗 → 关键指标提取（同比/环比/趋势）→ 异常点识别 → 结论与可执行建议。',
+      context: '面向业务决策者；说明数据来源与时间范围。',
+      format: '结论先行 + 关键图表/数据 + 建议列表。',
+    },
+    en: {
+      role: 'As a senior data analyst skilled in trend interpretation and causal analysis, conclusion-first with data support.',
+      task: 'Analyze the data: data cleaning → key metric extraction (YoY / MoM / trend) → anomaly detection → conclusions and actionable recommendations.',
+      context: 'For business decision makers; state the data source and time range.',
+      format: 'Conclusion first + key charts/data + recommendation list.',
+    },
   },
   'analysis-review': {
-    zh: '角色补全：先定标准、再逐项对比、后给结论；上下文要点：说明评估对象与判定标准。',
-    en: 'Role: set criteria first, compare item by item, then give a verdict; Context: state the object under evaluation and the criteria.',
+    zh: {
+      role: '作为资深评估专家，擅长多维度对比与结构化评审。',
+      task: '评估方案可行性：明确评估维度（技术/成本/时间/风险）→ 逐项对比基准 → 给出评分与依据 → 总结建议。',
+      context: '面向决策者；说明评估标准与权重。',
+      format: '评分表 + 逐项依据 + 综合建议。',
+    },
+    en: {
+      role: 'As a senior evaluation expert skilled in multi-dimensional comparison and structured review.',
+      task: 'Evaluate feasibility: define dimensions (tech / cost / time / risk) → compare against benchmarks item by item → score with evidence → summarize recommendations.',
+      context: 'For decision makers; state evaluation criteria and weights.',
+      format: 'Scorecard + itemized evidence + overall recommendation.',
+    },
   },
   'analysis-forecast': {
-    zh: '角色补全：依据→模型→区间，给出置信度；上下文要点：说明历史数据范围与预测期限。',
-    en: 'Role: evidence → model → range with a confidence level; Context: state the historical window and the forecast horizon.',
+    zh: {
+      role: '作为预测分析师，擅长趋势外推与风险评估。',
+      task: '预测趋势：梳理历史数据与当前信号 → 选择预测模型/框架 → 给出点估计与置信区间 → 标注关键风险与假设。',
+      context: '说明预测依据的数据与方法论；面向投资/战略决策。',
+      format: '趋势结论 + 置信度 + 关键假设 + 风险清单。',
+    },
+    en: {
+      role: 'As a forecast analyst skilled in trend extrapolation and risk assessment.',
+      task: 'Forecast the trend: review historical data and current signals → choose a forecasting model/framework → provide point estimates and confidence intervals → flag key risks and assumptions.',
+      context: 'State the data and methodology behind the forecast; for investment / strategic decisions.',
+      format: 'Trend conclusion + confidence level + key assumptions + risk list.',
+    },
   },
   'ops-deploy': {
-    zh: '角色补全：环境→步骤→验证，每步可回滚；上下文要点：说明目标环境、服务类型与变更范围。',
-    en: 'Role: environment → steps → verify, every step reversible; Context: state the target environment, service type, and change scope.',
+    zh: {
+      role: '作为资深运维工程师，熟悉 Linux 与容器化部署流程，先备份后变更、先验证后上线。',
+      task: '部署服务到生产环境：确认环境（OS/容器/网络）→ 拉取镜像/代码 → 配置环境变量 → 执行部署 → 验证健康检查 → 监控日志。',
+      context: '说明目标环境与服务类型；操作须可逆，附回滚步骤。',
+      format: '命令清单 + 预期输出 + 验证步骤 + 回滚方案。',
+    },
+    en: {
+      role: 'As a senior ops engineer familiar with Linux and containerized deployment, back up before changing, verify before going live.',
+      task: 'Deploy the service to production: confirm environment (OS / container / network) → pull image / code → set environment variables → execute deployment → verify health check → monitor logs.',
+      context: 'State the target environment and service type; operations must be reversible, include rollback steps.',
+      format: 'Command list + expected output + verification steps + rollback plan.',
+    },
   },
   'ops-install': {
-    zh: '角色补全：环境检查→安装→验证；上下文要点：说明目标系统、版本与依赖。',
-    en: 'Role: check the environment, install, then verify; Context: state the target system, version, and dependencies.',
+    zh: {
+      role: '作为资深运维工程师，擅长环境检查与配置验证。',
+      task: '安装并配置：检查系统依赖 → 安装 → 配置持久化/密码/端口 → 验证连接 → 设置开机自启。',
+      context: '说明操作系统与版本；标注常见坑点（端口冲突/内存限制）。',
+      format: '安装命令 + 配置文件修改 + 验证步骤 + 注意事项。',
+    },
+    en: {
+      role: 'As a senior ops engineer skilled in environment checks and configuration verification.',
+      task: 'Install and configure: check system dependencies → install → configure persistence / password / port → verify connection → enable auto-start.',
+      context: 'State the OS and version; flag common pitfalls (port conflicts / memory limits).',
+      format: 'Install commands + config file changes + verification steps + caveats.',
+    },
   },
   'ops-troubleshoot': {
-    zh: '角色补全：定位→根因→解决，附排查证据；上下文要点：说明现象、复现条件与已尝试措施。',
-    en: 'Role: locate → root cause → resolve, with evidence at each step; Context: state the symptom, reproduction, and attempts so far.',
+    zh: {
+      role: '作为资深排查专家，擅长日志分析与根因定位。',
+      task: '排查问题：收集日志（应用/系统/网络）→ 逐步缩小范围 → 定位根因 → 提供修复方案 → 验证修复有效。',
+      context: '说明服务类型、错误现象、最近变更；优先验证最小改动。',
+      format: '排查步骤 + 根因分析 + 修复方案 + 验证方法。',
+    },
+    en: {
+      role: 'As a senior troubleshooter skilled in log analysis and root cause identification.',
+      task: 'Troubleshoot: collect logs (application / system / network) → narrow down step by step → identify root cause → provide fix → verify the fix works.',
+      context: 'State the service type, error symptoms, and recent changes; prefer minimal changes first.',
+      format: 'Troubleshooting steps + root cause analysis + fix plan + verification method.',
+    },
   },
   'ops-maintain': {
-    zh: '角色补全：巡检→备份→告警处理，变更先备份；上下文要点：说明维护范围、窗口与回退方案。',
-    en: 'Role: inspect → backup → handle alerts; back up before changing; Context: state the maintenance scope, window, and rollback.',
+    zh: {
+      role: '作为资深运维工程师，擅长巡检自动化与告警处理。',
+      task: '制定运维方案：日常巡检清单（CPU/内存/磁盘/日志）→ 备份策略 → 告警处理流程 → 容灾预案 → 巡检频率与责任人。',
+      context: '说明服务器规模与业务重要性；方案须可执行、可验证。',
+      format: '巡检清单 + 备份计划 + 告警流程 + 容灾预案 + 执行时间表。',
+    },
+    en: {
+      role: 'As a senior ops engineer skilled in inspection automation and alert handling.',
+      task: 'Create the ops plan: daily inspection checklist (CPU / memory / disk / logs) → backup strategy → alert handling process → disaster recovery plan → inspection frequency and owner.',
+      context: 'State the server scale and business criticality; the plan must be executable and verifiable.',
+      format: 'Inspection checklist + backup plan + alert process + DR plan + execution schedule.',
+    },
   },
 }
 
@@ -268,48 +480,17 @@ ${input}`
 }
 
 /**
- * Strip the internal "角色参考：" / "Role reference:" prefix from a
- * role-library entry so the rendered role reads as a finished product.
- */
-function cleanRoleRef(text: string): string {
-  return text.replace(/^(角色参考：|Role reference:\s*)/, '')
-}
-
-/**
- * Parse a scene skeleton into its three parts without the internal
- * "场景骨架：" / "Scene skeleton:" prefixes. Skeletons look like
- * "Role 资深工程师；Task 定位根因→最小修复；Format 根因分析 + 改动点"
- * (zh uses ；, en uses ;) — extract each labelled segment so the rendered
- * Task / Format read as finished instructions instead of raw skeleton text.
- */
-function parseSkeleton(text: string): { role: string; task: string; format: string } {
-  const seg = (label: string): string => {
-    const m = text.match(new RegExp(`${label}\\s*[:：]?\\s*([^;；]+)`))
-    return m !== null ? m[1].trim() : ''
-  }
-  return { role: seg('Role'), task: seg('Task'), format: seg('Format') }
-}
-
-/** Split a fill rule by its language separator (； for zh, ; for en). */
-function fillParts(rule: string, en: boolean): string[] {
-  return rule.split(en ? ';' : '；')
-}
-
-/** Extract the role-enrichment part of a fill rule (before the first separator). */
-function fillRolePart(rule: string, en: boolean): string {
-  const first = fillParts(rule, en)[0]?.trim() ?? ''
-  return en ? first.replace(/^Role:\s*/i, '') : first.replace(/^角色补全：/, '')
-}
-
-/** Extract the context-point part of a fill rule (after the first separator). */
-function fillContextPart(rule: string, en: boolean): string {
-  const second = fillParts(rule, en)[1]?.trim() ?? ''
-  return en ? second.replace(/^Context:\s*/i, '') : second.replace(/^上下文要点：/, '')
-}
-
-/**
- * Render a four-section prompt entirely from local signals (zero LLM calls).
+ * Render a plain-text prompt entirely from local signals (zero LLM calls).
  * Only call when `localTemplateGate` returned `ok`.
+ *
+ * Uses `FILL_RULES` (complete four-element production data) directly —
+ * role / task / context / format are finished text fragments ready for output.
+ * The `task` template's `{{VO}}` placeholder is replaced with the extracted
+ * verb-object from the instruction; if no VO is extracted, the template is
+ * used as-is.
+ *
+ * Explicit signals from the instruction (role / goal / audience) always win
+ * over the static FILL_RULES defaults.
  */
 export function buildLocalTemplate(
   input: string,
@@ -319,67 +500,41 @@ export function buildLocalTemplate(
 ): string {
   const en = metaLanguage === 'en'
   const profile = buildSituationProfile(input, context)
-  const taskType = profile.task.type
-  const skeleton = SUB_TOPIC_TEMPLATES[subtype as keyof typeof SUB_TOPIC_TEMPLATES]
-  const skel = parseSkeleton(en ? skeleton.en : skeleton.zh)
-  const roleRef = taskType !== undefined && taskType !== 'other' ? ROLE_LIBRARY[taskType] : undefined
   const fill = FILL_RULES[subtype]
+  if (fill === undefined) return input
 
-  // ## Role: explicit role from the instruction, else the cleaned role-library
-  // reference; enrich with the subtype role rule (1.6.0) when available.
-  const baseRole = profile.role.explicit ??
-    (roleRef !== undefined ? cleanRoleRef(en ? roleRef.en : roleRef.zh) : (en ? 'senior assistant' : '资深助理'))
-  const role = fill !== undefined ? `${baseRole}${en ? ' ' : ''}${fillRolePart(fill[en ? 'en' : 'zh'], en)}` : baseRole
+  const rule = en ? fill.en : fill.zh
 
-  // ## Task: the skeleton's Task chain + extracted verb/object, without the
-  // internal "场景骨架：" / "（来自原始指令）" meta markers.
-  const skelTask = skel.task.length > 0 ? skel.task : (en ? skeleton.en : skeleton.zh)
-  const vo = extractMainVerbObject(input)
-  const voLine = vo !== undefined
-    ? (en ? `Core action: ${vo.verb} ${vo.object}.` : `核心动作：${vo.verb}「${vo.object}」。`)
-    : ''
-  const taskLines = [skelTask, voLine].filter((l) => l.length > 0).join('\n')
+  // Role: explicit role from the instruction wins; else the static FILL_RULES role.
+  const role = profile.role.explicit ?? rule.role
 
-  // ## Context: audience / goals / constraints / measurable / subtype rule /
-  // conversation — the subtype fill rule provides a default anchor so the
-  // local render never falls back to a bare "no extra context" line.
+  // Task: complete sentence from FILL_RULES (no placeholder injection needed).
+  const task = rule.task
+
+  // Context: instruction signals (audience / goal / constraints / measurable)
+  // + FILL_RULES default context + conversation context.
   const contextParts: string[] = []
   if (profile.role.audience !== undefined) {
-    contextParts.push(`面向：${profile.role.audience}。`)
+    contextParts.push(en ? `Audience: ${profile.role.audience}.` : `面向：${profile.role.audience}。`)
   }
   if (profile.goal.primary !== undefined) contextParts.push(profile.goal.primary)
   for (const c of profile.goal.constraints) contextParts.push(c)
-  const measurableLine = detectMeasurable(input) ? '- 需满足可量化要求（数量/期限等）。' : ''
-  if (measurableLine.length > 0) contextParts.push(measurableLine)
-  if (fill !== undefined) {
-    const ctxRule = fillContextPart(fill[en ? 'en' : 'zh'], en)
-    if (ctxRule.length > 0) contextParts.push(ctxRule)
+  if (detectMeasurable(input)) {
+    contextParts.push(en ? '- Must meet quantifiable requirements (count/deadline).' : '- 需满足可量化要求（数量/期限等）。')
   }
+  if (rule.context.length > 0) contextParts.push(rule.context)
   if (context !== undefined && context.trim().length > 0) {
-    contextParts.push(`对话背景：${context.trim()}`)
+    contextParts.push(en ? `Conversation context: ${context.trim()}` : `对话背景：${context.trim()}`)
   }
   const contextBlock = contextParts.length > 0
     ? contextParts.join('\n')
-    : (en ? '无额外背景，按通用标准执行。' : '无额外背景，按通用标准执行。')
+    : ''
 
-  // ## Format: the skeleton's Format chain, prefix stripped.
-  const formatBlock = skel.format.length > 0
-    ? skel.format
-    : (en ? skeleton.en : skeleton.zh)
+  // Format: static from FILL_RULES.
+  const formatBlock = rule.format
 
-  return [
-    '## Role',
-    role,
-    '',
-    '## Task',
-    taskLines,
-    '',
-    '## Context',
-    contextBlock,
-    '',
-    '## Format',
-    formatBlock,
-  ].join('\n')
+  // Plain text output (no section headers) — matches the 21-subtype examples.
+  return [role, task, contextBlock, formatBlock].filter((l) => l.length > 0).join('\n')
 }
 
 // toRoleTaskGoal / sectionBodyOf live in validate.ts (pure-function layer,

@@ -103,11 +103,11 @@ const invocation = (rawInput: string) => ({
 })
 
 describe('registerOptimizeCommand', () => {
-  it('registers the /optimize, /auto-optimize, /optimizer-language and /optimize-stats commands', () => {
+  it('registers the /optimize and /template commands', () => {
     const { commands } = makeService(() => textStream(FOUR_SECTIONS))
-    expect(commands.map((c) => c.name)).toEqual(['optimize', 'dream', 'auto-optimize', 'optimizer-language', 'optimize-stats', 'template'])
+    expect(commands.map((c) => c.name)).toEqual(['optimize', 'template'])
     const optimize = commands.find((c) => c.name === 'optimize')!
-    expect(optimize.description).toContain('professional')
+    expect(optimize.description).toContain('Optimize')
     expect(optimize.input?.hint).toBeTruthy()
   })
 
@@ -213,29 +213,29 @@ describe('/optimize command context awareness', () => {
   })
 })
 
-describe('/auto-optimize command', () => {
-  const auto = (commands: CommandDef[]) => commands.find((c) => c.name === 'auto-optimize')!
+describe('/optimize --auto flag', () => {
+  const optimize = (commands: CommandDef[]) => commands.find((c) => c.name === 'optimize')!
 
   it('reports status', async () => {
     const { commands } = makeService(() => textStream(FOUR_SECTIONS))
-    expect(await auto(commands).handler(invocation('status'))).toMatchObject({ kind: 'success', text: 'AUTO_OPTIMIZE:OFF' })
+    expect(await optimize(commands).handler(invocation('--auto status'))).toMatchObject({ kind: 'success', text: 'AUTO_OPTIMIZE:OFF' })
   })
 
   it('toggles on and off', async () => {
     const { commands, service } = makeService(() => textStream(FOUR_SECTIONS))
     expect(service.isAutoOptimizeAll()).toBe(false)
-    expect(await auto(commands).handler(invocation('toggle'))).toMatchObject({ kind: 'success', text: 'AUTO_OPTIMIZE:ON' })
+    expect(await optimize(commands).handler(invocation('--auto toggle'))).toMatchObject({ kind: 'success', text: 'AUTO_OPTIMIZE:ON' })
     expect(service.isAutoOptimizeAll()).toBe(true)
-    expect(await auto(commands).handler(invocation('toggle'))).toMatchObject({ kind: 'success', text: 'AUTO_OPTIMIZE:OFF' })
+    expect(await optimize(commands).handler(invocation('--auto toggle'))).toMatchObject({ kind: 'success', text: 'AUTO_OPTIMIZE:OFF' })
     expect(service.isAutoOptimizeAll()).toBe(false)
   })
 
   it('accepts explicit on/off and rejects unknown arguments', async () => {
     const { commands, service } = makeService(() => textStream(FOUR_SECTIONS))
-    expect(await auto(commands).handler(invocation('on'))).toMatchObject({ kind: 'success', text: 'AUTO_OPTIMIZE:ON' })
+    expect(await optimize(commands).handler(invocation('--auto on'))).toMatchObject({ kind: 'success', text: 'AUTO_OPTIMIZE:ON' })
     expect(service.isAutoOptimizeAll()).toBe(true)
-    expect(await auto(commands).handler(invocation('off'))).toMatchObject({ kind: 'success', text: 'AUTO_OPTIMIZE:OFF' })
-    expect(await auto(commands).handler(invocation('maybe'))).toMatchObject({ kind: 'error' })
+    expect(await optimize(commands).handler(invocation('--auto off'))).toMatchObject({ kind: 'success', text: 'AUTO_OPTIMIZE:OFF' })
+    expect(await optimize(commands).handler(invocation('--auto maybe'))).toMatchObject({ kind: 'error' })
   })
 
   it('combines with the static config flag', async () => {
@@ -254,22 +254,22 @@ describe('/auto-optimize command', () => {
   })
 })
 
-describe('/optimizer-language command', () => {
-  const lang = (commands: CommandDef[]) => commands.find((c) => c.name === 'optimizer-language')!
+describe('/optimize --language flag', () => {
+  const optimize = (commands: CommandDef[]) => commands.find((c) => c.name === 'optimize')!
 
   it('reports the auto default', async () => {
     const { commands } = makeService(() => textStream(FOUR_SECTIONS))
-    expect(await lang(commands).handler(invocation('status'))).toMatchObject({ kind: 'success', text: 'META_LANGUAGE:AUTO' })
+    expect(await optimize(commands).handler(invocation('--language status'))).toMatchObject({ kind: 'success', text: 'META_LANGUAGE:AUTO' })
   })
 
   it('pins 英文/中文 and clears back to auto', async () => {
     const { commands, service } = makeService(() => textStream(FOUR_SECTIONS))
     expect(service.getMetaPromptLanguage()).toBe('auto')
-    expect(await lang(commands).handler(invocation('英文'))).toMatchObject({ kind: 'success', text: 'META_LANGUAGE:EN' })
+    expect(await optimize(commands).handler(invocation('--language 英文'))).toMatchObject({ kind: 'success', text: 'META_LANGUAGE:EN' })
     expect(service.getMetaPromptLanguage()).toBe('en')
-    expect(await lang(commands).handler(invocation('中文'))).toMatchObject({ kind: 'success', text: 'META_LANGUAGE:ZH' })
+    expect(await optimize(commands).handler(invocation('--language 中文'))).toMatchObject({ kind: 'success', text: 'META_LANGUAGE:ZH' })
     expect(service.getMetaPromptLanguage()).toBe('zh')
-    expect(await lang(commands).handler(invocation('auto'))).toMatchObject({ kind: 'success', text: 'META_LANGUAGE:AUTO' })
+    expect(await optimize(commands).handler(invocation('--language auto'))).toMatchObject({ kind: 'success', text: 'META_LANGUAGE:AUTO' })
     expect(service.getMetaPromptLanguage()).toBe('auto')
   })
 
@@ -288,20 +288,19 @@ describe('/optimizer-language command', () => {
 
   it('rejects unknown arguments', async () => {
     const { commands } = makeService(() => textStream(FOUR_SECTIONS))
-    expect(await lang(commands).handler(invocation('日文'))).toMatchObject({ kind: 'error' })
+    expect(await optimize(commands).handler(invocation('--language 日文'))).toMatchObject({ kind: 'error' })
   })
 })
 
-describe('/optimize-stats command', () => {
-  const stats = (commands: CommandDef[]) => commands.find((c) => c.name === 'optimize-stats')!
+describe('/optimize --stats flag', () => {
+  const optimize = (commands: CommandDef[]) => commands.find((c) => c.name === 'optimize')!
 
   it('reports the last run output tokens as a machine token', async () => {
     const { commands } = makeService(() => textStream(FOUR_SECTIONS))
     // Before any run the counters are zero.
-    expect(await stats(commands).handler(invocation(''))).toMatchObject({ kind: 'success', text: 'OPTIMIZE_STATS:TOKENS:0|INPUT:0|CALLS:0|LASTMSCALL:0|LOCAL:0|REFINED:0' })
-    const optimize = commands.find((c) => c.name === 'optimize')!
-    await optimize.handler(invocation('帮我写周报'))
-    const result = await stats(commands).handler(invocation(''))
+    expect(await optimize(commands).handler(invocation('--stats'))).toMatchObject({ kind: 'success', text: 'OPTIMIZE_STATS:TOKENS:0|INPUT:0|CALLS:0|LASTMSCALL:0|LOCAL:0|REFINED:0' })
+    await optimize(commands).handler(invocation('帮我写周报'))
+    const result = await optimize(commands).handler(invocation('--stats'))
     expect(result).toMatchObject({ kind: 'success' })
     const text = (result as { text: string }).text
     expect(text).toMatch(/OPTIMIZE_STATS:TOKENS:\d+\|INPUT:\d+\|CALLS:1\|LASTMSCALL:\d+\|LOCAL:\d+\|REFINED:\d+/)
@@ -337,12 +336,13 @@ describe('/template quick command (1.5.1)', () => {
     const res = (await tmpl.handler(invocation('周报 总结本周进展和下周计划'))) as { kind: string; text: string }
     expect(res.kind).toBe('success')
     const text = res.text
-    expect(text).toContain('## Role')
-    expect(text).toContain('## Task')
-    expect(text).toContain('## Context')
-    expect(text).toContain('## Format')
-    // 预填版含抽取的核心动作（本地渲染，非占位符骨架）。
-    expect(text).toContain('核心动作')
+    // No section headers in plain mode.
+    expect(text).not.toContain('## Role')
+    expect(text).not.toContain('## Task')
+    expect(text).not.toContain('## Context')
+    expect(text).not.toContain('## Format')
+    // 预填版为完整成品（本地渲染，非占位符骨架）。
+    expect(text).toContain('撰写周报')
     expect(text).not.toContain('{{')
   })
 

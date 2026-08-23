@@ -1353,8 +1353,9 @@ describe('localTemplate hybrid mode (1.6.1)', () => {
     expect(result.optimized).toBe(true)
     expect(result.local).toBe(true)
     expect(result.refined).toBe(true)
-    expect(result.prompt).toContain('## Role')
-    expect(result.prompt).toContain('## Format')
+    // Plain text output — no section headers.
+    expect(result.prompt).not.toContain('## Role')
+    expect(result.prompt).not.toContain('## Format')
   })
 
   it('falls back to the full LLM pipeline when the gate rejects', async () => {

@@ -46,13 +46,18 @@ function sessionContext(
 }
 
 /**
- * Register the `/optimize`, `/auto-optimize`, `/optimizer-language` and
- * `/optimize-stats` commands. The browser client drives the input-box buttons
- * through the already-generated `commands` Remote namespace
- * (`ctx.remote.commands.execute(sessionId, ...)`) — the one client→host RPC
- * path that ships with strict descriptors and is guaranteed to be claimed by
- * the host gateway (custom `@Remote` namespaces require SRC discovery, which
- * is unreliable in deployed compositions).
+ * Register the `/optimize` and `/template` commands. The browser client drives
+ * the input-box buttons through the already-generated `commands` Remote
+ * namespace (`ctx.remote.commands.execute(sessionId, ...)`) — the one
+ * client→host RPC path that ships with strict descriptors and is guaranteed to
+ * be claimed by the host gateway (custom `@Remote` namespaces require SRC
+ * discovery, which is unreliable in deployed compositions).
+ *
+ * The `/optimize` command supports sub-commands via flags:
+ *   `/optimize <instruction>`           — optimize a raw instruction
+ *   `/optimize --stats`                 — report run statistics
+ *   `/optimize --language <mode>`       — switch role-document language
+ *   `/optimize --auto <on|off|toggle>`  — switch auto-optimize mode
  *
  * Effect-scoped: the registrations are removed on plugin dispose.
  */
@@ -89,83 +94,62 @@ export function registerOptimizeCommand(ctx: Context, service: PromptOptimizerSe
     }
   }
 
+  // Unified `/optimize` command with flag-based sub-commands.
   ctx.commands.register({
     name: 'optimize',
-    description: 'Optimize a raw instruction into a professional optimized prompt',
-    input: { hint: '请输入要优化的原始指令，例如：帮我写一份周报' },
-    handler: (invocation) => optimizeHandler(invocation, false),
-  })
-
-  // 造梦模式 (阶段 3): same as /optimize but forces the 延伸洞察 appendix.
-  ctx.commands.register({
-    name: 'dream',
-    description: 'Optimize with 需求感应 (dream mode): the result appends AI-inferred deep goal / constraints / quality / follow-ups',
-    input: { hint: '请输入要优化的原始指令，例如：帮我写一份周报' },
-    handler: (invocation) => optimizeHandler(invocation, true),
-  })
-
-  // Runtime switch for "optimize every message before the model step". The
-  // client toggle button drives this through the strict commands Remote
-  // namespace; results are machine-readable tokens the client maps back.
-  ctx.commands.register({
-    name: 'auto-optimize',
-    description: 'Switch whether every message is auto-optimized before the model step (on | off | toggle | status)',
-    input: { hint: 'on | off | toggle | status' },
+    description: 'Optimize a raw instruction (--stats / --language / --auto)',
+    input: { hint: '<指令> | --stats | --language auto|中文|英文 | --auto on|off|toggle' },
     handler: async (invocation): Promise<CommandResult> => {
-      const arg = invocation.rawInput.trim().toLowerCase()
-      const current = service.isAutoOptimizeAll()
-      let next: boolean
-      switch (arg) {
-        case 'on':
-          next = true
-          break
-        case 'off':
-          next = false
-          break
-        case 'toggle':
-          next = !current
-          break
-        case 'status':
-          return { kind: 'success', text: current ? 'AUTO_OPTIMIZE:ON' : 'AUTO_OPTIMIZE:OFF' }
-        default:
-          return { kind: 'error', text: 'prompt-optimize: 用法 /auto-optimize on | off | toggle | status' }
-      }
-      service.setAutoOptimizeAll(next)
-      return { kind: 'success', text: next ? 'AUTO_OPTIMIZE:ON' : 'AUTO_OPTIMIZE:OFF' }
-    },
-  })
+      const raw = invocation.rawInput.trim()
 
-  // Runtime switch for the role-document language mode (auto | 中文 | 英文).
-  // `auto` (the default) follows each instruction's language; 中文/英文 pin it.
-  ctx.commands.register({
-    name: 'optimizer-language',
-    description: 'Switch the optimizer role-document language mode (auto | 中文 | 英文 | status)',
-    input: { hint: 'auto | 中文 | 英文 | status' },
-    handler: async (invocation): Promise<CommandResult> => {
-      const arg = invocation.rawInput.trim()
-      if (arg === 'status') {
-        return { kind: 'success', text: metaLanguageToken(service.getMetaPromptLanguage()) }
+      // --- Flag: --stats ---
+      if (raw === '--stats' || raw.startsWith('--stats ')) {
+        const stats = service.getStats()
+        return {
+          kind: 'success',
+          text: `OPTIMIZE_STATS:TOKENS:${stats.lastOutputTokens}|INPUT:${stats.lastInputTokens}|CALLS:${stats.lastRunCalls}|LASTMSCALL:${stats.lastCallMs}|LOCAL:${stats.local}|REFINED:${stats.refined}`,
+        }
       }
-      if (arg === 'auto' || arg === '中文' || arg === '英文') {
-        service.setMetaPromptLanguage(arg === 'auto' ? 'auto' : arg === '英文' ? 'en' : 'zh')
-        return { kind: 'success', text: metaLanguageToken(service.getMetaPromptLanguage()) }
-      }
-      return { kind: 'error', text: 'prompt-optimize: 用法 /optimizer-language auto | 中文 | 英文 | status' }
-    },
-  })
 
-  // Read-only run statistics (观测): machine-readable token the client maps
-  // to a transient "consumed ≈N tokens" hint after a successful optimize, and
-  // for latency diagnosis (last single-call ms + calls in the last run).
-  ctx.commands.register({
-    name: 'optimize-stats',
-    description: 'Report optimizer run statistics (machine-readable tokens)',
-    handler: async (): Promise<CommandResult> => {
-      const stats = service.getStats()
-      return {
-        kind: 'success',
-        text: `OPTIMIZE_STATS:TOKENS:${stats.lastOutputTokens}|INPUT:${stats.lastInputTokens}|CALLS:${stats.lastRunCalls}|LASTMSCALL:${stats.lastCallMs}|LOCAL:${stats.local}|REFINED:${stats.refined}`,
+      // --- Flag: --language ---
+      if (raw.startsWith('--language')) {
+        const arg = raw.replace(/^--language\s*/, '').trim()
+        if (arg === '' || arg === 'status') {
+          return { kind: 'success', text: metaLanguageToken(service.getMetaPromptLanguage()) }
+        }
+        if (arg === 'auto' || arg === '中文' || arg === '英文') {
+          service.setMetaPromptLanguage(arg === 'auto' ? 'auto' : arg === '英文' ? 'en' : 'zh')
+          return { kind: 'success', text: metaLanguageToken(service.getMetaPromptLanguage()) }
+        }
+        return { kind: 'error', text: 'prompt-optimize: 用法 /optimize --language auto | 中文 | 英文 | status' }
       }
+
+      // --- Flag: --auto ---
+      if (raw.startsWith('--auto')) {
+        const arg = raw.replace(/^--auto\s*/, '').trim().toLowerCase()
+        const current = service.isAutoOptimizeAll()
+        let next: boolean
+        switch (arg) {
+          case 'on':
+            next = true
+            break
+          case 'off':
+            next = false
+            break
+          case 'toggle':
+            next = !current
+            break
+          case 'status':
+            return { kind: 'success', text: current ? 'AUTO_OPTIMIZE:ON' : 'AUTO_OPTIMIZE:OFF' }
+          default:
+            return { kind: 'error', text: 'prompt-optimize: 用法 /optimize --auto on | off | toggle | status' }
+        }
+        service.setAutoOptimizeAll(next)
+        return { kind: 'success', text: next ? 'AUTO_OPTIMIZE:ON' : 'AUTO_OPTIMIZE:OFF' }
+      }
+
+      // --- Default: optimize instruction ---
+      return optimizeHandler(invocation, false)
     },
   })
 

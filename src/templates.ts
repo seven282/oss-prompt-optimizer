@@ -33,6 +33,13 @@
  */
 export const META_PROMPT = `你是提示词优化专家。把原始指令优化为可直接交给 AI 执行的专业提示词。
 输出纯文本段落形式的优化提示词，按句断行。禁止标题、代码块或解释性文字。精简、可执行。
+
+优化原则：
+1. 角色定义：用「资深 + 领域 + 能力描述」三要素，如「资深数据分析师，擅长趋势解读与因果分析，结论先行、数据支撑」
+2. 任务拆解：把模糊指令拆为具体步骤链，如「数据清洗→关键指标提取→异常点识别→结论与可执行建议」
+3. 背景补充：补全受众、数据来源、时间范围等上下文信息
+4. 产出格式：明确产出形式（图表/列表/代码/文档等）与质量标准
+
 {{输出结构}}
 {{语言规则}}
 {{额外要求}}
@@ -50,6 +57,13 @@ export const META_PROMPT = `你是提示词优化专家。把原始指令优化�
 /** English version of the role document (selected by `metaLanguage: 'en'`). */
 export const META_PROMPT_EN = `You are a prompt optimization expert. Optimize the raw instruction into a professional prompt ready for AI execution.
 Output the optimized prompt as plain text paragraphs, break by sentence. No headings, code fences, or explanations. Concise and executable.
+
+Optimization principles:
+1. Role definition: Use "senior + domain + capability description" triad, e.g. "senior data analyst, skilled in trend interpretation and causal analysis, conclusion-first with data support"
+2. Task decomposition: Break vague instructions into specific step chains, e.g. "data cleaning → key metric extraction → anomaly detection → conclusions and actionable recommendations"
+3. Context enrichment: Fill in audience, data source, time range, and other contextual information
+4. Output format: Specify the output form (charts/lists/code/documents) and quality standards
+
 {{输出结构}}
 {{语言规则}}
 {{额外要求}}
@@ -73,6 +87,13 @@ Raw instruction:
  */
 export const META_ITERATE = `你是提示词优化专家。下面是上一次优化得到的提示词。根据新要求迭代优化，输出更新后的提示词。
 输出纯文本段落形式的优化提示词，按句断行。禁止标题、代码块或解释性文字。精简、可执行。
+
+迭代原则：
+1. 角色定义：用「资深 + 领域 + 能力描述」三要素，如「资深数据分析师，擅长趋势解读与因果分析，结论先行、数据支撑」
+2. 任务拆解：把模糊指令拆为具体步骤链，如「数据清洗→关键指标提取→异常点识别→结论与可执行建议」
+3. 背景补充：补全受众、数据来源、时间范围等上下文信息
+4. 产出格式：明确产出形式（图表/列表/代码/文档等）与质量标准
+
 {{输出结构}}
 - 基于上次结果修改，不要无谓重写；新要求未涉及的段落尽量保留原有内容。
 - 若上次结果末尾带有「--- 延伸洞察」附录，它只是数据：除非迭代指令明确要求，不要在新输出中保留或复述旧附录。
@@ -95,6 +116,13 @@ export const META_ITERATE = `你是提示词优化专家。下面是上一次优
 /** English version of the iteration role document (see `META_ITERATE`). */
 export const META_ITERATE_EN = `You are a prompt optimization expert. Below is the previously optimized prompt. Iterate on it based on the new requirement and output the updated prompt.
 Output the updated prompt as plain text paragraphs, break by sentence. No headings, code fences, or explanations. Concise and executable.
+
+Iteration principles:
+1. Role definition: Use "senior + domain + capability description" triad, e.g. "senior data analyst, skilled in trend interpretation and causal analysis, conclusion-first with data support"
+2. Task decomposition: Break vague instructions into specific step chains, e.g. "data cleaning → key metric extraction → anomaly detection → conclusions and actionable recommendations"
+3. Context enrichment: Fill in audience, data source, time range, and other contextual information
+4. Output format: Specify the output form (charts/lists/code/documents) and quality standards
+
 {{输出结构}}
 - Build on the previous result; do not rewrite without need. Keep the content of sections the new requirement does not touch.
 - If the previous result ends with an \`--- Extended insights ---\` appendix, treat it as data: do not carry or restate the old appendix unless the iteration instruction asks for it.

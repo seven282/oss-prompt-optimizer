@@ -85,12 +85,13 @@ describe('goal-aware scores (1.6.1 hybrid)', () => {
 })
 
 describe('buildLocalTemplate (1.5.6)', () => {
-  it('renders a four-section template with role/task/context/format', () => {
+  it('renders a plain-text template without section headers', () => {
     const out = buildLocalTemplate('写一份周报，总结本周进展和下周计划', 'writing-report', 'zh')
-    expect(out).toContain('## Role')
-    expect(out).toContain('## Task')
-    expect(out).toContain('## Context')
-    expect(out).toContain('## Format')
+    // No section headers in plain mode.
+    expect(out).not.toContain('## Role')
+    expect(out).not.toContain('## Task')
+    expect(out).not.toContain('## Context')
+    expect(out).not.toContain('## Format')
     // Role 来自角色库（无显式角色时）。
     expect(out).not.toContain('{{')
   })
@@ -102,8 +103,8 @@ describe('buildLocalTemplate (1.5.6)', () => {
 
   it('renders English templates with en metaLanguage', () => {
     const out = buildLocalTemplate('Write a weekly report summarizing this week', 'writing-report', 'en')
-    expect(out).toContain('## Role')
-    expect(out).toContain('## Task')
+    expect(out).not.toContain('## Role')
+    expect(out).not.toContain('## Task')
   })
 
   it('renders deterministically for the same input', () => {
@@ -112,7 +113,7 @@ describe('buildLocalTemplate (1.5.6)', () => {
     expect(a).toBe(b)
   })
 
-  it('strips internal prefixes and meta markers from the rendered sections (P0 净化)', () => {
+  it('strips internal prefixes and meta markers from the rendered output (P0 净化)', () => {
     const out = buildLocalTemplate('写一份周报，总结本周进展和下周计划', 'writing-report', 'zh')
     // Role: no "角色参考：" internal prefix.
     expect(out).not.toContain('角色参考：')
@@ -121,9 +122,9 @@ describe('buildLocalTemplate (1.5.6)', () => {
     expect(out).not.toContain('来自原始指令')
     // Format: no "Format " label leak.
     expect(out).not.toContain('\nFormat 标题')
-    // Finished reading: role reads as a product, task carries the extracted verb.
-    expect(out).toContain('资深撰稿人，擅长公文/营销/技术写作')
-    expect(out).toContain('核心动作：写「一份周报」')
+    // Finished reading: role and task read as complete, professional prompts.
+    expect(out).toContain('作为资深项目助理，擅长简洁有力的要点式周报')
+    expect(out).toContain('撰写周报')
   })
 
   it('keeps the explicit role and audience context when present', () => {
@@ -133,29 +134,27 @@ describe('buildLocalTemplate (1.5.6)', () => {
   })
 
   it('enriches role and context from the subtype fill rules (P1 丰富度)', () => {
-    // 周报 → Role 追加「结论先行、要点支撑…」，Context 有「面向汇报对象…」，
-    // 不再落到「无额外背景」空兜底。
+    // 周报 → Role 来自 FILL_RULES 四要素成品，Context 含汇报对象与进展待办。
     const out = buildLocalTemplate('写一份周报，总结本周进展和下周计划', 'writing-report', 'zh')
-    expect(out).toContain('结论先行、要点支撑、按文体控制篇幅')
-    expect(out).toContain('面向汇报对象，聚焦进展与待办')
-    expect(out).not.toContain('无额外背景')
+    expect(out).toContain('作为资深项目助理，擅长简洁有力的要点式周报')
+    expect(out).toContain('面向团队与管理层，聚焦进度与待办')
   })
 
-  it('renders the English fill-rule enrichment with the right separator', () => {
+  it('renders the English fill-rule enrichment with the right content', () => {
     const out = buildLocalTemplate('Write a weekly report summarizing this week', 'writing-report', 'en')
-    expect(out).toContain('lead with the conclusion, back with points, match length to the genre')
-    expect(out).toContain('focus on progress and next steps for the audience.')
+    expect(out).toContain('As a senior project assistant skilled in concise point-form weekly reports')
+    expect(out).toContain('For the team and management')
   })
 })
 
 describe('writing-presentation local render (1.6.4)', () => {
   it('renders a presentation-oriented template with fill rules', () => {
     const out = buildLocalTemplate('帮我生成个人介绍PPT', 'writing-presentation', 'zh')
-    expect(out).toContain('## Role')
-    expect(out).toContain('面向受众组织信息')
-    expect(out).toContain('## Task')
+    expect(out).not.toContain('## Role')
+    expect(out).toContain('演示内容架构师')
+    expect(out).not.toContain('## Task')
     expect(out).toContain('明确受众与目的')
-    expect(out).toContain('## Format')
+    expect(out).not.toContain('## Format')
     expect(out).toContain('内容框架 + 页面结构 + 设计建议 + 演示话术')
   })
 })

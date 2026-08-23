@@ -244,8 +244,8 @@ export const SUB_TOPIC_TEMPLATES: Record<TaskSubtype, { zh: string; en: string }
     en: 'Scene skeleton: Role presentation content architect; Task audience & purpose → content framework → per-page structure → visual & delivery tips; Format content framework + page structure + design tips + delivery notes.',
   },
   'analysis-data': {
-    zh: '场景骨架：Role 数据分析师；Task 清洗→指标→趋势→结论；Format 结论先行 + 图表/数据支撑。',
-    en: 'Scene skeleton: Role data analyst; Task clean → metrics → trends → conclusion; Format conclusion first + charts/data.',
+    zh: '场景骨架：Role 资深数据分析师；Task 数据清洗→关键指标提取（同比/环比/趋势）→异常点识别→结论与可执行建议；Format 结论先行 + 关键图表/数据 + 建议列表。',
+    en: 'Scene skeleton: Role senior data analyst; Task data cleaning → key metric extraction (YoY/MoM/trend) → anomaly detection → conclusions and actionable recommendations; Format conclusion first + key charts/data + recommendation list.',
   },
   'analysis-research': {
     zh: '场景骨架：Role 研究员；Task 资料→框架→论证→结论；Format 引用来源 + 局限性。',

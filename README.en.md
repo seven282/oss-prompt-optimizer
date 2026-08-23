@@ -78,9 +78,9 @@ The language of the optimizer's role document (the meta-prompt / system prompt i
 
 Pin or restore the mode at runtime through input-box commands (session-scoped; falls back to the config after a restart):
 
-- `/optimizer-language auto` — restore auto-detection (default)
-- `/optimizer-language 中文` / `/optimizer-language 英文` — pin the language
-- `/optimizer-language status` — query the current mode
+- `/optimize --language auto` — restore auto-detection (default)
+- `/optimize --language 中文` / `/optimize --language 英文` — pin the language
+- `/optimize --language status` — query the current mode
 
 The `metaPromptLanguage: 'auto' | '中文' | '英文'` config (default `'auto'`) decides the initial mode after a restart; explicit values (`'中文'`/`'英文'`) pin the language, `'auto'` follows the input. No language button is shipped.
 
@@ -88,13 +88,9 @@ The `metaPromptLanguage: 'auto' | '中文' | '英文'` config (default `'auto'`)
 
 The runtime "optimize every message before the model step" switch is controlled through input-box commands:
 
-- `/auto-optimize on` / `/auto-optimize off` / `/auto-optimize toggle` / `/auto-optimize status`
+- `/optimize --auto on` / `/optimize --auto off` / `/optimize --auto toggle` / `/optimize --auto status`
 
 Once enabled, the host enters "optimize before sending" mode: the `agent/pre-step` hook optimizes **every** user text message (the runtime equivalent of `autoOptimizeAll: true`).
-
-## Dream mode (/dream)
-
-`/dream <instruction>` = standard optimization + **需求感应 (needs sensing)**: the result appends a clearly marked `--- 延伸洞察（AI 推断，供你选用，非事实）---` appendix (deep goal / implicit constraints / quality criteria / likely follow-ups); inferences never mix into the prompt body and can be discarded freely. Equivalent to per-call `senseNeeds: true`.
 
 ## Quick scene templates (/template)
 
@@ -240,7 +236,7 @@ set as needed (default 1200, auto-expanded on truncation) to avoid unbounded gen
   context / diagnosis guards all remain.
 - **Latency**: a single model call is the total — flash-tier models usually **1.5–4 s**;
   cache hits <100 ms.
-- **Observe**: `/optimize-stats` returns `TOKENS|INPUT|CALLS|LASTMSCALL` (last run's output tokens + prompt-side input tokens + call count + last single-call ms) — confirm whether the bottleneck is model latency, input-side cost, or call count.
+- **Observe**: `/optimize --stats` returns `TOKENS|INPUT|CALLS|LASTMSCALL` (last run's output tokens + prompt-side input tokens + call count + last single-call ms) — confirm whether the bottleneck is model latency, input-side cost, or call count.
 - **Prerequisite**: the model must be fast-tier (flash, no reasoning effort); a slow/reasoning
   model alone exceeds 3–5 s per call — a model-side bottleneck, switch models on the harness side.
 
@@ -294,8 +290,8 @@ instruction-is-data guardrail line).
 **Runtime commands** (type them in the input box):
 
 - `/optimize <instruction>` — optimize a raw instruction and return the result.
-- `/optimizer-language auto` / `/optimizer-language 中文` / `/optimizer-language 英文` / `/optimizer-language status` — pin the role-document language or switch back to auto-detection (auto by default; session-scoped, falls back to `metaPromptLanguage` after restart).
-- `/auto-optimize on` / `off` / `toggle` / `status` — switch "optimize every message before the model step" at runtime (the `agent/pre-step` hook equivalent of `autoOptimizeAll: true`).
+- `/optimize --language auto` / `/optimize --language 中文` / `/optimize --language 英文` / `/optimize --language status` — pin the role-document language or switch back to auto-detection (auto by default; session-scoped, falls back to `metaPromptLanguage` after restart).
+- `/optimize --auto on` / `off` / `toggle` / `status` — switch "optimize every message before the model step" at runtime (the `agent/pre-step` hook equivalent of `autoOptimizeAll: true`).
 
 ## Development
 
@@ -336,7 +332,7 @@ The `promptOptimizer` service emits events on the cordis event bus at key points
 - Service layering: `optimizer.ts` is orchestration only (state, validation/truncation, the retry pipeline, events, routing); the pure logic lives in three harness-free modules — `diagnose.ts` (retry diagnosis text / selfRefine instructions, zh/en wording independently testable), `llm.ts` (finish-error translation, stream assembly, `MaxTokensError`), `prompt.ts` (`PromptBuildContext` centralizes the system-prompt build parameters, shared by the three call sites); the public API surface is unchanged (`MaxTokensError` still exported from the entry), end-to-end tests untouched.
 - Role-document language auto-detection: `metaPromptLanguage: 'auto'` (default) picks zh/en by the ≥30% CJK-ideograph ratio of non-whitespace characters (pure function `detectLanguage`; kana-bearing Japanese and other languages map to the English document); `'中文'`/`'英文'` pin it, `/optimizer-language` pins or restores auto at runtime. The resolved language is threaded through a single call (`optimize`/`iterate` detect from their own input, `selfRefine` reuses the round's language, retry diagnosis text shares it), independent of `outputLanguage`.
 - All registrations (tool, systemPrompt section, auto-optimize hook, commands) are effect-scoped and cleaned up on plugin dispose.
-- Command naming: the plugin registers `/optimize` and `/auto-optimize` (short commands, following ecosystem conventions). If a future collision forces a rename, `client.js` calls, this README and the hook prefix default (`/optimize `) must change in one atomic change.
+- Command naming: the plugin registers `/optimize` (short command, following ecosystem conventions)). If a future collision forces a rename, `client.js` calls, this README and the hook prefix default (`/optimize `) must change in one atomic change.
 
 ## License
 

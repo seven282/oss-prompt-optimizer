@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.7.1] - 2026-08-23
+
+- **FILL_RULES 四要素成品升级**：`local.ts` 的 `FILL_RULES` 从「角色补全 + 上下文要点」片段
+  升级为完整四要素成品数据（role / task / context / format），覆盖 20 子类 × 2 语言 = 40 条目，
+  对齐 `docs/21子类优化示例.md` 质量标准
+- **buildLocalTemplate 渲染简化**：删除 5 个辅助函数（`cleanRoleRef` / `parseSkeleton` /
+  `fillParts` / `fillRolePart` / `fillContextPart`），FILL_RULES 直接输出成品，
+  不再做 ROLE_LIBRARY + FILL_RULES 拼接
+- **输出质量提升**：本地渲染成品从「断裂拼接文本」升级为「完整专业提示词」——
+  角色定位清晰、任务描述完整、上下文具体、格式规范
+- 测试 487 全绿；vault 文档同步更新。
+
 ## [1.7.0] - 2026-08-23
 
 - **✨ 按钮 AbortSignal 修复**：client.js `commands.execute` 第三参数误传 AbortSignal 导致
