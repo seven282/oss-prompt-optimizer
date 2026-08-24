@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.7.3] - 2026-08-25
+
+### Fixed
+- **client.js ✨ 按钮 execute 签名修复**：dsh 0.1.1-rc.2 协议
+  `commands.execute(agentId, line, images, signal?)` 需 **3 业务参数**，
+  原调用 `(sessionId, line)` 缺 `images` → 报「expected 3 business
+  argument(s)..., got 2」，优化按钮失效（1.7.0 修 AbortSignal 时误丢 images
+  参数，遗留至今）；两处调用（优化 + `--stats`）补 `images=[]`
+- 测试 540 全绿（build 同步 lib/client.js）。
+
 ## [1.7.2] - 2026-08-23
 
 ### Added
