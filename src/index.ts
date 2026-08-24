@@ -18,7 +18,7 @@ export { MaxTokensError, PromptOptimizerService, PROMPT_OPTIMIZER_TIMEOUT_CODE }
 export type { OptimizeOptions, OptimizeResult } from './optimizer.js'
 export { PROMPT_OPTIMIZER_EVENTS } from './events.js'
 export type { OptimizeMethod, OptimizeOutcomePayload, OptimizeStartPayload } from './events.js'
-export { PROMPT_OPTIMIZE_DESCRIPTION, renderOptimizeResult } from './tool.js'
+export { renderOptimizeResult } from './tool.js'
 export { AUTO_OPTIMIZE_NOTE, isTriggered, messageText, optimizedMessage, registerAutoOptimizeHook } from './hook.js'
 export { buildContextBlock, contextMessageText, gatherConversationContext } from './context.js'
 export type { ContextMessage, GatherContextOptions } from './context.js'

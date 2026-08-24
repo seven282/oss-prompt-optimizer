@@ -54,6 +54,8 @@ const BASE_CONFIG: Config = {
   classifier: 'heuristic',
   localTemplate: 'off',
   hybridAlignThreshold: 0.4,
+  autoAdapt: false,
+  minAdaptEpisodes: 10,
 }
 
 const FOUR_SECTIONS = `## Role

@@ -6,7 +6,7 @@ import { OptimizeErrorCode } from './errors.js'
 import type { OptimizeResult, PromptOptimizerService } from './optimizer.js'
 
 /** Tool-facing description for `prompt_optimize`. */
-export const PROMPT_OPTIMIZE_DESCRIPTION =
+const PROMPT_OPTIMIZE_DESCRIPTION =
   'Optimize a raw instruction into a professional, ready-to-execute prompt. Returns the optimized prompt text. ' +
   'To iterate on an already optimized prompt, pass it as `lastOptimized` together with the new requirement as `iterateInstruction`.'
 

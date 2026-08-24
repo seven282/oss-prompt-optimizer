@@ -1,870 +1,367 @@
 # Changelog
 
+## [1.7.2] - 2026-08-23
+
+### Added
+- 自迭代系统：三层架构（会话学习 + 智能默认值 + 用户覆盖），零 token 成本
+- 新命令：`--set-profile`、`--set-local`、`--set-temperature`、`--clear`、`--insights`
+- 新模块：episode.ts（行为采集）、preference.ts（偏好模型）、adapt.ts（三层决策）
+- 新配置：`autoAdapt`（默认关）、`minAdaptEpisodes`（默认 10）
+
+### Changed
+- 优先级：用户覆盖 > 会话学习 > 智能默认值 > 基础配置
+
 ## [1.7.1] - 2026-08-23
 
-- **FILL_RULES 四要素成品升级**：`local.ts` 的 `FILL_RULES` 从「角色补全 + 上下文要点」片段
-  升级为完整四要素成品数据（role / task / context / format），覆盖 20 子类 × 2 语言 = 40 条目，
-  对齐 `docs/21子类优化示例.md` 质量标准
-- **buildLocalTemplate 渲染简化**：删除 5 个辅助函数（`cleanRoleRef` / `parseSkeleton` /
-  `fillParts` / `fillRolePart` / `fillContextPart`），FILL_RULES 直接输出成品，
-  不再做 ROLE_LIBRARY + FILL_RULES 拼接
-- **输出质量提升**：本地渲染成品从「断裂拼接文本」升级为「完整专业提示词」——
-  角色定位清晰、任务描述完整、上下文具体、格式规范
-- 测试 487 全绿；vault 文档同步更新。
+### Changed
+- FILL_RULES 从片段升级为完整四要素成品（20 子类 × 2 语言）
+- buildLocalTemplate 简化，删除 5 个辅助函数，本地渲染质量提升
 
 ## [1.7.0] - 2026-08-23
 
-- **✨ 按钮 AbortSignal 修复**：client.js `commands.execute` 第三参数误传 AbortSignal 导致
-  `rejected "images"` 报错，修正为 `[]`（空数组）
-- **dream 模式死代码清理**：移除 `dreamInsightFeedback`（跨轮回填）、`senseNeedsSeparate`
-  （D6 独立附录）、`appendixTokens`/`lastAppendixTokens`、`extractDreamInsights`/
-  `dreamFeedbackFor`/`withDreamFeedback`/`appendixOnce`、`APPX:` 统计前缀
-- README 配置表同步清理两行（dreamInsightFeedback / senseNeedsSeparate），取消功能描述修正
-- 测试 487 全绿。
+### Fixed
+- ✨ 按钮 AbortSignal 参数误传导致 rejected "images" 报错
+
+### Removed
+- dream 模式死代码（dreamInsightFeedback、senseNeedsSeparate 等）
 
 ## [1.6.9] - 2026-08-23
 
-- **新配置 `sceneRefEnabled`（默认 `true`）**：`false` 时完全跳过场景参考注入
-  （省 ~200 input tokens）；配合 1.6.8 的示例过配门控做系统减负
-- **plain 结构/自查块清空**：`STRUCTURE_PLAIN`/`SELFCHECK_PLAIN`（含 en）置空——
-  模板骨架承载核心输出规则，常驻系统提示词最小化
-- **场景参考/示例防照搬护栏**：场景参考提示「仅为灵感来源，展开为具体提示词，
-  严禁逐字照搬」；示例块提示「禁止照搬示例内容」——与 1.6.8 过配门控构成双保险
-- **四段模式上下文提取规则**：仅从对话上下文提取与任务直接相关的事实（讨论主题/
-  已确认需求/用户偏好）充实 ## Context；忽略元讨论与状态更新；严禁原样输出
-  上下文原文
-- 测试 496 全绿（既有用例更新，无新增计数）。
+### Added
+- 新配置 `sceneRefEnabled`（默认 `true`）：`false` 时跳过场景参考注入（省 ~200 input tokens）
+
+### Changed
+- plain 模式结构/自查块清空，常驻系统提示词最小化
+- 场景参考/示例增加防照搬护栏
+- 四段模式上下文提取规则优化：仅提取与任务相关的事实
 
 ## [1.6.8] - 2026-08-22
 
-- **P0 默认输出形态 role-task-goal → plain（无标题纯文本）**：最省 token；
-  sections 四段保留为可选与优化时的内部参考框架；schema 与
-  buildOptimizePrompt/buildIteratePrompt 默认参数同步；plain 下不注入
-  few-shot 示例（克隆源随默认管线一并切断）
-- **P0 内置示例过配门控（A1）**：示例 input 与原始指令的 bigram 覆盖率
-  ≥0.45 且指令更长（×1.3）时不注入该示例——根因实测：推拿文案指令命中为
-  其定制的孪生示例后输出逐字搬运（「先梳理核心亮点，再分层叙述…」），是
-  「生搬硬套」的直接来源。不用 Jaccard——会被长指令稀释（该对实测仅
-  ≈0.17 无法区分），改用覆盖率（推拿对 ≈0.56 vs 无关对 <0.2）；长度比条件
-  保住逐字短语变体（如「帮我做一份融资路演PPT」，长度比 ≈1 是刻意编码的
-  理想结构）；显式配置的 examples 不过滤；子类候选全滤掉时回落大类示例
-  继续过滤，保住格式锚点只丢克隆源
-- **P1 内置示例瘦身（A2）**：最重的 8 条示例 output 压缩约一半（zh/en 的
-  code-bugfix、analysis-review×2、推拿文案变体；单条峰值 ~600 字符 →
-  ~300）——示例教什么颗粒度模型就输出什么颗粒度，同时降低系统提示词最大
-  单项的重复计费成本（跳档续传每次调用都重发全部示例）
-- **P1 系统提示词减负（B1/B2/B4）**：任务类型提示三行压一行（删「角色写法
-  建议」——与结构块角色公式、自查块角色检查语义重复）；子类提示＋角色参考＋
-  场景骨架三块合并为一行「场景参考：【标签】类 · 角色参考：… · 场景骨架：…」；
-  六个输出结构块增加复杂度伸缩条款（「简单任务不拆步骤、不硬凑全部要素」）。
-  注入的规定性语句越少，模型逐句填空的模板腔越轻——token 侧省幅有限（约
-  10%），质量侧为主
-- **P1 长度预算可感化（B3）**：「建议输出长度不超过 N token」追加字/词锚点——
-  中文按插件保守系数 ≈N/1.5 字（800 token → 约 500 字），英文按 ~0.75
-  words/token。锚点刻意偏保守：软约束只催精简，不会触发截断重试
-- **P1 累计 token 预算硬门（D1）**：新配置 `maxTotalTokens`（默认 20000，
-  `0` 关闭）——单次优化所有调用的 system＋新生成量累计到顶即停止跳档/重试，
-  按既有降级路径返回（新错误码 `BUDGET_EXCEEDED`）。计费覆盖触顶调用
-  （system＋截断片段在 catch 分支入账，续传前缀成功路径不重复计费）。封掉
-  未知病理的长尾成本，与 `maxCalls`（次数）、`maxTokensCap`（单次输出）互补
-- **P1 简单指令极简档（P-A）**：归一化 ≤16 字符的短指令走极简系统提示词——
-  不注入任务类型/场景参考/自查（情境块保留：承载会话级目标沿用），输出预算
-  同步降档至 400 token（显式 `options.maxTokens` 覆盖时不降档）。新增导出
-  `isCompactInstruction`
-- **P1 结构细则后置（P-B）**：六个输出结构块的每段写法细则移出常驻系统提示
-  词，失败重试时由诊断文案精准下发（buildDiagnosis 追加各段写法补课段）——
-  正常路径每次再省约 300 字，重试针对性反而更强
-- **P1 三重回声去重（P-C）**：任务类型提示删除「角色请定…」半句——与场景
-  参考的角色行、情境画像的角色信号重复
-- **P1 画像噪声门控（P-D）**：「针对家长常见的育儿痛点给出调理方案」这类
-  谓语从句不再被当受众注入画像（噪声标记黑名单＋12 字上限）
-- **P1 自查瘦身（P-E）**：自查六问压两问；删「长度是否足以直接执行」（催写
-  满倾向），改正向锚点观「在长度锚点内说清即止」
-- **修复**：场景参考行「角色参考：」双前缀（B2 合并时引入，实测渲染发现）
-- **造梦模式降本（D1–D4，ADR-010 修订）**：`senseNeeds` 不再整体绕过
-  localTemplate——auto/on 档在 dream 下走 seed 精修**单次调用**同时产出正文＋
-  附录（on/hybrid 零调用直出在 dream 下回落精修档；dream 关闭仍零调用直出）；
-  回填洞察存储即截断（200 字上限＋省略号），防逐轮膨胀；selfRefine 精简指令
-  豁免「---」附录（refineInstruction）；迭代模板声明旧附录为数据、不保留不复述。
-  `/dream` 常规场景预期端到端省 50–70%；详见 docs/vault/60-Decisions/ADR-010
-- **P1 管线修正**：缓存键纳入 outputLanguage（防跨语言串缓存）；纯度门
-  hasMetaContent 只扫末尾 300 字符（正文提及关键词不再误伤）；
-  estimateTokens CJK 系数 1→1.5（减少中文过早截断）；分类平局裁决统一为
-  resolveWritingTieBreak（code 恒赢、writing 凭写作动词同分赢
-  ops/analysis）；情境画像按需构建（localTemplate on/hybrid 直出路径不再
-  空建画像）；contextMaxMessages 默认 6→10
-- 文档：README 中英配置表默认值同步（outputStyle / maxTokenRetryFactor
-  1.5 / contextMaxMessages 10）并新增 `maxTotalTokens` 行；设计要点「两套
-  模板」修正为三套结构块；AGENTS.md 重写对齐当前架构（13 个测试文件、六个
-  命令、模块职责、npm dist-tags 核实命令）
-- **造梦观测与 separate 实验档（D5/D6）**：`OptimizeResult.appendixTokens` ＋
-  stats `lastAppendixTokens` 单列附录消耗，`/optimize-stats` 追加 `|APPX:<n>`；
-  新配置 `senseNeedsSeparate`（默认关）——主线不带感应块正常优化，第二次
-  maxTokens=250 的轻量调用只产附录（失败静默、正文原样），on 档也能产附录且
-  消灭跳档放大；回填洞察存储截断同步覆盖该路径
-- 测试 480 → 496（meta +3 过配门控、+3 极简档；situation +2 受众噪声门控；
-  optimizer +1 累计预算硬门、+2 极简档集成、+4 造梦×本地组合/回填截断、
-  +1 separate 附录；command 断言随 APPX 段更新；diagnose 随 D3 更新精简指令断言）
+### Changed
+- 默认输出形态 role-task-goal → plain（无标题纯文本，最省 token）
+- 内置示例增加过配门控：相似指令不注入示例，防逐字搬运
+- 内置示例瘦身：8 条最重示例 output 压缩约一半
+- 系统提示词减负：任务类型提示压缩、结构块增加复杂度伸缩条款
+- 长度预算可感化：追加字/词锚点（中文 ≈N/1.5 字，英文 ~0.75 words/token）
+
+### Added
+- 新配置 `maxTotalTokens`（默认 20000）：累计 token 预算硬门
+- 简单指令极简档：≤16 字符短指令走极简系统提示词
+- 结构细则后置：失败重试时由诊断文案精准下发
+
+### Fixed
+- 场景参考行「角色参考：」双前缀修复
+- 缓存键纳入 outputLanguage（防跨语言串缓存）
+- 纯度门只扫末尾 300 字符（正文提及关键词不再误伤）
+- CJK 系数 1→1.5（减少中文过早截断）
+- 分类平局裁决统一为 resolveWritingTieBreak
+
+### Removed
+- 造梦模式降本：senseNeeds 不再绕过 localTemplate
+- 三重回声去重、画像噪声门控、自查瘦身
 
 ## [1.6.7] - 2026-08-21
 
-- **P0 分类 tie-break 修复**：写作动词（写/撰写/起草…）与 analysis 类词
-  （分析/方案）**同分打平时判 writing**（扩展 1.5.5 的 ops 裁决）——根因：实测
-  「写小儿推拿师工作经验介绍文案（含能力分析、调理方案）」被误判 analysis/
-  analysis-review，注入技术评估示例 → 输出模板化 + 输出膨胀触发 token 跳档重试
-  （单次消耗 5124 token 的根因）；修复后回归 writing-resume，示例贴场景
-- **P1 默认输出形态 sections → role-task-goal（移除固定四段标题）**：默认输出
-  不再带 `## Role/## Task/## Context/## Format` 固定标题，改为三要素标签
-  （`角色：/任务：/目标：`，可解析、更接近自然清单风格）；sections 保留为可选
-  （显式配置）；`buildOptimizePrompt`/`buildSystem` 默认参数同步
-- **P1 token 优化**：`maxTokenRetryFactor` 默认 2 → 1.5（输出截断跳档更平滑，
-  省 ~500-900 token/截断场景）
-- **P1 示例与关键词**：writing-copy 加「小儿推拿师工作经历文案」变体（zh/en，
-  含四部分结构与 300-500 字锚定）；writing-resume 关键词补「个人简介/工作经验/
-  工作经历」（工作经历介绍 → writing-resume 而非 copy）
-- 实测：小儿推拿指令 system 由 755（sections+错配示例）→ 410 tokens（RTG），
-  修复后单次消耗预期 5124 → ~1500-2000
-- 测试 474 → 480（meta +6：P0 平局裁决/纯分析不受影响/示例替换 + P1 变体注入/
-  默认 RTG 无四段标题/resume 关键词路由）。
+### Fixed
+- 分类 tie-break 修复：写作动词与 analysis 类词同分时判 writing
+
+### Changed
+- 默认输出形态 sections → role-task-goal（三要素标签）
+- maxTokenRetryFactor 默认 2 → 1.5
+- writing-copy / writing-resume 示例与关键词扩充
 
 ## [1.6.6] - 2026-08-21
 
-- **P1a 三要素示例折叠注入**：`toRoleTaskGoal`/`sectionBodyOf` 移入 validate.ts
-  （纯函数层，避免 meta↔local 循环）；RTG 模式下内置示例 output 折叠为三要素
-  再注入——三要素输出获得 few-shot 引导（plain 仍禁用）
-- **B1 子类示例扩充（2 → 10 个）**：新增 writing-report/email/copy/resume/
-  presentation、code-script、analysis-data、ops-deploy × zh/en 各 1 对（四段
-  资产，RTG 运行时折叠）；大类回退不变
-- **B2a 子类示例再扩充（10 → 15 个）**：新增 code-review、ops-troubleshoot、
-  writing-polish、writing-translate、analysis-research × zh/en（结构差异显著
-  子类）；15 子类 + 4 大类折叠合规 36/36
-- **B3a 高频子类变体**：writing-report（+述职报告）、writing-presentation
-  （+产品介绍PPT）、ops-deploy（+生产发布，灰度+回滚预案）各 1 变体 × zh/en——
-  命中子类多条示例按序注入（示例 1/2），模型按指令语义选择结构
-- **B3b 精选变体**：writing-presentation +「融资路演PPT」（市场机会→商业模式→
-  团队与数据→融资需求与用途，结构差异显著）——presentation 命中注入 3 条，
-  report/deploy 维持 2 条（token 成本可控）
-- **校验器缺陷修复**：`hasValidRoleTaskGoal` 的「下一标签」正则
-  `/^[^\n]{0,8}[:：]/` 误判内容行（如「分析销售数据趋势：」行首+短词+冒号）为
-  标签 → 正文截断误拒；改为只匹配真实 RTG 标签
-- 测试 452 → 474（meta +20 示例命中/变体/折叠合规；validate +2 内容行不误判）。
+### Changed
+- RTG 模式下内置示例折叠为三要素再注入
+- 子类示例从 2 个扩充到 15 个，覆盖 15 子类 + 4 大类
+- 高频子类变体：述职报告、产品介绍PPT、生产发布、融资路演PPT
+
+### Fixed
+- hasValidRoleTaskGoal 正则误判内容行为标签
 
 ## [1.6.5] - 2026-08-21
 
-- **三要素输出形态 `outputStyle: 'role-task-goal'`（P0，方案确认 A）**：四段
-  （## Role / ## Task / ## Context / ## Format）保持为**优化时的内部参考框架**，
-  输出形态可配置为可被下游解析的三行标签——`角色：/任务：/目标：`（zh，跟随
-  metaPromptLanguage，en 为 `Role:/Task:/Goal:`）：
-  - 映射：角色 ← Role；任务 ← Task；目标 ← Context+Format 合并（背景约束＋
-    产出规格一行）
-  - 新增 `STRUCTURE_RTG/RTG_EN` + `SELFCHECK_RTG/RTG_EN`（结构块与自查块按
-    outputStyle 三选一）；`buildRefinePrompt` 加 shapeRule（RTG 模式提示
-    「只输出三行标签」）
-  - `validate.ts`：`hasRoleTaskGoalLabels` / `hasValidRoleTaskGoal`（zh/en 标签
-    集任一齐全 + 每节 ≥ minChars）；`hasOptimizedSections` 识别三要素（skip
-    透传兼容，已优化的三要素提示词不重复优化）
-  - `optimizer.ts`：validateOutput 三分支；RTG 缺标签/过薄 → 自定义诊断重试
-  - `local.ts`：`toRoleTaskGoal` 折叠（on 直出时本地四段 seed → 三要素）
-  - **默认保持 sections（零回归）**：role-task-goal 显式配置才生效
-- 测试 442 → 452（validate +3 标签/校验/skip / meta +2 结构块 zh/en /
-  local +2 折叠/refine shapeRule / optimizer +3 通过/缺标签重试/on 直出折叠）。
+### Added
+- 三要素输出形态 `outputStyle: 'role-task-goal'`（`角色：/任务：/目标：`）
+
+### Changed
+- 四段保持为优化时内部参考框架，输出可配置为三行标签
+- 默认保持 sections（零回归）
 
 ## [1.6.4] - 2026-08-21
 
-- **P1 分类覆盖**：`TASK_KEYWORDS.writing` 补 `生成/ppt/presentation/幻灯片/演示`——
-  「帮我生成个人介绍PPT」从 `other`（走全量 ~1300-2300）修复为 `writing`
-  （seed 优化 ~600-1300）；「生成 Python 脚本」等 code 场景不误伤（tie-break code 先）
-- **P2 新子类 `writing-presentation`（21→22）**：PPT/演示/述职/路演/宣讲/幻灯片
-  骨架（Role 演示内容架构师；Task 受众与目的→内容框架→逐页结构→视觉话术；
-  Format 内容框架+页面结构+设计建议+演示话术）+ FILL_RULES（面向受众、突出数据
-  成果、说明场合受众时长）；/template 场景清单补「演示」
-- **内置示例数组化**：`BUILTIN_SUBTYPE_EXAMPLES` 值从单条改为数组，一个子类可挂
-  多条（示例 1/2…按序注入）；analysis-review 新增「模板四段诊断」示例（1.6.4，
-  Role/Task/Context/Format 逐段评估重构，输出 Markdown 文档）——**用词规避
-  1.6.3 hasMetaContent 模式**（不用「优化标准/核心约束逻辑/定"谁来说"」）防模型
-  模仿输出元内容附录
-- 测试 437 → 442（meta +1 多示例注入 / situation +2 子类检测+不误伤 / local +1
-  渲染 / command +1 /template 演示）。
-- **措辞自然化**（meta.ts TASKTYPE_ZH/EN + STRUCTURE_SECTIONS/PLAIN +
-  SELFCHECK 中英 10 段）：去机械感——TASKTYPE 四类差异化表达（不再逐字同构）、
-  自查段改「自问清单」式（「以上每一条都要过一遍再交」），命令词（必须/严禁/
-  缺一不可）弱化为引导式（固定为/不要/确认过）；**硬规则零丢失**（四段标题、
-  按句断行、防虚构、字段标签禁令、自查项逐字保留）；同步 6 处测试断言
-  （TASKTYPE/严禁 措辞）。
+### Added
+- 新子类 `writing-presentation`（PPT/演示/述职/路演）
+
+### Changed
+- TASK_KEYWORDS.writing 补充生成/ppt/presentation 等关键词
+- 内置示例改为数组格式，一个子类可挂多条
+- 措辞自然化：去机械感，命令词弱化为引导式
 
 ## [1.6.3] - 2026-08-21
 
-- **输出纯净性后置校验（P0）**：`validate.ts` 新增 `hasMetaContent`——检测输出
-  是否夹带方法论/元内容附录（「优化标准」「核心约束逻辑」「Role（角色设定）
-  优化标准」章节、「总结：」行首、四段定位口诀「Role 定"谁来说"」等）：
-  - 全量管线：结构校验通过后追加纯净性检查，命中且预算内 → 注入
-    「只输出提示词本身」诊断重试（新错误码 `META_CONTENT`）
-  - seed 优化（auto/hybrid）：同样命中 → 以 purity 诊断重试一次，仍不纯回退
-    参考模板
-  - 防误报设计：仅标题级/强特征模式——正常提示词里「总结」作为 Format 任务
-    要求不触发（测试覆盖）
-- 测试 429 → 437（validate +5：命中/核心约束逻辑/纯净不触发/误报防护/消息；
-  optimizer +3：全量重试/seed 重试/纯净首出即收）。
+### Added
+- 输出纯净性后置校验：检测夹带方法论/元内容附录
+
+### Fixed
+- 命中时注入「只输出提示词本身」诊断重试
 
 ## [1.6.2] - 2026-08-21
 
-- **`auto` 语义改为 seed 优化（本地参考模板 + LLM 感知目标，非 0 token）**：
-  本地渲染不再直接作为成品返回，而是作为**参考模板（seed）**喂给 LLM 做目标
-  感知优化——`buildRefinePrompt(参考模板 + 原始指令 + 目标画像)` 单次调用：
-  - 输入侧实测 **267–311 tokens**（vs 全量管线 ~1000–1500，省 **74–79%**）
-  - **目标感知**：抽取的目标/约束/受众锚点注入精修 prompt，LLM 显式感知
-  - **输出对齐目标**：`refineLocal` 输出后经 `goalAlignment` 校验——未对齐且
-    `goalAlignmentRetry` 开启时，注入缺失项为诊断重试一次（与全量管线
-    GOAL_MISALIGNED 闭环同源，seed 路径至多一次防 token 失控）
-  - 失败/无效 → 回退参考模板（四段完整），`refined: true` 保留
-- **档位语义**：`off` 全量管线 / `auto`（默认）seed 优化 / `on` 纯本地直出
-  （0 token 模板，/template 预填同源）/ `hybrid` 对齐直出或 seed 优化
-- 测试 427 → 429（optimizer +2：seed 优化目标对齐重试 / 对齐首出即收）。
-  注意：`goalAnchors` 对「不超过 200 字」类约束提取宽泛锚点「不超过」，
-  any-anchor 匹配会宽松误判（既有 goalAlignment 语义，未改动）。
+### Changed
+- `auto` 语义改为 seed 优化（本地参考模板 + LLM 感知目标）
+- 档位语义：off 全量 / auto seed 优化 / on 纯本地直出 / hybrid 对齐+精修
 
 ## [1.6.1] - 2026-08-21
 
-- **`localTemplate: 'hybrid'` 混合两档（方案 A P0+P1）**：本地直出后做**目标感知
-  对齐检查**——`goalAnchorsScore(profile)` 按目标/约束/受众/角色锚点评分，≥
-  `hybridAlignThreshold`（默认 0.4）直接返回本地成品（**仍 0 token**）；低于阈值
-  走**轻量 LLM 精修**（`refined: true`）：
-  - 精修 = `buildRefinePrompt`（本地成品 + 原始指令）单次 `generateOnce`——输入侧
-    实测 **257–308 tokens**（vs 全量管线 ~1000–1500，省 **74–79%**）；输出侧增量
-    ~100–300，一次精修总计 **~400–600 tokens**
-  - 精修失败/输出无效 → 回退本地成品（四段完整、零成本），`refined` 标记保留
-  - `localTemplateGate` 新增 `confidence`（目标感知丰富度评分，观测）；auto/on/off
-    行为完全不变（零回归）
-- **可观测**：`OptimizeStats.refined` 计数 + `OptimizeResult.refined` 标记 +
-  `/optimize-stats` 输出 `|REFINED:<n>`
-- **顺手修复**：本地直出分支的 `stats.success` 重复计数（手动 ++ 与 emitCompleted
-  双加）→ 统一由 emitCompleted 单次计数
-- 测试 418 → 427（local +4：锚点评分/丰富度/confidence/精修 prompt；optimizer +5：
-  hybrid 对齐直出/未对齐精修/失败回退/门控拒绝/stats）。
+### Added
+- `localTemplate: 'hybrid'` 混合两档：本地直出后做目标感知对齐检查
+
+### Changed
+- 对齐达标直接返回本地成品（0 token），未达标走轻量 LLM 精修
 
 ## [1.6.0] - 2026-08-21
 
-- **本地直出丰富度增强（P1，buildLocalTemplate）**：在 1.5.9 净化基础上新增
-  `FILL_RULES`（21 子类 × zh/en 成品填充规则）——每子类一条「角色补全 + 上下文
-  要点」，本地直出不再落到「无额外背景」空兜底：
-  - Role：追加子类角色补全（如周报→「结论先行、要点支撑、按文体控制篇幅」）
-  - Context：子类规则要点兜底 + 既有受众/目标/约束/可衡量/对话上下文抽取
-  - en 与 zh 同规则（分隔符按语言 `;` / `；`）
-- 测试 416 → 418（local +2：FILL_RULES 丰富度 zh/en 断言）。
-- 版本号：1.5.9 末尾递增进位（9 + 1 = 10 向前一位进位）→ **1.6.0**。
+### Changed
+- 本地直出丰富度增强：新增 FILL_RULES（21 子类 × zh/en 成品填充规则）
 
 ## [1.5.9] - 2026-08-21
 
-- **本地直出输出净化（P0，buildLocalTemplate）**：此前本地直出把「内部数据」当
-  「成品」输出——Role 带「角色参考：」前缀、Task 混入「场景骨架：」原文与
-  「（来自原始指令）」元标记、Format 残留「Format 」标签。现净化：
-  - Role：去「角色参考：/Role reference:」前缀，读作成品角色
-  - Task：只取骨架的 Task 链 + 核心动作（去元标记）
-  - Format：解析骨架三段取 Format 链（去「Format 」前缀）
-  - Context：新增受众抽取（`profile.role.audience`）并入上下文行
-  - 新增 `parseSkeleton` / `cleanRoleRef` 纯函数
-- 测试 414 → 416（local +2：净化断言、显式角色+受众保留）。
+### Fixed
+- 本地直出输出净化：去除内部数据前缀/元标记，读作成品
 
 ## [1.5.8] - 2026-08-21
 
-- **默认输出风格改四段标题**：`outputStyle` 默认 `'plain'` → `'sections'`——优化
-  结果默认为 `## Role` / `## Task` / `## Context` / `## Format` 四段结构化提示词。
-  实测四段标题仅增加 ~6–10 token/次输出（<1%），换来结构清晰、下游可直接执行；
-  需要极致省 token 仍可显式 `outputStyle: 'plain'`。README 两版默认值同步。
-- 测试 414 全绿（config 默认断言更新为 sections）。
+### Changed
+- 默认输出风格 plain → sections（四段结构化提示词）
 
 ## [1.5.7] - 2026-08-21
 
-- **内置示例新增 analysis-review 评估类**（`BUILTIN_SUBTYPE_EXAMPLES`，zh/en）：
-  通用 analysis 示例（趋势解读向）不覆盖「结构化评估」形态——新增 input
-  「评估 localTemplate 本地直出的覆盖面与边界」的四段示例（结构化清单输出）；
-  源自「输出质量基准对照」附录的压缩版修订稿（锚定 1.5.6 现状：0 token 直出、
-  本地路径不读上下文）。`resolveBuiltinExamples` 子类优先机制不变。
-- 测试 413 → 414（analysis-review 命中子类示例断言）。
+### Added
+- 内置示例新增 analysis-review 评估类（zh/en）
 
 ## [1.5.6] - 2026-08-21
 
-- **本地零 token 模板直出（方案 A，`localTemplate`）**：四个感知层（任务/角色/
-  情境/上下文）本就是纯函数，唯一调模型的是正文生成——对结构化子类场景
-  （周报/邮件/数据分析/部署等），`local.ts` 用骨架 + 抽取信号**本地渲染四段
-  模板**，零模型调用、零 token、~<5ms。
-  - 配置 `localTemplate: 'auto' | 'on' | 'off'`（默认 `'auto'`）：`auto` 经
-    `localTemplateGate` 置信度门控——子类命中且含可抽取信号（角色/主谓宾/
-    目标约束/可衡量/对话上下文）才直出，否则回落 LLM；`on` 子类命中即直出
-    （除创作类）；`off` 完全关闭
-  - 开放创作类（诗/演讲/研究/预测）**永不本地直出**（`open-creative` 门控）
-  - `OptimizeResult.local` 标记 + `stats.local` 计数 + `/optimize-stats`
-    新增 `|LOCAL:<n>` 可观测；per-call `options.localTemplate` 可覆盖
-  - 复用纯函数层（`ROLE_LIBRARY`/`SUB_TOPIC_TEMPLATES` 从 meta.ts 导出），
-    零 harness 依赖，可独立单测
-  - **方案 B 副产品：`/template <场景> <指令>` 预填版**——场景 + 指令时经
-    `localTemplateGate` 门控本地渲染成品四段（零 token）；无信号时回退骨架
-  - **方案 C 混合两档**：`prompt_optimize` 工具新增 `localTemplate` 入参
-    （auto/on/off 透传）+ 结果 `local` 字段——本地直出不满意时以
-    `localTemplate: 'off'` 再次调用即走 LLM 精修（per-call 覆盖配置）
-- 测试 395 → 413（新增 local.test.ts 10 例 + optimizer 本地直出 6 例 +
-  /template 预填/回退 2 例；/optimize-stats 断言加 LOCAL 字段）
+### Added
+- 本地零 token 模板直出：结构化子类场景本地渲染四段模板
+- 配置 `localTemplate: 'auto' | 'on' | 'off'`
+- `/template <场景> <指令>` 预填版
 
 ## [1.5.5] - 2026-08-21
 
-- **任务分类歧义消解（写作动词 vs 运维词）**：`detectTaskType` 增加显式写作动词
-  （写/撰写/起草/编写/拟写/草拟/润色/翻译）作为 writing 强信号——当它与 ops 类词
-  （`发布/上线`，1.5.2 新增）打平时判 writing，不再误判 ops-deploy
-  （「帮我写一份新产品发布公告」此前被误判为运维类，注入错误的角色/骨架）。
-  - 回归护栏：纯运维指令（「发布到生产环境」「帮我部署一个服务」）保持 ops；
-    技术词优先（「写一个部署脚本」→ code）不受影响
-- 测试 394 → 395（新增歧义消解断言）
+### Fixed
+- 任务分类歧义消解：写作动词与运维词同分时判 writing
 
 ## [1.5.4] - 2026-08-21
 
-- **内置 few-shot 示例子类优先**：新增 `BUILTIN_SUBTYPE_EXAMPLES`（zh/en），
-  子类命中（当前仅 `code-bugfix`）时优先注入子类专用示例，否则回退任务大类示例——
-  `code-bugfix` 的「定位根因→最小修复→回归验证」骨架补上了通用 code 示例
-  （脚本向）不覆盖的 bug 修复形态；显式 `examples` 仍永远优先，注入条件
-  （`sections` 模式 + 无显式示例 + `builtinExamples` 未关）不变
-- 示例内容源自「输出质量基准对照」修订稿：合并外部增强版本的 3 处重复表述、
-  Context 补入模块实际功能（fnv1a + bigramJaccard + LRU/TTL）、按句断行
-- 测试 392 → 394（新增：code-bugfix 命中子类示例、非 bugfix 的 code 指令回退大类示例）
+### Added
+- 内置 few-shot 示例子类优先：子类命中时优先注入子类专用示例
 
 ## [1.5.3] - 2026-08-21
 
-- **全量审查修复（正确性/设计/维护性 13 项）**：
-  - 🔴 C-1：**dream 回填纳入缓存键**——开启 `dreamInsightFeedback` 后，同 session
-    第二次相同调用此前命中不含洞察的陈旧缓存（回填失效 + 结果不一致）；现缓存键
-    覆盖 senseNeeds 块 + dream 回填文本，命中即真实携带洞察
-  - 🔴 M-1：`senseNeedsBlock` 英文版**完整翻译**（原为中文规则）+ `extractDreamInsights`
-    双语 marker 匹配 + dream 回填注入头双语
-  - 🟠 C-2：`finishToError` 的 error/aborted 分支统一为 `OptimizeError`（errorCode
-    归因稳定，不再落 UNKNOWN 丢失），harness 原始码经 `detailCode` 保留；
-    `/optimize` 命令对 UNKNOWN 码透传原始 message（含 provider 报错原文）
-  - 🟠 C-3：失败路径 `retries` 返回**实际校验失败次数**（原固定 maxRetries，fast 档失真）
-  - 🟠 C-4：skip 路径中文标题（## 角色）输入不再产出空 sections（仅英文标题提供）
-  - 🟠 C-5：`dreamInsightRegistry` 加容量上限（100）并纳入周期清理（与 goalRegistry 对齐）
-  - 🟠 D-1：`CONFIG_KEYS` 白名单改为从 Config schema 推导（`Config.dict`）——
-    消除 interface/schema/白名单三处手工同步的漂移源（1.4.6 曾因漏注册 114 测试失败）
-  - 🟠 D-2：config interface 注释与 schema 默认值对齐（earlyStop=false、
-    earlyStopTailChunks=16/Growth=24——1.4.5 改值未同步注释）
-  - 🟡 C-6：`hasOptimizedSections` 复用正则缓存（原每次 new RegExp ×12）
-  - 🟡 D-4：`/template` 场景模板占位符统一为中文（与主模板中英共用约定一致）
-  - 🟡 M-2/M-3：注释修正 + `OptimizeStats` 接口抽取
-- 测试 390 → 392（dream 缓存键回归、en dream 块/回填；2 处 retries 断言与
-  2 处 LlmError code 断言按新语义更新）
+### Fixed
+- 全量审查修复 13 项：dream 缓存键、英文翻译、错误码归因、配置白名单等
 
 ## [1.5.2] - 2026-08-21
 
-- **子类模板库补齐（覆盖断链修复 + 3 个高频场景，18 → 21 子类）**：
-  - 🔴 断链修复：`TASK_KEYWORDS.ops` 补 `部署/发布/上线/deploy/release`——此前
-    "帮我部署一个服务"（无"启动/运行"等词）在大类层被误判 `other`，模板链全断；
-    现在正常命中 `ops-deploy`
-  - 子类关键词补全：`writing-copy` 补 `新闻稿/博客`；`analysis-review` 补
-    `解读/方案/洞察`（大类词已有、子类词漏）
-  - 新增 3 个高频子类（中英模板 + keywords）：`writing-polish`（润色/改写/回复/
-    摘要）、`writing-resume`（简历/自我介绍）、`writing-speech`（演讲/讲稿/致辞）
-  - `/template` 场景清单同步（18 → 21）；README 两版更新
-  - 测试 389 → 390（润色子类命中 + 部署/发布断链回归；技术栈词如 python/docker
-    保持"大类信号不建模板"设计）
+### Added
+- 新增 3 个高频子类：writing-polish、writing-resume、writing-speech
+
+### Fixed
+- ops 断链修复：补充部署/发布/上线关键词
 
 ## [1.5.1] - 2026-08-20
 
-- **子类模板库 + 快速模板命令（P0+P1）**：
-  - P0 `SUB_TOPIC_TEMPLATES`（meta.ts）：18 个子类各一"Role/Task/Format 场景
-    骨架"（中英），`detectTaskSubtype` 命中时随 `{{任务类型}}` 注入——模型直接
-    填充骨架，不再自造结构（ADR-009 内容级门控：仅命中时注入）。
-  - P1 `/template <场景>` 命令（command.ts）：按场景名/关键词匹配子类
-    （`matchScene`，复用 `subtypeKeywords`），返回可填四段模板
-    （`renderSceneTemplate`，含占位符）——**不调模型、零延迟零 token**；
-    覆盖 18 场景，支持中英场景名。
-  - README 两版新增「快速场景模板（/template）」小节。
-- 测试 387 → 389（template 命中返回四段、未知/空场景报错）。
+### Added
+- 子类模板库 SUB_TOPIC_TEMPLATES（18 子类场景骨架）
+- `/template <场景>` 命令：不调模型、零延迟零 token
 
 ## [1.5.0] - 2026-08-20
 
-- **并行线 B：ADR-011 步 1-2 落地（可替换分类器接口 + 配置）**：
-  - `TaskClassifier` / `ClassifiedTask` 接口 + `heuristicClassifier` 默认实现
-    （situation.ts 纯函数层，包装 detectTaskType/detectTaskSubtype/
-    extractMainVerbObject，置信度 0.2–1.0）——LLM 实现的注入位就绪。
-  - 配置 `classifier: 'heuristic'\|'llm'`（默认 heuristic；'llm' 在当前无 LLM
-    实现时回落启发式并告警——步 3 落地后启用）。
-  - 纯函数层红线保持：situation.ts 无 harness 依赖。
-- 测试 384 → 387（heuristicClassifier 分类/置信度/other 低置信）。
-- 版本号：1.4.9 末尾递增进位 → **1.5.0**。
+### Added
+- 可替换分类器接口 TaskClassifier + heuristicClassifier 默认实现
 
 ## [1.4.9] - 2026-08-20
 
-- **并行线 A：角色模板库 + 造梦洞察回填**：
-  - A-1 ROLE_LIBRARY（`meta.ts`）：按任务类型预置"身份＋能力＋行为"角色参考
-    （code/writing/analysis/ops，中英），随 `{{任务类型}}` 注入——画像无显式
-    角色（低置信）时模型可直接采用，不进情境画像（保持零注入原则）。
-  - A-2 `dreamInsightFeedback`（默认 `false`，opt-in）：会话级保存上一次
-    `senseNeeds` 产生的 `--- 延伸洞察 ---` 附录（`dreamInsightRegistry`，
-    TTL 30 分钟），后续 optimize/iterate 的 system 尾部注入（标注 AI 推断、
-    非事实）——把一次性造梦升级为**跨轮上下文**。
-  - README 两版配置表同步。
-- 测试 380 → 384（角色参考中英注入 ×2、dream 回填注入/默认关闭 ×2）。
+### Added
+- 角色模板库 ROLE_LIBRARY：按任务类型预置角色参考
+- dreamInsightFeedback：跨轮上下文洞察回填
 
 ## [1.4.8] - 2026-08-20
 
-- **情境感知启发式增强（阶段一，situation.ts 纯函数）**：
-  - `normalizeInstruction`：全角→半角、小写、折叠空白（`detectTaskSubtype` /
-    `detectMeasurable` 匹配前归一，提升英文/混合输入命中率）。
-  - `extractMainVerbObject`：保守主谓宾抽取（中英动词表、可选礼貌前缀、
-    宾语截断到标点；低置信返回 undefined）——填充 `TaskProfile` 预留的
-    `mainVerb`/`object` 字段；`renderSituationBlock` 在有其他画像信号时注入
-    「核心动作」（**保持 ADR-009 零注入原则**：generic 指令仍不渲染）。
-  - TASK_SUBTYPES 关键词同义词扩充（bugfix/feature 类补"出错/故障/开发"等）。
-  - 背景：对应 situation.md「主谓宾抽取、同义词归一」可优化方向（阶段一），
-    阶段二（LLM 深度分类）仍需 ADR-011。
-- 测试 374 → 380（normalize/extract/同义词/核心动作注入）。
+### Changed
+- 情境感知启发式增强：主谓宾抽取、同义词归一、核心动作注入
 
 ## [1.4.7] - 2026-08-20
 
-- **四区块详略动态调配（C-1 + B-1，meta.ts 模板文案，中英同步）**：
-  - C-1 区块侧重提示：`{{任务类型}}` 行新增「区块侧重」——按 4 类任务明确
-    详略导向（code/ops：Task+Format 强化、Role 简洁；writing：Role+Context
-    强化；analysis：Task+Context 强化、Format 结论先行），与既有「角色写法
-    建议」行并列；**区块侧重用"X 段"表述（无 `##` 前缀）**，避免污染 plain
-    模式（plain 禁标题，sections 下语义等价）。
-  - B-1 Context 极简规则：Context 规则补"无额外背景或约束时可写'无额外背景，
-    按通用标准执行'，不必硬凑信息"（对齐 1.3.8 假设防制与 ADR-009 无信号零
-    注入；sections/plain 中英）。
-  - 背景：四区块保持骨架固定（契约），详略通过任务类型感知动态调配——
-    依据知识库 ADR-009 / 1.3.5 任务类型映射 / situation.md「Format 贴合任务」。
-- 测试 374 全绿（typecheck / test / build）。
+### Changed
+- 四区块详略动态调配：按任务类型明确详略导向
+- Context 极简规则：无额外背景时可写「无额外背景」
 
 ## [1.4.6] - 2026-08-20
 
-- **输入侧成本可观测 + 内置示例开关（省 token 定向优化）**：
-  - `/optimize-stats` 扩展 `INPUT:<n>`（`stats.lastInputTokens`，`generateOnce` 用
-    `estimateTextTokens(system)` 记录）——输出 token 低不代表总成本低，输入侧
-    （模板/情境/示例/上下文）才是大头，现在一眼可见。
-  - 新增 `builtinExamples` 配置（默认 `true`）：`false` 时未显式配置 `examples`
-    也不注入内置示例——短指令场景每次省 ~200 输入 token。`builtinExamples` 经
-    `PromptBuildContext` → `buildOptimizeSystem/IterateSystem` →
-    `buildOptimizePrompt/IteratePrompt` → `metaBlocks` 穿透（可选参数，向后兼容）。
-  - 测试 372 → 374（builtinExamples 关闭不注入示例、INPUT 统计 > 0）。
-- 测试 374 全绿（typecheck / test / build）。
+### Added
+- `/optimize-stats` 扩展 INPUT 统计
+- 新增 `builtinExamples` 配置（默认 true）
 
 ## [1.4.5] - 2026-08-20
 
-- **流式早停修复（默认关闭 + 加固，防半句截断）**：
-  - 背景：用户实测输出被截断在句中间（如"…擅长把个人经历转化为有逻辑、有"）——
-    `validateOutput` 门槛（`minSectionChars=10`）太低，四段骨架刚出现即"达标"进入
-    收尾期判定；中文逐字/短句流增量小（<48 常见），连续 12 个慢 chunk 即误停，
-    正文写一半被截。fast 档（校验重试预算 0）无重试兜底，风险最高。
-  - `earlyStop` **默认改 `false`**（输出完整优先；显式开启仍可用）。
-  - 加固（显式开启时）：每段 ≥40 实质字符（`EARLY_STOP_MIN_SECTION_CHARS`）且总长
-    ≥120（`EARLY_STOP_MIN_OUTPUT`）才进入收尾期判定；仅在句子边界（`。！？.!?`/
-    换行）且连续 16 个 chunk 增量 < 24 字符才提前停流。
-  - 阈值默认值：`earlyStopTailChunks` 12 → 16、`earlyStopTailGrowth` 48 → 24。
-  - 测试 371 → 372（新增：无标点正文不被早停截断的回归用例）。
-- 测试 372 全绿（typecheck / test / build）。
+### Fixed
+- 流式早停修复：默认改 false，加固防半句截断
 
 ## [1.4.4] - 2026-08-20
 
-- **耗时测量分解（A+B 观测）**：`stats` 新增 per-call 计时——`lastCallMs` /
-  `totalCallMs` / `maxCallMs` / `callCount` / `lastRunCalls`（`generateOnce`
-  计时、`runPipeline` 计数、缓存命中记 0 次调用）；`/optimize-stats` 返回
-  `OPTIMIZE_STATS:TOKENS:<t>|CALLS:<c>|LASTMSCALL:<ms>`——一眼定位瓶颈是
-  模型延迟还是多次调用
-- **README 快速档（目标 3–5s，保质量）**：`optimizationProfile: 'fast'` +
-  `maxCalls: 3`（质量护栏：首次仍过结构校验、保留 2 次扩容预算）preset 与
-  质量/前提说明（flash 级模型单次 1.5–4s；缓存命中 <100ms）
-- 测试：371 用例全绿（stats 计时字段、/optimize-stats token 扩展）
+### Added
+- 耗时测量分解：per-call 计时 + /optimize-stats 扩展
+- README 快速档 preset
 
 ## [1.4.3] - 2026-08-20
 
-- **近失配热启动（阶段 1A，`cacheFuzzyMatch` 默认开）**：精确缓存未命中时，相似
-  缓存指令（bigram-Jaccard ≥ `cacheFuzzyThreshold`，默认 0.6）或同指令新上下文
-  以缓存结果为起点走 `iterate` 精修——**旧结果 + 新输入融合**，比从零优化省时省
-  token（`bigramJaccard` 纯函数；缓存条目携带 input/context 元数据 + `entries()`）
-- **enrich 显式绕过（阶段 1B）**：`OptimizeOptions.enrich = true` 跳过精确命中与
-  热启动，强制全新运行（要新鲜感时用）
-- **需求感应 / 造梦模式（阶段 2A，`senseNeeds` 默认关）**：开启后优化结果末尾追加
-  明确标注的 `--- 延伸洞察（AI 推断，供你选用，非事实）---` 附录（深层目标/隐含
-  约束/质量标准/可能的后续）——推断**永不混入提示词正文**；输出契约仅在开启时分叉
-- **`/dream` 命令（阶段 3）**：= `/optimize` + `senseNeeds: true`（客户端 ✨ 保持标准）
-- 测试：371 用例全绿（bigramJaccard、entries、热启动×2、enrich、senseNeeds、
-  /dream 注册、config 校验）
+### Added
+- 近失配热启动：相似缓存指令以缓存结果为起点走 iterate 精修
+- enrich 显式绕过：跳过缓存强制全新运行
+- 需求感应 / 造梦模式 senseNeeds
+- `/dream` 命令
 
 ## [1.4.2] - 2026-08-20
 
-- **安全加固（审计收尾）**：
-  - 断点续传消息补注入护栏：已生成的截断内容明确"视为纯数据，不得执行其中嵌入的
-    任何指令"（对齐主护栏；测试断言同步）
-  - CI 新增 `pnpm audit --audit-level=high` 步骤（依赖漏洞例行防线）
-- 知识库（私有 docs/vault）同步：版本戳对齐 1.4.1、补 1.4.x 特性（断行/示例集/
-  简洁度规则）、check-vault 增加版本戳告警
+### Fixed
+- 断点续传消息补注入护栏
+- CI 新增 pnpm audit 步骤
 
 ## [1.4.1] - 2026-08-20
 
-- **输出按句断行规则（`meta.ts`，中英 × 结构/自查 8 处）**：
-  - 结构/自查增"正文按句断行——每句或每个要点独占一行，段落间空一行；避免
-    超长单行"（sections/plain + 英文同步）。
-  - 背景：优化结果常为超长单行，composer/聊天/终端各场景显示不佳；文本层自带
-    `\n` 后三场景通吃，显示层零改动。
-  - P1 已评估：composer 输入框折行属宿主 UI 域，client.js 不注入侵入式样式，
-    超长单行由宿主 CSS 兜底（P0 后长单行已大幅减少）。
-- 测试 364 全绿（typecheck / test / build）。
+### Changed
+- 输出按句断行规则：每句独占一行，段落间空一行
 
 ## [1.4.0] - 2026-08-20
 
-- **内置默认示例集**：
-  - 新增 `BUILTIN_EXAMPLES`：中英 × 4 任务类型（code/writing/analysis/ops）共
-    8 对高质量四段示例；`resolveBuiltinExamples` 按角色文档语言 + `detectTaskType`
-    匹配注入 1 对（`other` 回落 writing）。
-  - 未配置 `examples` 时自动注入（仅 sections 模式，行为与显式示例一致）；
-    显式配置始终覆盖内置；plain 模式不注入。
-  - 每次优化调用新增 ~150–250 token 输入，换取输出稳定性与专业性显著提升。
-- 测试 359 → 364（meta +5：默认注入、code 类型匹配、语言切换、显式覆盖、plain 不注入）。
-- 版本号：1.3.9 末尾递增进位（9 + 1 = 10 向前一位进位）→ **1.4.0**。
+### Added
+- 内置默认示例集 BUILTIN_EXAMPLES：中英 × 4 任务类型共 8 对
 
 ## [1.3.9] - 2026-08-20
 
-- **模板文案精简（`meta.ts`，中英 × 结构/自查 8 条）**：去除冗余修饰与重复表述，
-  保留全部规则点（四段结构、三要素、强相关、假设防制、顺序对应、全局精简等），
-  每条规则一句为限；Role 行约 200 字 → 约 120 字。测试断言关键词（## Role 等
-  四标题、输出前自查、严禁使用任何小节标题）保持不变；纯文案变更，
-  测试 359 全绿（typecheck / test / build）。
+### Changed
+- 模板文案精简：去除冗余修饰，每条规则一句为限
 
 ## [1.3.8] - 2026-08-20
 
-- **输出简洁度与逻辑一致性规则增强（`meta.ts` 模板文案，中英 × 结构/自查）**：
-  - 全局精简约束：删除与任务要求重复的表述、空话与无意义假设，每条信息以一句为限。
-  - Role 段：能力陈述保持简短、与任务直接相关，不重复 Task 已覆盖的要求。
-  - Context 段：仅当信息确实缺失时声明假设，无缺失时不得编造假设。
-  - Format 段：输出分类/结构与 Task 要求的维度一一对应、顺序一致。
-  - 自查（sections/plain，中英）：增"无重复表述、无空话、无多余假设；长度在满足
-    要求前提下尽量短"。
-  - 任务类型写法建议（code 分类，中英）：能力陈述一句为限、不展开完整技术栈清单。
-  - 背景：用户实测发现优化输出存在冗余/重复/无意义假设/顺序错位，对应补齐四条
-    规则约束。纯文案变更，测试 359 全绿（typecheck / test / build）。
+### Changed
+- 输出简洁度与逻辑一致性规则增强：全局精简、Role 简短、Context 无虚构、Format 四项齐全
 
 ## [1.3.7] - 2026-08-20
 
-- **代码质量审查修复（审查驱动的重构收尾）**：
-  - 流式早停阈值配置化：`earlyStopTailChunks`（默认 12）/ `earlyStopTailGrowth`
-    （默认 48）替代硬编码常量（`getEarlyStopThresholds`）；配置为可选字段，
-    已注册 `CONFIG_KEYS` 白名单。
-  - 会话目标注册表内存泄漏保护：定期清理过期条目（5 分钟间隔，TTL 30 分钟）。
-  - 类型安全：`MaxTokensErrorWithPartial`（`llm.ts`）替代 `partial` 字段的类型
-    断言，断点续传路径不变。
-  - 正则性能：`validate.ts` 编译后的段落正则缓存（`getSectionPattern`，行为等价，
-    原正则逐字保留）。
-  - `meta.ts` 渲染：`PLACEHOLDER_MAP` 单遍替换（与原有替换顺序/语义一致），
-    未知占位符仅告警不阻断。
-  - 事件监听器异常改为 `logger.warn`（不静默吞错）；流式 chunk 边界防御。
-  - **修复回归中发现的两个 bug**：`finishToError` 的非 max-tokens 错误分支
-    漏 `throw`（RATE_LIMIT/TOOL_CALL 等 finish 错误被吞为 NO_TEXT——重构引入，
-    已恢复）；`extraInstructions` 默认值保持 `undefined`（撤销无收益的
-    `default('')` 改动）。
-  - 公共 API 保持兼容：`INCOMPLETE_SECTIONS_MESSAGE` 常量导出未变。
-  - README 引言采用去括号版（中文 `提示词优化插件，…` / 英文
-    `**prompt-optimizer** turns …`）；删除 `redundancy-report.md`（冗余重构
-    报告已存档于 git 历史）。
-- 测试 359 全绿（typecheck / test / build）。
+### Fixed
+- 代码质量审查修复：早停阈值配置化、内存泄漏保护、类型安全、正则性能
 
 ## [1.3.6] - 2026-08-19
 
-- **优化时长（latency 方案 P0/P1，`optimizer.ts` + `config.ts`）**：
-  - **P0-1 首调预算联动**：`outputLengthMaxTokens > 0` 且调用方未显式覆盖时，首调
-    `maxTokens` 约束在软约束的 1.5 倍（`fast` 档 1.2 倍，下限 256）——短任务不受影响
-    （一次完成），超长输出由跳档扩容 + 断点续传兜底。
-  - **P0-2 `goalAlignmentRetry: boolean`**（默认 `true`）：目标未对齐是否消耗重试预算；
-    `false` 直接接受结构有效但丢目标的输出（省 1 次调用，换目标保真率）。
-  - **P1-1 `earlyStop: boolean`**（默认 `true`）：流式早期终止——输出通过结构校验且
-    进入"收尾期"（连续 12 个 chunk 增量 < 48 字符）即提前停流，长尾凑字不再消耗
-    时长；仅首调启用（续传/断点续写不受影响）；`false` 始终消费完整流。
-  - **P1-2 `optimizationProfile: 'balanced' | 'fast'`**（默认 `balanced`）：`fast` 档
-    跳过校验重试与目标对齐重试、禁用 selfRefine——一次结构有效即接受，最坏时长
-    显著下降，返工率上升（显式选择才生效）。
-  - **P2 说明**：P2-1（iterate 画像并行）为同步毫秒级纯函数、无并行收益，不实现；
-    P2-2（缓存前缀命中）相似≠相同、质量不可控，不推荐（见 vault latency 方案）。
-- 测试 353 → 359（optimizer +6：goalAlignmentRetry 关闭、fast 档 ×2、early-stop ×3；
-  config 断言补三个新字段默认值与显式值）。
+### Added
+- 首调预算联动、goalAlignmentRetry 配置
+- 流式早期终止 earlyStop、optimizationProfile 速档
 
 ## [1.3.5] - 2026-08-19
 
-- **任务类型 → 角色写法映射（role-design 方案 P2，`meta.ts`）**：
-  - `{{任务类型}}` 提示（中英 × 4 分类）追加「角色写法建议」：
-    `code → 能力导向`（精通/熟悉/擅长…）、`writing → 身份＋文体`、`analysis →
-    身份＋方法`、`ops → 行为约束＋步骤`。
-  - 与 1.3.3 的 Role 段三要素规则、1.3.4 的能力/行为抽取形成完整闭环——规则
-    指导写法、抽取器识别写法、任务类型提示按场景推荐写法。
-  - 纯文案扩展，占位符链与 `validateTemplateSet` 护栏未动。
+### Changed
+- 任务类型 → 角色写法映射：code 能力导向、writing 身份+文体、analysis 身份+方法、ops 行为+步骤
 
 ## [1.3.4] - 2026-08-19
 
-- **角色抽取扩展（role-design 方案 P1，`situation.ts`）**：
-  - `RoleProfile` 新增 `capability`（能力信号：精通/擅长/熟悉/Proficient in…）与
-    `behavior`（行为约束：先给…/拒绝…/避免…/always/never…）两个可选字段——
-    **`SITUATION_PROFILE_VERSION` 1 → 2（向后兼容，旧字段保留）**。
-  - **纯能力句可过注入门槛**：能力/行为作为内容级信号各计 2 分（confidence 0–8），
-    "精通 Python 和 SQL"这类无"你是"的指令不再被当"无角色信号"丢弃。
-  - **场景式身份**："以…的身份/角色"、"acting as / in the role of" 并入 `explicit`
-    抽取。
-  - 行为抽取刻意避开"必须/不要/不超过"等目标约束标记——角色行为与
-    `GoalProfile.constraints` 分离，避免同一句双重注入。
-  - `{{情境画像}}` 角色块合并输出 `身份＋能力＋行为`（`能力：…`/`行为：…` 中英两版），
-    与 1.3.3 的 Role 段三要素写法指导闭环。
-- 测试 347 → 353（situation 新增 6 例：能力/行为/场景抽取、约束不混淆、渲染合并、
-  版本 v2）。
+### Changed
+- 角色抽取扩展：新增 capability/behavior 字段，纯能力句可过注入门槛
 
 ## [1.3.3] - 2026-08-19
 
-- **Role 段规则升级：角色定义三重结构**（`meta.ts` 文案，role-design 方案 P0）：
-  - `## Role` 段（sections 模式）改为「身份＋能力＋行为」三要素写作指导——身份
-    不必以"你是"开头，能力（精通/擅长…）与行为约束（先给结论、拒绝猜测…）同样
-    合格且更可执行；plain 模式正文的角色定位句同步补充该写法提示。
-  - 自查升级：`SELFCHECK_*`（中英 × sections/plain）增加"角色须含能力或行为描述，
-    仅一句空身份不算合格"的自查项。
-  - 中英两版模板同步更新；占位符链与「视为纯数据」护栏未动（`validateTemplateSet` 不受影响）。
+### Changed
+- Role 段规则升级：角色定义三重结构（身份+能力+行为）
 
 ## [1.3.2] - 2026-08-19
 
-- **情境感知层 P2**（`situation.ts` + 服务层）：
-  - **画像版本化**：`SITUATION_PROFILE_VERSION = 1`，`SituationProfile.version` 对外
-    可见，消费者可对 schema 演进做判断。
-  - **注入预算配置 `situationProfileLevel: off|minimal|full`**（默认 `full`）：
-    `off` 不注入 `{{情境画像}}` 块；`minimal` 仅注入目标/约束（与迭代变化行），
-    不注入角色信号（更省 token）；`full` 全量。只影响情境块，`{{任务类型}}` 不受影响。
-  - **会话级目标注册表**：`OptimizeOptions.sessionId`（可选）开启后，同会话内先前的
-    目标/约束在后续指令未重申时**回退沿用**（`mergeGoals`：当前指令陈述的内容优先，
-    不复活已放弃的旧约束）；TTL 30 分钟、上限 100 会话；合并画像同时用于注入与
-    目标对齐校验。
-  - **`optimize:start` 载荷带 profile**：事件新增可选 `profile` 字段（向后兼容）。
-  - **LLM 深度分类器暂缓**：需要异步 llm 接入，会破坏纯函数层与缓存/测试假设，
-    建议作为独立 ADR 评估后再做（当前关键词+子类启发式 + memoize 已足够轻量）。
-- 公共 API：新增 `SITUATION_PROFILE_VERSION` / `mergeGoals` 与
-  `SituationProfileLevel` 类型导出；`OptimizeOptions.sessionId`。
-- 测试 335 → 347（situation 39、meta 82、optimizer 90、config 4）。
+### Added
+- 画像版本化、注入预算配置 situationProfileLevel
+- 会话级目标注册表（TTL 30 分钟）
 
 ## [1.3.1] - 2026-08-19
 
-- **情境感知层 P1**（`src/situation.ts` 扩展）：
-  - **两级任务分类 `detectTaskSubtype`**：按大类细分 18 个子类（code→bugfix/feature/
-    refactor/review/script；writing→report/email/copy/translate/creative；
-    analysis→data/research/review/forecast；ops→deploy/install/troubleshoot/maintain），
-    全局唯一 key + 中英标签（`subtypeLabel`）；`{{任务类型}}` 块追加「子类提示」行。
-  - **可衡量性检测 `detectMeasurable`**：数量+单位、范围动词（至少/不超过/at least…）、
-    期限（今天/明天/截止/deadline…）→ `TaskProfile.measurable`。
-  - **iterate 目标漂移检测 `goalDrift`**：`unchanged | added | modified | dropped` 四态
-    （锚点集对比 + 主目标文本对比）；iterate 时以「上次结果」画像 vs「新指令」画像
-    计算漂移，`{{情境画像}}` 块追加「相对上次结果」变化行（新增/修改/移除），模型据此
-    不沿用旧约束；缓存键与管线路径一致。
-  - **画像缓存**：`buildSituationProfile` 按（指令+上下文）memoize（128 条 FIFO），
-    注入与对齐校验共用同一画像，避免重复计算。
-  - **对话上下文角色线索**：指令无显式角色时，从 `context` 抽取角色句回退（如用户
-    上轮「你是我的翻译」）；`optimize`/`iterate` 均传入上下文。
-- 纯函数改动，无新增配置面；公共 API 新增 `detectTaskSubtype` / `detectMeasurable` /
-  `goalDrift` / `subtypeLabel` 及类型导出。
-- 测试 314 → 335（situation 32、meta 80、optimizer 87 等）。
+### Added
+- 两级任务分类 detectTaskSubtype（18 子类）
+- 可衡量性检测、iterate 目标漂移检测
 
 ## [1.3.0] - 2026-08-19
 
-- **情境感知层 P0（`src/situation.ts`，纯函数、无 harness 依赖）**：
-  - `buildSituationProfile(input, context?)` → 结构化三画像：
-    `RoleProfile`（显式角色抽取「你是/你是…/act as」、按任务类型的角色原型、专业度/
-    受众/语气信号与 0–6 置信度）、`TaskProfile`（复用 `detectTaskType`）、
-    `GoalProfile`（目标句提取「目标是/希望/the goal is…」+ 约束清单
-    「必须/不要/不超过/within…」，中英两版；目标句在首个约束标记处截断）。
-  - `{{情境画像}}` 可选块注入四套模板：角色信号仅在置信度 ≥2（显式角色或 ≥2 个软
-    信号）时注入，避免通用指令的噪声；目标/约束存在即注入；无信号时块为空。
-    优化器始终内置，无新增配置面。
-  - `goalAlignment(goal, output)` 对齐校验 + 管线集成：输出结构校验通过后，若目标/
-    约束锚点（数字 + 内容词，剥引导词/量词）丢失且**重试预算内** → 注入
-    `GOAL_MISALIGNED` 诊断并复用既有重试（不超出 `maxCalls` 预算）；最后一次尝试
-    宽松接受（结构是硬门槛，目标对齐是软门槛）。
-  - 新错误码 `GOAL_MISALIGNED`（错误码词汇表 + 命令提示文案同步）。
-- 支持面扩展：`detectTaskType` 补充英文代码词（code/refactor/script/…）与写作词
-  （write/report/email/…），英文任务分类更可靠。
-- 公共 API：新增导出 `buildSituationProfile` / `goalAlignment` / `goalAnchors` /
-  `renderSituationBlock` / `archetypeLabel` 及画像类型。
-- 方案文档：[[situation]]（docs/vault/20-Modules/situation.md）状态 proposed → active，
-  P0 已落地；路线图与模块索引同步。
+### Added
+- 情境感知层 P0：结构化三画像（角色/任务/目标）+ goalAlignment 校验
 
 ## [1.2.0] - 2026-08-19
 
-- **任务类型感知（`detectTaskType`）**：纯函数按关键词打分 + 固定优先级
-  （`code > analysis > ops > writing`）把指令粗分类，作为 `{{任务类型}}` 可选块注入
-  角色文档——按类别指导 `## Role` 措辞（代码→资深技术专家、文案→撰稿人/编辑、
-  分析→分析师/研究员、执行→运维角色）并提示对应 Format 默认；`'other'` 不注入。
-  `buildOptimizePrompt` 从原始指令检测，`buildIteratePrompt` 从迭代指令检测，
-  均可显式覆盖；中英两版文案。
-- **对话上下文去重**：`gatherConversationContext` 保序剔除完全重复的行（省输入
-  token）；`buildContextBlock` 护栏追加"与原始指令已含的信息重复的内容无需保留"
-  （提示词级去重，输出更聚焦）。
-- **输出长度软预算（`outputLengthMaxTokens`，默认 800，`0` 关闭）**：作为
-  `{{长度预算}}` 可选块注入角色文档——建议优化结果不超过该 token 数（软约束，
-  仅指导模型，不阻断、不重试）；与 `maxTokens`（模型调用硬上限）相互独立。
-- **`skipIfAlreadyOptimized` 识别中文标题变体**：新增 `hasOptimizedSections()`
-  ——四段在英文标题（`## Role` 等）或中文变体（`## 角色` / `## 任务` / `## 背景`
-  / `## 上下文` / `## 语境` / `## 输出` / `## 格式`）下齐全即透传，中文已优化
-  提示词不再重复调用模型；结构校验（`validate.ts`）仍要求英文规范标题，不受影响。
-- 纯提示词与纯函数改动：无新增依赖；`metaPromptTemplate` 自定义模板仍可通过省略
-  新占位符选择不注入（可选块语义不变）。
+### Added
+- 任务类型感知 detectTaskType：按关键词打分分类
+- 对话上下文去重、输出长度软预算
+- skipIfAlreadyOptimized 识别中文标题变体
 
 ## [1.1.8] - 2026-08-19
 
-- **四段结构语义规则升级（`sections` 与 `plain` 两套模板同步，中英两版）**：
-  - `## Role` 补推导规则：角色必须与任务强相关——原始指令已明确执行主体时沿用，
-    否则按任务类型与领域推断（如代码任务对应资深工程师、文案对应资深撰稿人），
-    并体现所需专业度；禁止"AI 助手"这类空泛角色。
-  - `## Task` 补完成标准：说明"做到什么程度算完成"（完成定义，DoD）。
-  - `## Context` 措辞统一：信息可来自原始指令或对话上下文，不得虚构新事实，
-    原始指令已含的信息不必重复；信息不足时显式声明假设（与 `contextAware` 的
-    上下文充实规则消除表面矛盾）。
-  - `## Format` 补最小信息集：结构、格式、长度与风格四项须齐全，原始指令未明确
-    的给合理默认（不再只依赖模型自由发挥）。
-  - 输出前自查同步升级：从"标题存在 + 每段有实质内容"扩展到"角色强相关不空泛 +
-    Context 无虚构 + Format 四项齐全"，把校验从结构层推进到语义层（仍为模型侧
-    自查，`validate.ts` 的结构校验不变）。
-- 纯提示词文案与规则调整，无 API/配置变更，无新增依赖；`metaPromptTemplate`
-  自定义模板不受影响（占位符与护栏校验不变）。
+### Changed
+- 四段结构语义规则升级：Role 强相关、Task 完成标准、Context 无虚构、Format 四项齐全
 
 ## [1.1.7] - 2026-08-18
 
-- **调用预算（`maxCalls`，默认 4）**：单次优化的模型调用总预算（首次+扩容+重试
-  合计），超出直接降级返回原文并报 `TOO_MANY_CALLS`——控制最坏成本与时长
-  （要优化的功能 #1）
-- **运行统计（观测）**：`service.getStats()` 记录 runs/success/failed/cached、
-  总/最大耗时与最近输出 token 数（#2）
-- **✨ 取消反馈**：优化中再点 ✨ 按钮即取消（`commands.execute` 支持
-  `AbortSignal`），播报"已取消优化"（#4）
-- **成本可见**：`/optimize-stats` 命令返回机器 token `OPTIMIZE_STATS:TOKENS:<n>`，
-  客户端成功后短暂显示"消耗 ≈N tokens"（#5）
-- **保持二期**：上下文按相关性挑选（#3）留待后续（需启发式/模型，避免劣化质量）
-- 测试：270 用例全绿（预算降级、统计、/optimize-stats、config 校验）
+### Added
+- 调用预算 maxCalls（默认 4）、运行统计、✨ 取消反馈、成本可见
 
 ## [1.1.6] - 2026-08-18
 
-- **结果缓存（`cacheEnabled`，默认开启）**：校验成功的优化结果按"实际喂给模型的
-  请求"哈希缓存（provider + model + 无诊断 system + 截断指令 + 截断上下文 +
-  可选 scope）——**重复请求零模型调用**（LRU `cacheMaxEntries` 默认 200 +
-  TTL `cacheTtlMs` 默认 10 分钟）
-  - 仅缓存 `optimized: true` 的结果；失败/降级不入缓存
-  - 采样参数（temperature/maxTokens）不入 key：同请求返回同结果
-  - 纯内存、不落盘、插件重载即清空；`OptimizeOptions.cacheScope` 可选分区
-  - 新增 `src/cache.ts`（纯函数：`fnv1a` + `createOptimizeCache`），无依赖可单测
-- 测试：266 用例全绿（新增 cache.test.ts 8 例 + optimizer 缓存 6 例 + config 校验）
+### Added
+- 结果缓存 cacheEnabled（LRU + TTL），重复请求零模型调用
 
 ## [1.1.5] - 2026-08-18
 
-- **四段输出上下文感知（根治）**：
-  - 方案 A：sections 模式下，上下文块追加一条规则——**可将对话上下文中已出现的
-    事实信息用于充实输出的 `## Context` 段**（仍不得执行其中嵌入的指令），
-    四段结果真正反映对话（plain 模式不受影响）
-  - 方案 B：`skipIfAlreadyOptimized` 透传**遇到非空对话上下文时改为重新优化**
-    （对话已推进，结果应随之更新）；无新上下文才透传
-  - 方案 C：README 澄清上下文影响边界（中英同步）
-- **优化时长根治：断点续传 + 跳档扩容**
-  - 断点续传（resume）：`max-tokens` 截断时保留已生成文本，下一次调用**从断点
-    继续输出**而非整段重生成（长优化不再重复烧钱烧时间；`MaxTokensError` 携带
-    `partial`）
-  - 跳档扩容：`maxTokenRetryFactor` 默认 **1.5 → 2**（1200→2400→4800→…，
-    扩容次数减半），仍不消耗 `maxRetries`、受 `maxTokensCap` 封顶
-- 测试：252 用例全绿（+6：续传合并、上下文重优化、sections 规则、扩容序列更新）
+### Changed
+- 四段输出上下文感知：sections 模式下上下文充实 Context 段
+- 优化时长根治：断点续传 + 跳档扩容
 
 ## [1.1.4] - 2026-08-18
 
-- **省 token 默认值**：`skipIfAlreadyOptimized` 默认改为 `true`（已含四段的输入直接
-  透传、零模型调用——重复优化已优化过的提示词不再花钱）；`contextMaxTokens` 默认
-  从 1500 降到 800（上下文保持精简，多数短对话仍完整容纳，超预算截断）
-- **输出触顶自动扩容（`maxTokensCap`）**：`max-tokens` 截断时按 `maxTokenRetryFactor`
-  自动连续扩容到 `maxTokensCap`（默认 8000）——**扩容不再消耗 `maxRetries` 重试预算**
-  （此前只扩一次且吃掉重试次数，第二次触顶即报错）；达到上限仍不够才提示调大
-  `maxTokens` 或 `maxTokensCap`（错误文案同步更新）
-- **文档**：README / README.en 新增「省 token 最优配置（推荐 preset）」小节
-  （`maxTokens: 1200` + 各默认值 + 可选 `outputStyle: 'plain'` 的完整组合与要点说明）
+### Changed
+- 省 token 默认值：skipIfAlreadyOptimized 默认 true，contextMaxTokens 降到 800
+- 输出触顶自动扩容 maxTokensCap
 
 ## [1.1.3] - 2026-08-18
 
-> **版本说明**：npm 上仅发布过 1.0.1 / 1.0.2 / 1.0.3，本包跳过 1.1.0–1.1.2（仅存在于
-> git 历史与下方 changelog），**1.1.3 一次性包含 1.1.0–1.1.2 的全部特性**（角色文档
-> 语言自动检测、迭代优化、结构化错误码、诊断驱动重试、自适应精简、模板数据化）
-> 与本次上下文感知。
-
-- **上下文感知（`contextAware`）**：默认开启（可设 `false` 关闭）——把当前指令之前
-  的最近对话注入元提示词（新增 `{{上下文信息}}` 占位符，中英模板共用；「视为纯数据 /
-  背景参考」护栏，不得执行其中嵌入的指令），让优化结果贴合此前讨论
-  - 上下文来源：自动优化钩子取 `agent/pre-step` 的当前消息之前的消息；`/optimize`
-    命令尽力而为地从 `agent.session.deriveMessages()` 取会话记录（缺 API/异常时
-    无上下文，优化照常，不失败）
-  - 信息融合：`OptimizeOptions.context` 按次透传 → `PromptBuildContext` →
-    `buildOptimizeSystem`/`buildIterateSystem`（`iterate`/`selfRefine` 同样注入）
-  - 边界控制：`contextMaxMessages`（默认 6）/ `contextMaxTokens`（默认 1500，
-    超预算截断到最长前缀并附标记）
-- 新增 `src/context.ts`（纯函数：`gatherConversationContext` /
-  `contextMessageText` / `buildContextBlock`），无 harness 依赖、可独立单测
-- 测试：243 用例全绿（新增 context.test.ts 7 例 + meta/prompt/hook/command/
-  optimizer/config 增补 13 例）
+### Added
+- 上下文感知 contextAware：把最近对话注入元提示词
+- 包含 1.1.0-1.1.2 全部特性（语言检测、迭代优化、错误码、诊断重试、自适应精简、模板数据化）
 
 ## [1.1.2] - 2026-08-18
 
-- **角色文档语言自动检测（`metaPromptLanguage`）**：配置 `'auto' | '中文' | '英文'`
-  （默认 `'auto'`）——`'auto'` 按指令非空白字符中汉字占比 ≥30% 自动选择中文/英文角色
-  文档（含假名的日文等语言归英文文档），`'中文'`/`'英文'` 固定；移除输入框中/EN
-  按钮，运行时 `/optimizer-language auto|中文|英文|status` 固定或恢复自动
-  （会话级，重启回落配置值）；检测结果单次调用内传递，`selfRefine` 沿用本轮语言
-- **迭代优化（`iterate`）**：`ctx.promptOptimizer.iterate(lastOptimized, instruction, options)`
-  基于上一次优化结果 + 新要求继续优化（`META_ITERATE` 中英双模板）；工具
-  `prompt_optimize` 新增 `lastOptimized` / `iterateInstruction` 参数；失败时保留上次结果并附错误码
-- **结构化错误码**：`OptimizeError` 携带稳定 `code`（`EMPTY_INPUT` / `NO_MODEL_ROUTE` /
-  `TIMEOUT` / `MAX_TOKENS` / `MISSING_SECTIONS` / `THIN_SECTIONS` / `THIN_OUTPUT` /
-  `TOOL_CALL` / `UNSUPPORTED_FINISH` / `NO_TEXT` / `UNKNOWN`）；`OptimizeResult.errorCode`
-  透传到工具输出与失败渲染（`[MISSING_SECTIONS]` 前缀）；`/optimize` 失败按错误码给出
-  针对性中文提示；`MaxTokensError` 改为继承 `OptimizeError`
-- **诊断驱动重试**：结构类失败（缺段 / 过薄 / 过短）时，把上次失败的具体诊断
-  （缺失段落名、过薄段落与字数）注入下一次重试的系统提示词，针对性修正，
-  提高重试命中率（纯内部行为，无新增配置、无额外模型调用）
-- **自适应精简（`selfRefine`）**：可选配置（默认 `false`），成功优化后至多再跑一轮
-  「精简」迭代（内部指令，不占公共模板），仅当仍通过校验且不更长（5% 容差）时采纳，
-  任何失败自动回退原结果——最多 1 次额外模型调用
-- **优化生命周期事件**：`prompt-optimizer/optimize:start` / `optimize:success` /
-  `optimize:failure`（cordis 事件总线，`optimize`/`iterate` 共用，`method` 字段区分；
-  载荷含 `input` / `result` / `durationMs`；fire-and-forget，监听器异常不影响管线）
-- **服务分层**：`optimizer.ts` 改为纯编排（615 → 523 行）；重试诊断文案 / selfRefine
-  指令 → `diagnose.ts`、finish 错误翻译 / 流式组装 / `MaxTokensError` → `llm.ts`、
-  系统提示词构建（`PromptBuildContext`）→ `prompt.ts`——纯逻辑模块无 harness 依赖、
-  可独立单测（+24 用例）；公共 API 面与端到端行为不变
-- **模板数据化（`templateId` / `metaPromptTemplate`）**：角色文档骨架（4 个）从代码
-  常量变为可配置资源——部分自定义（缺的语言回落内置）、占位符/结构块/注入护栏强校验，
-  违规加载即抛；tuning 块（输出结构/自查等格式规则）保持代码化，与后置校验保持一致
-- **开发文档**：新增 `AGENTS.md`（架构与约定）；README 增加 English 配置/命令章节
+### Added
+- 角色文档语言自动检测 metaPromptLanguage
+- 迭代优化 iterate
+- 结构化错误码、诊断驱动重试、自适应精简 selfRefine
+- 优化生命周期事件
 
 ## [1.0.3] - 2026-08-17
 
-- **新增 `outputStyle` 配置**：`'sections'`（默认，四段标题）｜`'plain'`（无标题连贯正文，更省 token）
-- **元提示词新增精简要求**：在保证完整可执行的前提下尽量精简输出（实测下游 token 消耗降 50%+）
-- **`OptimizeResult` 新增 `outputTokens`**：成功时估算优化结果的 token 数（工具输出与 `presentationMeta` 同步透传）
-- **`skipIfAlreadyOptimized` 与 `examples` 仅对 `sections` 模式生效**：plain 模式无"已优化"标题标记，四段示例与无标题指令冲突
-- **省 token 快赢配置**：`maxTokens: 700` + `skipIfAlreadyOptimized: true`（见 README）
+### Added
+- 新增 outputStyle 配置（sections/plain）
+- 元提示词新增精简要求
 
 ## [1.0.2] - 2026-08-17
 
-- **GitHub 仓库改名**：`seven282/deepseek-harness-prompt-optimizer` → `seven282/oss-prompt-optimizer`
-  （旧 URL 由 GitHub 自动重定向；npm `repository` 字段、README/MARKETPLACE 引用同步更新）
-- Publish to npm：`oss-prompt-optimizer@1.0.2`
+### Changed
+- GitHub 仓库改名：seven282/oss-prompt-optimizer
 
 ## [1.0.1] - 2026-08-16
 
-- **改名：npm 包 `deepseek-harness-prompt-optimizer` → `oss-prompt-optimizer`**
-  （旧名弃用；避免与 DeepSeek 官方及 OpenPrompt 系列项目关联，改用自创开源品牌名 OSS）
-- Add `repository` field to `package.json`（指向 GitHub 仓库，满足插件市场防冒名校验）
-- Publish to npm：`oss-prompt-optimizer@1.0.1`
+### Changed
+- npm 包改名：oss-prompt-optimizer
 
 ## [1.0.0] - 2026-08-16
 
-- 首次发布（npm 包名 `deepseek-harness-prompt-optimizer`，原 `prompt-optimizer` 被占用后改名）
-- 核心能力：将原始指令经 harness `llm` 服务优化为 `## Role / ## Task / ## Context / ## Format` 四段专业提示词
-- 交付形态：
-  - 服务 `ctx.promptOptimizer.optimize()`（含按次参数覆盖）
-  - 工具 `prompt_optimize`（模型可调用，输出含四段结构）
-  - 命令 `/optimize`（输入框手输）与 `/auto-optimize`（运行时切换"发送前自动优化"）
-  - 输入框 ✨ 按钮：一键优化、↺ 撤销、加载/错误反馈、aria-live 播报
-  - 自动优化钩子（`agent/pre-step`：前缀触发或全量模式，可选双写原文）
-- 配置项：`temperature` / `maxTokens` / `maxRetries` / `maxInputChars` / `maxInputTokens`
-  / `timeoutMs` / `outputLanguage` / `extraInstructions` / `examples` / `minSectionChars`
-  / `maxTokenRetryFactor` / `retryTemperatureStep` / `skipIfAlreadyOptimized`
-  / `autoOptimize` / `autoOptimizePrefix` / `autoOptimizeAll` / `hookIncludeOriginal`
-  / `provider` / `model`
-- 质量保障：80 个 vitest 用例（mock llm，不依赖真实密钥）；TypeScript 严格模式
+### Added
+- 首次发布：将原始指令优化为四段专业提示词
+- 核心能力：服务 ctx.promptOptimizer.optimize()、工具 prompt_optimize、命令 /optimize
+- 输入框 ✨ 按钮：一键优化、↺ 撤销
+- 自动优化钩子（agent/pre-step）
+- 质量保障：80 个 vitest 用例

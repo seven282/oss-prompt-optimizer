@@ -8,7 +8,7 @@ import { buildLocalTemplate, localTemplateGate } from './local.js'
 import type { PromptOptimizerService } from './optimizer.js'
 
 /** Stable machine-readable token for the current role-document language mode. */
-export function metaLanguageToken(language: 'auto' | 'zh' | 'en'): string {
+function metaLanguageToken(language: 'auto' | 'zh' | 'en'): string {
   if (language === 'auto') return 'META_LANGUAGE:AUTO'
   return language === 'en' ? 'META_LANGUAGE:EN' : 'META_LANGUAGE:ZH'
 }
@@ -97,8 +97,8 @@ export function registerOptimizeCommand(ctx: Context, service: PromptOptimizerSe
   // Unified `/optimize` command with flag-based sub-commands.
   ctx.commands.register({
     name: 'optimize',
-    description: 'Optimize a raw instruction (--stats / --language / --auto)',
-    input: { hint: '<指令> | --stats | --language auto|中文|英文 | --auto on|off|toggle' },
+    description: 'Optimize a raw instruction (--stats / --language / --auto / --insights / --set-*)',
+    input: { hint: '<指令> | --stats | --language auto|中文|英文 | --auto on|off|toggle | --insights | --set-profile balanced|fast' },
     handler: async (invocation): Promise<CommandResult> => {
       const raw = invocation.rawInput.trim()
 
@@ -146,6 +146,34 @@ export function registerOptimizeCommand(ctx: Context, service: PromptOptimizerSe
         }
         service.setAutoOptimizeAll(next)
         return { kind: 'success', text: next ? 'AUTO_OPTIMIZE:ON' : 'AUTO_OPTIMIZE:OFF' }
+      }
+
+      // --- Flag: --set-profile / --set-local / --set-temperature ---
+      if (raw.startsWith('--set-profile')) {
+        const arg = raw.replace(/^--set-profile\s*/, '').trim().toLowerCase()
+        if (arg === 'clear') { service.clearUserOverride('profile'); return { kind: 'success', text: 'SET_PROFILE:CLEAR' } }
+        if (arg === 'balanced' || arg === 'fast') { service.setUserOverride('profile', arg); return { kind: 'success', text: `SET_PROFILE:${arg.toUpperCase()}` } }
+        return { kind: 'error', text: '用法: /optimize --set-profile balanced|fast|clear' }
+      }
+      if (raw.startsWith('--set-local')) {
+        const arg = raw.replace(/^--set-local\s*/, '').trim().toLowerCase()
+        if (arg === 'clear') { service.clearUserOverride('local'); return { kind: 'success', text: 'SET_LOCAL:CLEAR' } }
+        if (['auto','on','off','hybrid'].includes(arg)) { service.setUserOverride('local', arg); return { kind: 'success', text: `SET_LOCAL:${arg.toUpperCase()}` } }
+        return { kind: 'error', text: '用法: /optimize --set-local auto|on|off|hybrid|clear' }
+      }
+      if (raw.startsWith('--set-temperature')) {
+        const arg = raw.replace(/^--set-temperature\s*/, '').trim()
+        if (arg === 'clear') { service.clearUserOverride('temperature'); return { kind: 'success', text: 'SET_TEMPERATURE:CLEAR' } }
+        const n = parseFloat(arg)
+        if (Number.isFinite(n) && n >= 0 && n <= 2) { service.setUserOverride('temperature', arg); return { kind: 'success', text: `SET_TEMPERATURE:${n}` } }
+        return { kind: 'error', text: '用法: /optimize --set-temperature 0.0-2.0|clear' }
+      }
+
+      // --- Flag: --insights ---
+      if (raw === '--insights' || raw.startsWith('--insights ')) {
+        const lang = service.getMetaPromptLanguage() === 'en' ? 'en' : 'zh'
+        const insights = service.getInsights(lang)
+        return { kind: 'success', text: insights }
       }
 
       // --- Default: optimize instruction ---

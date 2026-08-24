@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { buildLocalTemplate, buildRefinePrompt, goalAnchorsScore, goalRichness, localTemplateGate, toRoleTaskGoal } from '../src/local.js'
+import { buildLocalTemplate, buildRefinePrompt, goalAnchorsScore, localTemplateGate } from '../src/local.js'
+import { toRoleTaskGoal } from '../src/validate.js'
 import { buildSituationProfile } from '../src/situation.js'
 
 describe('localTemplateGate (1.5.6)', () => {
@@ -49,20 +50,6 @@ describe('goal-aware scores (1.6.1 hybrid)', () => {
     // 裸周报指令：无目标/约束/受众/角色锚点 → 0 → hybrid 精修。
     const bare = buildSituationProfile('写一份周报，总结本周进展和下周计划')
     expect(goalAnchorsScore(bare)).toBe(0)
-  })
-
-  it('scores goal richness higher than bare anchors', () => {
-    const bare = buildSituationProfile('写一份周报，总结本周进展和下周计划')
-    const rich = buildSituationProfile('你是资深数据分析师，分析这份销售数据的趋势，结论先行，不超过 200 字')
-    expect(goalRichness('写一份周报，总结本周进展和下周计划', bare)).toBeGreaterThan(0)
-    expect(goalRichness('你是资深数据分析师，分析这份销售数据的趋势，结论先行，不超过 200 字', rich))
-      .toBeGreaterThan(goalRichness('写一份周报，总结本周进展和下周计划', bare))
-  })
-
-  it('carries confidence on gate pass results', () => {
-    const g = localTemplateGate('你是资深数据分析师，分析这份销售数据的趋势，结论先行，不超过 200 字', 'auto')
-    expect(g.ok).toBe(true)
-    expect(g.confidence).toBeGreaterThan(0)
   })
 
   it('builds a seed-optimization prompt from the local render, instruction, and goal anchors', () => {

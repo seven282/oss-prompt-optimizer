@@ -10,7 +10,7 @@ import { Config, type Config as ConfigType } from './config.js'
 import { OptimizeError, OptimizeErrorCode, INCOMPLETE_SECTIONS_MESSAGE, metaContentMessage, plainHeadingsMessage, thinOutputMessage, thinSectionsMessage, type OptimizeErrorCode as OptimizeErrorCodeType } from './errors.js'
 import { MaxTokensErrorWithPartial } from './llm.js'
 import { PROMPT_OPTIMIZER_EVENTS, type OptimizeMethod } from './events.js'
-import { detectLanguage, isCompactInstruction, type MetaLanguage } from './meta.js'
+import { detectLanguage, detectTaskType, isCompactInstruction, type MetaLanguage } from './meta.js'
 import {
   assertInput,
   diagnoseSections,
@@ -37,9 +37,13 @@ import { DEFAULT_TEMPLATES, validateTemplateSet, type TemplateSet } from './temp
 import { MaxTokensError, assembleStream, finishToError } from './llm.js'
 import { buildDiagnosis, refineInstruction } from './diagnose.js'
 import { buildIterateSystem, buildOptimizeSystem, type PromptBuildContext } from './prompt.js'
-import { buildSituationProfile, goalAlignment, goalDrift, mergeGoals, type GoalProfile, type SituationProfile } from './situation.js'
+import { buildSituationProfile, detectTaskSubtype, goalAlignment, goalDrift, mergeGoals, type GoalProfile, type SituationProfile } from './situation.js'
 import { bigramJaccard, createOptimizeCache, fnv1a, type OptimizeCache } from './cache.js'
-import { buildLocalTemplate, buildRefinePrompt, goalAnchorsScore, localTemplateGate, toRoleTaskGoal, type LocalTemplateMode } from './local.js'
+import { buildLocalTemplate, buildRefinePrompt, goalAnchorsScore, localTemplateGate, type LocalTemplateMode } from './local.js'
+import { toRoleTaskGoal } from './validate.js'
+import { EpisodeLog, truncateEpisodeInput, type Episode } from './episode.js'
+import { computePreferences, formatPreferences, type PreferenceModel } from './preference.js'
+import { computeAdaptation, formatAdaptationHints, DEFAULT_ADAPT_CONFIG, resolveParams, type AdaptationHints, type UserOverrides } from './adapt.js'
 
 export { MaxTokensError } from './llm.js'
 
@@ -276,6 +280,10 @@ export class PromptOptimizerService extends Service {
   private runtimeMetaPromptLanguage: MetaLanguage | undefined
   /** In-memory validated-result cache (LRU + TTL, see ADR-008). */
   private readonly cache: OptimizeCache<CachedOptimize>
+  /** Episode log for auto-iteration (behavior collection). */
+  private readonly episodes: EpisodeLog
+  /** Layer 3: User overrides (runtime, set via commands). */
+  private userOverrides: UserOverrides = {}
   /** Lightweight run statistics (观测, roadmap 要优化的功能 #2). */
   private readonly stats = {
     runs: 0,
@@ -310,6 +318,7 @@ export class PromptOptimizerService extends Service {
       maxEntries: config.cacheEnabled ? config.cacheMaxEntries : 0,
       ttlMs: config.cacheTtlMs,
     })
+    this.episodes = new EpisodeLog(200)
     registerPromptOptimizeTool(ctx, config, this)
     registerAutoOptimizeHook(ctx, config, this)
     registerOptimizeCommand(ctx, this)
@@ -566,6 +575,30 @@ export class PromptOptimizerService extends Service {
         durationMs,
       })
     }
+    // Episode logging for auto-iteration (behavior collection).
+    if (method === 'optimize' && result.optimized) {
+      try {
+        const taskType = detectTaskType(input)
+        const subtype = detectTaskSubtype(input, taskType)
+        const ep: Episode = {
+          ts: Date.now(),
+          input: truncateEpisodeInput(input),
+          taskType,
+          subtype,
+          local: result.local ?? false,
+          refined: result.refined ?? false,
+          outputTokens: result.outputTokens ?? 0,
+          inputTokens: this.stats.lastInputTokens,
+          durationMs,
+          callCount: this.runCallCount,
+          profile: this.config.optimizationProfile,
+          localMode: this.config.localTemplate,
+        }
+        this.episodes.push(ep)
+      } catch {
+        // Episode logging is best-effort; never break the pipeline.
+      }
+    }
   }
 
   /** Snapshot of the run statistics (观测; copy so callers cannot mutate). */
@@ -574,6 +607,72 @@ export class PromptOptimizerService extends Service {
       ...this.stats,
       avgCallMs: this.stats.callCount > 0 ? Math.round(this.stats.totalCallMs / this.stats.callCount) : 0,
     }
+  }
+
+  /**
+   * Get usage insights from the episode log (auto-iteration, 1.8.0).
+   * Returns formatted text for the `/optimize --insights` command.
+   */
+  getInsights(lang: 'zh' | 'en' = 'zh'): string {
+    const prefs = computePreferences(this.episodes)
+    return formatPreferences(prefs, lang)
+  }
+
+  /**
+   * Update feedback for the most recent episode (auto-iteration, 1.8.0).
+   * Called by client.js when the user accepts/rejects the optimized result.
+   * @param index - Episode index (negative = from end, -1 = most recent)
+   * @param accepted - Whether the user used the result
+   */
+  updateFeedback(index: number, accepted: boolean): void {
+    const actualIndex = index < 0 ? this.episodes.size + index : index
+    const quality = accepted ? 1.0 : 0.0
+    this.episodes.updateFeedback(actualIndex, { accepted, quality })
+  }
+
+  /**
+   * Compute adaptation hints based on accumulated episode data.
+   * Only active when `autoAdapt: true` and enough episodes exist.
+   */
+  computeAdaptationHints(): AdaptationHints {
+    if (!this.config.autoAdapt) return { reasons: ['autoAdapt disabled'] }
+    const prefs = computePreferences(this.episodes, this.config.minAdaptEpisodes * 2)
+    return computeAdaptation(
+      prefs,
+      this.config.optimizationProfile,
+      this.config.localTemplate,
+      this.config.temperature,
+      { ...DEFAULT_ADAPT_CONFIG, minEpisodes: this.config.minAdaptEpisodes },
+    )
+  }
+
+  /** Layer 3: Set a user override for profile/localTemplate/temperature. */
+  setUserOverride(key: 'profile' | 'local' | 'temperature', value: string): void {
+    if (key === 'profile') {
+      if (value === 'balanced' || value === 'fast') this.userOverrides.profile = value
+    } else if (key === 'local') {
+      if (value === 'auto' || value === 'on' || value === 'off' || value === 'hybrid') this.userOverrides.localTemplate = value
+    } else if (key === 'temperature') {
+      const n = parseFloat(value)
+      if (Number.isFinite(n) && n >= 0 && n <= 2) this.userOverrides.temperature = n
+    }
+  }
+
+  /** Layer 3: Clear a user override (revert to config/smart defaults). */
+  clearUserOverride(key: 'profile' | 'local' | 'temperature'): void {
+    if (key === 'profile') delete this.userOverrides.profile
+    else if (key === 'local') delete this.userOverrides.localTemplate
+    else if (key === 'temperature') delete this.userOverrides.temperature
+  }
+
+  /** Layer 3: Clear all user overrides. */
+  clearAllUserOverrides(): void {
+    this.userOverrides = {}
+  }
+
+  /** Layer 3: Get current user overrides (for display). */
+  getUserOverrides(): Readonly<UserOverrides> {
+    return this.userOverrides
   }
 
   /** Estimate the token count of one text (harness tokenMeter, heuristic fallback). */
@@ -600,6 +699,34 @@ export class PromptOptimizerService extends Service {
   }
 
   /**
+   * Resolve effective parameters using 3-layer architecture.
+   * Called at the start of optimize() to determine which profile/local/temperature to use.
+   *
+   * Priority: Layer 3 (user override) > Layer 1 (session learning) > Layer 2 (smart defaults) > base config.
+   */
+  private resolveEffectiveParams(rawInput: string): {
+    profile: 'balanced' | 'fast'
+    localTemplate: 'auto' | 'on' | 'off' | 'hybrid'
+    temperature: number
+    source: string
+  } {
+    const taskType = detectTaskType(rawInput)
+    const baseConfig = {
+      profile: this.config.optimizationProfile,
+      localTemplate: this.config.localTemplate,
+      temperature: this.config.temperature,
+    }
+
+    // Layer 1: session learning (from episode log)
+    const sessionHints = this.config.autoAdapt
+      ? this.computeAdaptationHints()
+      : { reasons: [] as string[] }
+
+    // Layer 2+3 resolution
+    return resolveParams(taskType, sessionHints, this.userOverrides, baseConfig)
+  }
+
+  /**
    * Optimize one raw instruction. Never throws for a model-quality failure:
    * when the model cannot produce all four sections within the retry budget,
    * the original instruction is returned with an explanation.
@@ -616,6 +743,8 @@ export class PromptOptimizerService extends Service {
     // (senseNeeds) also bypasses the pass-through (the user wants fresh sensing).
     const hasContext = options.context !== undefined && options.context.trim().length > 0
     const senseNeeds = options.senseNeeds ?? this.config.senseNeeds
+    // 3-layer parameter resolution: user override > session learning > smart defaults > config
+    const effective = this.resolveEffectiveParams(rawInput)
     if (
       this.config.skipIfAlreadyOptimized &&
       this.config.outputStyle === 'sections' &&
@@ -644,7 +773,7 @@ export class PromptOptimizerService extends Service {
     // D1（1.6.8）：senseNeeds 不再整体绕过本地路径——seed/on 渲染与造梦附录可
     // 组合（单次调用同时产出精修正文＋附录）；仅 on/hybrid 的零调用直出在 dream
     // 下回落精修档，保证附录有机会生成。
-    const localMode = options.localTemplate ?? this.config.localTemplate
+    const localMode = options.localTemplate ?? effective.localTemplate
     if (localMode !== 'off') {
       const gate = localTemplateGate(rawInput, localMode as LocalTemplateMode, options.context)
       if (gate.ok && gate.subtype !== undefined) {
@@ -688,7 +817,7 @@ export class PromptOptimizerService extends Service {
         }
         // auto mode or hybrid with low alignment: refine via LLM.
         const refinedStartedAt = Date.now()
-        const refined = await this.refineLocal(seed, rawInput, metaLanguage, options, profile, senseNeeds)
+        const refined = await this.refineLocal(seed, rawInput, metaLanguage, options, profile, senseNeeds, effective)
         this.emitCompleted('optimize', rawInput, refined, Date.now() - refinedStartedAt)
         return refined
       }
@@ -761,6 +890,7 @@ export class PromptOptimizerService extends Service {
       profile,
       preResolvedRoute,
       compactTier,
+      { temperature: effective.temperature, profile: effective.profile },
     )
     if (result.optimized && cacheKey !== undefined) {
       this.cache.set(cacheKey, { result: cloneOptimizeResult(result), input, context: options.context })
@@ -794,6 +924,8 @@ export class PromptOptimizerService extends Service {
     const outputLanguage = options.outputLanguage ?? this.config.outputLanguage
     const startedAt = Date.now()
     const senseNeeds = options.senseNeeds ?? this.config.senseNeeds
+    // 3-layer parameter resolution for iterate
+    const effectiveIter = this.resolveEffectiveParams(instruction)
     // P-A：迭代指令同样分档。
     const compactTier = isCompactInstruction(instruction)
     // 情境感知: the next instruction's profile (with conversation role cues,
@@ -840,6 +972,7 @@ export class PromptOptimizerService extends Service {
       nextProfile,
       preResolvedRoute,
       compactTier,
+      { temperature: effectiveIter.temperature, profile: effectiveIter.profile },
     )
     if (result.optimized && cacheKey !== undefined) {
       this.cache.set(cacheKey, { result: cloneOptimizeResult(result), input: `${last}\u0000${next}`, context: options.context })
@@ -862,11 +995,12 @@ export class PromptOptimizerService extends Service {
     profile: SituationProfile | undefined,
     route?: ResolvedRoute,
     compactTier = false,
+    effectiveParams?: { temperature: number; profile: 'balanced' | 'fast' },
   ): Promise<OptimizeResult> {
     const resolvedRoute = route ?? this.resolveRoute()
     this.runCallCount = 0
-    const baseTemperature = options.temperature ?? this.config.temperature
-    const fast = this.config.optimizationProfile === 'fast'
+    const baseTemperature = options.temperature ?? effectiveParams?.temperature ?? this.config.temperature
+    const fast = (effectiveParams?.profile ?? this.config.optimizationProfile) === 'fast'
     // 首调预算（latency P0-1）：当输出长度软约束开启且调用方未显式覆盖时，把首
     // 调用硬上限约束在软约束的 1.5 倍（fast 档 1.2 倍）以内——短任务不受影响
     // （不触顶即一次完成），超长输出由跳档扩容 + 断点续传兜底，避免单次调用
@@ -1123,11 +1257,12 @@ export class PromptOptimizerService extends Service {
     options: OptimizeOptions,
     profile: SituationProfile,
     senseNeeds = false,
+    effectiveParams?: { temperature: number; profile: 'balanced' | 'fast' },
   ): Promise<OptimizeResult> {
     const en = metaLanguage === 'en'
     const route = this.resolveRoute()
     const signal = options.signal
-    const temperature = this.config.temperature
+    const temperature = effectiveParams?.temperature ?? this.config.temperature
     // D1（1.6.8）：dream 下单次 seed 精修调用同时产出附录（withSenseNeeds 追加感应块）。
     const attempt = (diagnosis?: string): Promise<string> => {
       const system = this.withSenseNeeds(

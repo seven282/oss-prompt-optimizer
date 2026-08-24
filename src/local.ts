@@ -32,14 +32,6 @@ export interface LocalGateResult {
   reason: LocalGateReason
   taskType?: TaskType
   subtype?: string
-  /**
-   * Goal-aware richness score 0-1 (1.6.1): how much extractable signal the
-   * instruction carries (explicit role / audience / goal / constraints /
-   * verb-object / measurable). Observation only — the auto/on/off gate
-   * behaviour is unchanged; `hybrid` uses `goalAnchorsScore` for its
-   * refine-or-return decision.
-   */
-  confidence?: number
 }
 
 /** Subcategories too open-ended for a local skeleton render. */
@@ -353,23 +345,6 @@ const FILL_RULES: Record<string, { zh: FillRuleData; en: FillRuleData }> = {
 }
 
 /**
- * Goal-aware richness score 0-1 (1.6.1, P0): how much extractable signal the
- * instruction carries. Weighted toward goal/constraint/audience anchors so a
- * high score means the local render can produce a goal-aligned result.
- */
-export function goalRichness(input: string, profile: SituationProfile, context?: string): number {
-  let c = 0
-  if (profile.role.explicit !== undefined) c += 0.2
-  if (profile.role.audience !== undefined) c += 0.2
-  if (profile.goal.primary !== undefined) c += 0.3
-  if (profile.goal.constraints.length > 0) c += 0.2
-  if (extractMainVerbObject(input) !== undefined) c += 0.2
-  if (detectMeasurable(input)) c += 0.1
-  if (context !== undefined && context.trim().length > 0) c += 0.1
-  return Math.min(1, c)
-}
-
-/**
  * Goal-anchor alignment score 0-1 (1.6.1, P1 `hybrid`): how well the goal /
  * constraint / audience / role anchors are covered by extracted signals. The
  * local render copies these into the result, so a low score means the local
@@ -417,7 +392,7 @@ export function localTemplateGate(input: string, mode: LocalTemplateMode, contex
     detectMeasurable(input) ||
     (context !== undefined && context.trim().length > 0)
   return hasSignal
-    ? { ok: true, reason: 'pass', taskType, subtype, confidence: goalRichness(input, profile, context) }
+    ? { ok: true, reason: 'pass', taskType, subtype }
     : { ok: false, reason: 'no-signal', taskType, subtype }
 }
 
@@ -537,6 +512,4 @@ export function buildLocalTemplate(
   return [role, task, contextBlock, formatBlock].filter((l) => l.length > 0).join('\n')
 }
 
-// toRoleTaskGoal / sectionBodyOf live in validate.ts (pure-function layer,
-// shared with meta.ts for RTG example folding without a local↔meta cycle).
-export { toRoleTaskGoal } from './validate.js'
+// toRoleTaskGoal lives in validate.ts (pure-function layer, shared with meta.ts).

@@ -279,6 +279,15 @@ export interface Config {
   earlyStopTailChunks?: number
   /** Stream early-stop: single chunk growth threshold considered "tail" (default 24, since 1.4.5). */
   earlyStopTailGrowth?: number
+  /**
+   * Auto-adaptation engine (self-iteration, default off). When enabled, the
+   * optimizer tracks usage patterns (episode log) and automatically adjusts
+   * profile, local template mode, and temperature based on user behavior.
+   * Adaptation kicks in only after `minAdaptEpisodes` (default 10) episodes.
+   */
+  autoAdapt: boolean
+  /** Minimum episodes before adaptation kicks in (avoid small-sample bias). */
+  minAdaptEpisodes: number
 }
 
 /**
@@ -342,4 +351,6 @@ export const Config: z<Config> = z.object({
   model: z.string(),
   earlyStopTailChunks: z.number().step(1).min(1).max(100).default(16),
   earlyStopTailGrowth: z.number().step(1).min(1).max(200).default(24),
+  autoAdapt: z.boolean().default(false),
+  minAdaptEpisodes: z.number().step(1).min(5).max(100).default(10),
 })

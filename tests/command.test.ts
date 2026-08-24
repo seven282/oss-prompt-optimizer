@@ -64,6 +64,8 @@ const DEFAULT_CONFIG: Config = {
   classifier: 'heuristic',
   localTemplate: 'off',
   hybridAlignThreshold: 0.4,
+  autoAdapt: false,
+  minAdaptEpisodes: 10,
 }
 
 function textStream(text: string): AsyncIterable<StreamChunk> {
