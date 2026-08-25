@@ -26,6 +26,8 @@ export { buildSituationProfile, detectMeasurable, detectTaskSubtype, goalAlignme
 export type { GoalDrift, GoalProfile, RoleProfile, SituationProfile, SituationProfileLevel, TaskProfile, TaskSubtype } from './situation.js'
 export { registerOptimizeCommand } from './command.js'
 export { createSettingsBridge } from './settings.js'
+export { formatStatus } from './status.js'
+export type { StatusSnapshot, StatusEvent } from './status.js'
 export type { SettingsBridge } from './settings.js'
 export { DEFAULT_TEMPLATES, validateTemplateSet } from './templates.js'
 export type { TemplateSet } from './templates.js'

@@ -11,6 +11,7 @@ import { createSettingsBridge, type SettingsBridge } from './settings.js'
 import { OptimizeError, OptimizeErrorCode, INCOMPLETE_SECTIONS_MESSAGE, metaContentMessage, plainHeadingsMessage, thinOutputMessage, thinSectionsMessage, type OptimizeErrorCode as OptimizeErrorCodeType } from './errors.js'
 import { MaxTokensErrorWithPartial } from './llm.js'
 import { PROMPT_OPTIMIZER_EVENTS, type OptimizeMethod } from './events.js'
+import { STATUS_EVENT_MAX, type StatusEvent, type StatusSnapshot } from './status.js'
 import { detectLanguage, detectTaskType, isCompactInstruction, type MetaLanguage } from './meta.js'
 import {
   assertInput,
@@ -265,12 +266,14 @@ interface ResolvedRoute {
  * config supplies an explicit provider/model pair.
  */
 export class PromptOptimizerService extends Service {
-  static inject = ['llm', 'tools', 'systemPrompt', 'commands']
+  static inject = ['llm', 'tools', 'systemPrompt', 'commands', 'settings']
   static Config = Config
 
   private readonly config: ConfigType
   /** P0（1.7.8）dsh-settings 可选桥：null 表示宿主无 settings，完全跳过。 */
   private readonly settingsBridge: SettingsBridge | null
+  /** P1（1.7.9）最近优化事件（FIFO，供 --status/状态按钮展示）。 */
+  private readonly recentEvents: StatusEvent[] = []
   /** The active role-document template set (resolved and validated at construction). */
   private readonly templates: TemplateSet
   /** Runtime override for "optimize every message" (flipped by `/auto-optimize`). */
@@ -584,6 +587,19 @@ export class PromptOptimizerService extends Service {
       })
     }
     // Episode logging for auto-iteration (behavior collection).
+    // P1（1.7.9）最近事件缓冲：成功/失败各记一条（最多 STATUS_EVENT_MAX）。
+    this.recentEvents.push({
+      ts: Date.now(),
+      method,
+      ok: result.optimized,
+      errorCode: result.errorCode,
+      outputTokens: result.outputTokens,
+      durationMs,
+      local: result.local === true,
+    })
+    if (this.recentEvents.length > STATUS_EVENT_MAX) {
+      this.recentEvents.shift()
+    }
     if (method === 'optimize' && result.optimized) {
       try {
         const taskType = detectTaskType(input)
@@ -624,6 +640,23 @@ export class PromptOptimizerService extends Service {
   getInsights(lang: 'zh' | 'en' = 'zh'): string {
     const prefs = computePreferences(this.episodes)
     return formatPreferences(prefs, lang)
+  }
+
+  /**
+   * P1（1.7.9）运行时状态快照：当前生效参数（含来源）、运行统计、偏好模型、
+   * 最近事件。供 `/optimize --status` 与客户端状态按钮渲染。
+   */
+  getStatus(rawInput = ''): StatusSnapshot {
+    const prefs = computePreferences(this.episodes)
+    return {
+      effective: this.resolveEffectiveParams(rawInput),
+      stats: this.getStats(),
+      prefs,
+      recentEvents: [...this.recentEvents],
+      autoAdapt: this.config.autoAdapt,
+      minAdaptEpisodes: this.config.minAdaptEpisodes,
+      settingsPanel: this.settingsBridge !== null,
+    }
   }
 
   /**

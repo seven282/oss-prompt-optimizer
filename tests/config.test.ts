@@ -18,7 +18,7 @@ describe('Config schema', () => {
       outputLanguage: 'auto',
       outputStyle: 'plain',
       metaPromptLanguage: 'auto',
-      autoOptimize: false,
+      autoOptimize: true,
       autoOptimizePrefix: '/optimize ',
       minSectionChars: 10,
       maxTokenRetryFactor: 1.5,

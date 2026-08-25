@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.7.9] - 2026-08-25
+
+### Added
+- **运行时状态（P1）**：`/optimize --status` 输出完整状态块——当前生效参数
+  （Profile/本地模板/温度 + 解析来源：用户覆盖/会话学习/基础配置/智能默认值）、
+  运行统计（成功/失败/缓存/本地直出/耗时）、偏好模型摘要、最近 20 条优化事件
+  （时间/✅❌/错误码/耗时）
+- **客户端 ℹ️ 状态按钮**：✨ 旁新增状态入口，点击展开状态面板（toggle），
+  经 `/optimize --status` 获取（机器 token `STATUS_OK` 前缀）；样式随主题 token
+- 新增 `src/status.ts`（`formatStatus`/`StatusSnapshot`/`STATUS_EVENT_MAX`）、
+  `tests/status.test.ts`（6 例）；服务端 `getStatus()` + 最近事件 FIFO 缓冲
+- README 命令列表同步 `--status`
+
+### Notes
+- 状态面板只读展示；设置调整仍在设置面板（P0）/命令（会话级）
+- 测试 545 → 551。
+
 ## [1.7.8] - 2026-08-25
 
 ### Added

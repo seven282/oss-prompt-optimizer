@@ -5,6 +5,7 @@ import { gatherConversationContext, type ContextMessage } from './context.js'
 import { matchScene, renderSceneTemplate } from './meta.js'
 import type { TaskSubtype } from './situation.js'
 import { buildLocalTemplate, localTemplateGate } from './local.js'
+import { formatStatus } from './status.js'
 import type { PromptOptimizerService } from './optimizer.js'
 
 /** Stable machine-readable token for the current role-document language mode. */
@@ -56,6 +57,7 @@ function sessionContext(
  * The `/optimize` command supports sub-commands via flags:
  *   `/optimize <instruction>`           — optimize a raw instruction
  *   `/optimize --stats`                 — report run statistics
+ *   `/optimize --status`                — live status (params/source/stats/prefs/events)
  *   `/optimize --language <mode>`       — switch role-document language
  *   `/optimize --auto <on|off|toggle>`  — switch auto-optimize mode
  *
@@ -174,6 +176,13 @@ export function registerOptimizeCommand(ctx: Context, service: PromptOptimizerSe
         const lang = service.getMetaPromptLanguage() === 'en' ? 'en' : 'zh'
         const insights = service.getInsights(lang)
         return { kind: 'success', text: insights }
+      }
+
+      // --- Flag: --status (P1, 1.7.9) 运行时状态 ---
+      if (raw === '--status' || raw.startsWith('--status ')) {
+        const lang = service.getMetaPromptLanguage() === 'en' ? 'en' : 'zh'
+        const snapshot = service.getStatus(raw === '--status' ? '' : raw.slice('--status '.length))
+        return { kind: 'success', text: `STATUS_OK\n${formatStatus(snapshot, lang)}` }
       }
 
       // --- Default: optimize instruction ---

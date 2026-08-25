@@ -109,6 +109,7 @@ When enabled, any user message starting with `autoOptimizePrefix` is optimized b
 - `/optimize --set-temperature <0-2>` — temporarily override the sampling temperature (session-scoped, restart fallback).
 - `/optimize --clear` — clear all temporary overrides, restore to config values.
 - `/optimize --insights` — display the current session's learning insights (task type distribution, preferred configs, success rate).
+- `/optimize --status` — display live runtime status (effective params & source, stats, preference summary, recent events) (1.7.9; the ℹ️ button next to the composer also toggles the status panel).
 
 ## Development
 

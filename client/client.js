@@ -25,7 +25,29 @@ window.__ModuleLoader__.load({
     // descriptor), so it is injectable — unlike a custom @Remote namespace,
     // which this deployment cannot claim on the host. Buttons drive the host's
     // `/optimize` and `/auto-optimize` commands through `remote.commands.execute`.
-    var inject = ['remote', 'remote.commands']
+    // `settingsScope` (dsh-client-ui-settings) drives the Settings-sidebar page;
+    // `locale` localizes the sidebar label per the user's language.
+    var inject = ['remote', 'remote.commands', 'settingsScope', 'locale', 'sessions']
+    var SETTINGS_NS = 'prompt-optimizer'
+    var NS = 'prompt-optimizer-client'
+    var zh = {
+      'section.nav': '提示词优化',
+      'section.sub': 'oss-prompt-optimizer · 配置与运行状态',
+      'action.status': '查看运行状态',
+      'action.reset': '恢复全部默认',
+      'saved': '已保存：',
+      'reset.all.done': '已恢复全部默认',
+      'hint': '本页仅列核心常用项；完整配置（缓存 / 情境感知 / 模板 / 自迭代等）→ 设置 → 插件 → oss-prompt-optimizer，默认值已调优、多数无需修改。',
+    }
+    var en = {
+      'section.nav': 'Prompt Optimizer',
+      'section.sub': 'oss-prompt-optimizer · config & status',
+      'action.status': 'View status',
+      'action.reset': 'Reset all to defaults',
+      'saved': 'Saved: ',
+      'reset.all.done': 'All defaults restored',
+      'hint': 'Core options only; the full config (cache / situation awareness / templates / self-iteration) lives under Settings → Plugins → oss-prompt-optimizer. Defaults are tuned — most need no changes.',
+    }
 
     // One idempotent stylesheet for the buttons (injected once; global classes
     // are unique to this plugin so they never collide with product styles).
@@ -42,6 +64,17 @@ window.__ModuleLoader__.load({
         '.po-optimize-btn.is-undo{color:var(--dsw-alias-brand-primary, inherit)}',
         '.po-optimize-btn.has-error{color:var(--dsw-alias-state-error-primary, #d93026)}',
         '.po-cost{display:inline-flex;align-items:center;font-size:12px;line-height:1;color:var(--dsw-alias-label-secondary, inherit);margin-left:6px;white-space:nowrap;transition:opacity .15s ease}',
+        '.po-status-btn{margin-left:2px;font-size:14px;line-height:1}.po-status-btn.is-active{color:var(--dsw-alias-brand-primary, inherit);background:var(--dsw-alias-bg-layer-1, rgba(0,0,0,.06))}',
+        '.po-status-pre{margin:0;font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-word;color:var(--dsw-alias-text-primary, inherit);max-height:40vh;overflow:auto}',
+        '.po-section{padding:4px 2px}.po-section-head{display:flex;align-items:center;gap:10px;margin-bottom:14px}.po-section-title{font-size:15px;font-weight:600;color:var(--dsw-alias-text-primary, inherit)}.po-section-sub{font-size:12px;color:var(--dsw-alias-label-secondary, inherit);margin-top:2px}',
+        '.po-field{margin-bottom:12px}.po-field-label{display:flex;justify-content:space-between;align-items:baseline;font-size:13px;color:var(--dsw-alias-text-primary, inherit);margin-bottom:4px}.po-field-default{font-size:11px;color:var(--dsw-alias-label-secondary, inherit)}',
+        '.po-field-input{width:100%;box-sizing:border-box;padding:5px 8px;font-size:13px;border:1px solid var(--dsw-alias-border-subtle, rgba(0,0,0,.18));border-radius:6px;background:var(--dsw-alias-bg-layer-1, transparent);color:var(--dsw-alias-text-primary, inherit)}.po-field-input:focus{outline:2px solid var(--dsw-alias-brand-primary, currentColor);outline-offset:0;border-color:transparent}',
+        '.po-save{margin-top:4px;padding:6px 16px;font-size:13px;border:none;border-radius:6px;background:var(--dsw-alias-brand-primary, #0052d9);color:#fff;cursor:pointer}.po-save:hover{opacity:.9}',
+        '.po-status-panel{position:static;max-width:none;background:var(--dsw-alias-bg-layer-2, #fff);border:1px solid var(--dsw-alias-border-subtle, rgba(0,0,0,.12));border-radius:8px;padding:10px 12px;margin-top:12px}',
+        '.po-status-pre{margin:0;font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-word;color:var(--dsw-alias-text-primary, inherit);max-height:40vh;overflow:auto}',
+        '.po-reset{margin-top:4px;padding:2px 8px;font-size:12px;border:1px solid var(--dsw-alias-border-subtle, rgba(0,0,0,.18));border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary, inherit);cursor:pointer}.po-reset:hover{color:var(--dsw-alias-brand-primary, inherit);border-color:currentColor}',
+        '.po-group{font-size:12px;font-weight:600;color:var(--dsw-alias-label-secondary, inherit);margin:16px 0 8px;text-transform:uppercase;letter-spacing:.04em}',
+        '.po-hint{font-size:12px;line-height:1.6;color:var(--dsw-alias-label-secondary, inherit)}.po-link{color:var(--dsw-alias-brand-primary, inherit);cursor:pointer;text-decoration:underline}',
         '.po-visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0;padding:0;margin:-1px}',
       ].join('')
       document.head.appendChild(style)
@@ -90,9 +123,34 @@ window.__ModuleLoader__.load({
       return execution && execution.result
     }
 
+    // Editable core fields shown on the Settings-sidebar page (a curated subset;
+    // the full 45+ fields live on the plugin card auto-rendered by the settings
+    // Plugins section from the registered namespace schema). 核心 = 需要用户
+    // 决策的开关类；温度/输出 token/预算等默认已调优，不进本页。
+    var PO_FIELDS = [
+      { key: 'outputStyle', label: '输出形态', type: 'select', group: '输出', defaultValue: 'plain',
+        options: [['plain', '纯文本（最省 token）'], ['role-task-goal', '三要素标签'], ['sections', '四段结构']] },
+      { key: 'situationProfileLevel', label: '情境感知画像', type: 'select', group: '情境感知', defaultValue: 'full',
+        options: [['full', '完整（角色/任务/目标）'], ['minimal', '精简'], ['off', '关闭']] },
+      { key: 'contextAware', label: '上下文感知（自动采集对话背景）', type: 'boolean', group: '情境感知', defaultValue: true },
+      { key: 'cacheEnabled', label: '结果缓存（相同请求零调用）', type: 'boolean', group: '缓存', defaultValue: true },
+      { key: 'optimizationProfile', label: '优化档位', type: 'select', group: '运行', defaultValue: 'balanced',
+        options: [['balanced', '均衡'], ['fast', '快速（省时，跳过部分校验）']] },
+      { key: 'localTemplate', label: '本地模板（零 token）', type: 'select', group: '运行', defaultValue: 'auto',
+        options: [['auto', '自动'], ['on', '开启'], ['off', '关闭'], ['hybrid', '混合']] },
+      { key: 'autoOptimize', label: '自动优化（前缀触发）', type: 'boolean', group: '自动', defaultValue: true },
+      { key: 'autoAdapt', label: '自迭代学习（越用越好用）', type: 'boolean', group: '自动', defaultValue: true },
+    ]
+
+
     async function apply(ctx) {
       var slots = ctx.get('slots')
       if (slots === undefined) return
+      // Localize the settings-sidebar label per user language.
+      ctx.effect(function () {
+        return ctx.locale.register(NS, { zh: zh, en: en })
+      })
+      var t = ctx.locale.bind(NS)
 
       // ✨ Optimize button (composer tool row, left).
       slots.inject('conversation.input.left', function () {
@@ -279,6 +337,220 @@ window.__ModuleLoader__.load({
               ),
             )
           },
+        )
+      })
+
+      // Settings-sidebar page（设置 → 侧边栏「Prompt 优化器」）— 1.8.0.
+      // The section shell renders the nav entry from `id`/`order`/`label`;
+      // the SVG mark lives inside the page header (settings.section owns no
+      // nav-icon seat by contract).
+        // Settings-sidebar page: SVG-marked header + core fields + live status.
+        function PromptOptimizerSection(props) {
+          ensureStyles()
+          var settingsScope = ctx.get('settingsScope')
+          var scopeRef = React.useRef(null)
+          var snapState = React.useState(null)
+          var snap = snapState[0]
+          var setSnap = snapState[1]
+          var savedState = React.useState('')
+          var savedMsg = savedState[0]
+          var setSavedMsg = savedState[1]
+          React.useEffect(function () {
+            if (!settingsScope || typeof settingsScope.bind !== 'function') return undefined
+            var scope
+            try {
+              scope = settingsScope.bind({ namespace: SETTINGS_NS })
+            } catch (err) {
+              console.error('prompt-optimizer: settings scope bind failed', err)
+              return undefined
+            }
+            scopeRef.current = scope
+            setSnap(scope.getSnapshot())
+            return scope.subscribe(function () { setSnap(scope.getSnapshot()) })
+          }, [])
+
+      function setField(key, value) {
+        var scope = scopeRef.current
+        if (!scope) return
+        scope.set(key, value)
+          .then(function () {
+            setSavedMsg(t('saved') + key)
+            if (typeof setTimeout === 'function') setTimeout(function () { setSavedMsg('') }, 2500)
+          })
+          .catch(function (err) {
+            setSavedMsg('保存失败：' + (err instanceof Error ? err.message : String(err)))
+          })
+      }
+
+      // 恢复某字段为默认：清空用户层，字段回退 composition/默认层。
+      function clearField(key) {
+        var scope = scopeRef.current
+        if (!scope || typeof scope.clear !== 'function') return
+        return scope.clear(key)
+          .catch(function (err) {
+            setSavedMsg('恢复失败：' + (err instanceof Error ? err.message : String(err)))
+          })
+      }
+
+      // 恢复全部核心字段为默认（底部统一按钮）。
+      function clearAllFields() {
+        var scope = scopeRef.current
+        if (!scope || typeof scope.clear !== 'function') return
+        var jobs = []
+        for (var i = 0; i < PO_FIELDS.length; i++) jobs.push(clearField(PO_FIELDS[i].key))
+        Promise.all(jobs).then(function () {
+          setSavedMsg(t('reset.all.done'))
+          if (typeof setTimeout === 'function') setTimeout(function () { setSavedMsg('') }, 2500)
+        })
+      }
+
+          // 状态查看：settings.section 无 sessionId props——从 sessions 服务取
+          // 当前（首个）会话 id 执行 `/optimize --status`；取不到时提示走命令。
+          var statusState = React.useState(null)
+          var statusText = statusState[0]
+          var setStatusText = statusState[1]
+          function getSessionId() {
+            var sessions = ctx.get('sessions')
+            if (!sessions) return undefined
+            try {
+              var list = sessions.list && typeof sessions.list.getSnapshot === 'function' ? sessions.list.getSnapshot() : undefined
+              if (list && list.byId) {
+                var ids = Object.keys(list.byId)
+                return ids.length > 0 ? ids[0] : undefined
+              }
+            } catch (err) { /* best-effort */ }
+            return undefined
+          }
+          function fetchStatus() {
+            var sessionId = getSessionId()
+            if (sessionId === undefined) {
+              setStatusText('设置页无法确定当前会话——请在对话中运行 /optimize --status 查看状态。')
+              return
+            }
+            ctx.remote.commands.execute(sessionId, '/optimize --status', [])
+              .then(function (response) {
+                var result = resultOf(response)
+                if (result && result.kind === 'success' && typeof result.text === 'string') {
+                  setStatusText(result.text.replace(/^STATUS_OK\n?/, ''))
+                }
+              })
+              .catch(function (err) {
+                setStatusText('无法获取状态：' + (err instanceof Error ? err.message : String(err)))
+              })
+          }
+
+          var resolved = snap && snap.value && typeof snap.value === 'object' ? snap.value : {}
+          var writable = snap ? snap.writable !== false : false
+
+          var groups = []
+          for (var i = 0; i < PO_FIELDS.length; i++) {
+            var f = PO_FIELDS[i]
+            if (groups.length === 0 || groups[groups.length - 1].name !== f.group) {
+              groups.push({ name: f.group, fields: [] })
+            }
+            groups[groups.length - 1].fields.push(f)
+          }
+
+          var children = []
+          children.push(
+            React.createElement('div', { className: 'po-section-head', key: 'head' },
+              React.createElement(SparklesIcon),
+              React.createElement('div', null,
+                React.createElement('div', { className: 'po-section-title' }, t('section.nav')),
+                React.createElement('div', { className: 'po-section-sub' }, t('section.sub')),
+              ),
+            ),
+          )
+
+          for (var g = 0; g < groups.length; g++) {
+            var grp = groups[g]
+            for (var j = 0; j < grp.fields.length; j++) {
+              var field = grp.fields[j]
+              var current = resolved[field.key]
+              var input
+              // 通用变更处理：data-po-key 定位字段（避免 var 闭包陷阱与 bind 预绑丢事件对象）。
+              function onFieldChange(ev) {
+                if (!ev || !ev.target) return
+                var key = ev.target.getAttribute('data-po-key')
+                if (!key) return
+                var value = ev.target.value
+                var def = null
+                for (var k = 0; k < PO_FIELDS.length; k++) {
+                  if (PO_FIELDS[k].key === key) { def = PO_FIELDS[k]; break }
+                }
+                if (def !== null && def.type === 'boolean') value = ev.target.value === 'true'
+                else if (def !== null && def.type === 'number') {
+                  var n = Number(ev.target.value)
+                  if (!Number.isFinite(n)) return
+                  value = n
+                }
+                setField(key, value)
+              }
+              if (field.type === 'select' || field.type === 'boolean') {
+                input = React.createElement(
+                  'select',
+                  { className: 'po-field-input', 'data-po-key': field.key, value: field.type === 'boolean' ? (current ? 'true' : 'false') : String(current ?? ''), onChange: onFieldChange },
+                  field.type === 'boolean'
+                    ? [React.createElement('option', { key: 't', value: 'true' }, '开启'), React.createElement('option', { key: 'f', value: 'false' }, '关闭')]
+                    : field.options.map(function (opt) {
+                        return React.createElement('option', { key: opt[0], value: opt[0] }, opt[1])
+                      }),
+                )
+              } else {
+                input = React.createElement('input', {
+                  className: 'po-field-input', type: 'number', step: field.step, min: field.min, max: field.max,
+                  'data-po-key': field.key,
+                  defaultValue: current !== undefined ? String(current) : '',
+                  onBlur: onFieldChange,
+                })
+              }
+              children.push(
+                React.createElement('div', { className: 'po-field', key: field.key },
+                  React.createElement('div', { className: 'po-field-label' },
+                    React.createElement('span', null, field.label),
+                    React.createElement('span', { className: 'po-field-default' },
+                      '默认 ' + String(field.defaultValue ?? '—') + ' · 当前 ' + String(current ?? '—'),
+                    ),
+                  ),
+                  input,
+                ),
+              )
+            }
+          }
+
+      children.push(
+        React.createElement('div', { key: 'save-row', style: { display: 'flex', alignItems: 'center', gap: 10, marginTop: 4 } },
+          React.createElement('button', { className: 'po-save', onClick: function () {
+            if (statusText !== null) { setStatusText(null); return }
+            fetchStatus()
+          } }, t('action.status')),
+          React.createElement('button', { className: 'po-reset', type: 'button', onClick: clearAllFields }, t('action.reset')),
+          savedMsg !== '' ? React.createElement('span', { className: 'po-hint', key: 'saved' }, savedMsg) : null,
+        ),
+      )
+
+      if (statusText !== null) {
+        children.push(
+          React.createElement(
+            'div', { className: 'po-status-panel', key: 'status', style: { position: 'static', marginTop: 12, maxWidth: 'none' } },
+            React.createElement('pre', { className: 'po-status-pre' }, statusText),
+          ),
+        )
+      }
+
+      children.push(
+        React.createElement('div', { className: 'po-hint', key: 'hint', style: { marginTop: 14 } },
+          t('hint'),
+        ),
+      )
+
+          return React.createElement('div', { className: 'po-section' }, children)
+        }
+
+      slots.inject('settings.section', function () {
+        return slots.register(
+          { name: 'settings.section', id: 'prompt-optimizer', order: 90, label: function () { return t('section.nav') }, locale: NS },
+          PromptOptimizerSection,
         )
       })
     }

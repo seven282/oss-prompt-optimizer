@@ -305,7 +305,7 @@ export const Config: z<Config> = z.object({
   outputLanguage: z.string().default('auto'),
   outputStyle: z.union(['sections', 'plain', 'role-task-goal']).default('plain'),
   metaPromptLanguage: z.union(['auto', '中文', '英文']).default('auto'),
-  autoOptimize: z.boolean().default(false),
+  autoOptimize: z.boolean().default(true),
   autoOptimizePrefix: z.string().default('/optimize '),
   extraInstructions: z.string(),
   examples: z.array(z.object({
@@ -351,6 +351,6 @@ export const Config: z<Config> = z.object({
   model: z.string(),
   earlyStopTailChunks: z.number().step(1).min(1).max(100).default(16),
   earlyStopTailGrowth: z.number().step(1).min(1).max(200).default(24),
-  autoAdapt: z.boolean().default(false),
+  autoAdapt: z.boolean().default(true),
   minAdaptEpisodes: z.number().step(1).min(5).max(100).default(10),
 })
