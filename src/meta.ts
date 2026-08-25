@@ -142,7 +142,7 @@ function resolveWritingTieBreak(
 const TASKTYPE_ZH: Record<Exclude<TaskType, 'other'>, string> = {
   code: '任务类型提示：这是编程/开发类任务。区块侧重：Task 与 Format 是重点（可运行性、交付物），Role 一句带过。',
   writing: '任务类型提示：这是写作/文案类任务。区块侧重：用心写 Role 与 Context（身份、受众、语气），Format 按常规保留。',
-  analysis: '任务类型提示：这是分析/研究类任务，结论先行、给出依据与数据来源；区块侧重：Task 与 Context 是重点，Format 记得结论先行。',
+  analysis: '任务类型提示：这是分析/研究类任务，给出依据与数据来源；区块侧重：Task 与 Context 是重点。',
   ops: '任务类型提示：这是执行/操作类任务。区块侧重：Task 与 Format 是重点（步骤、命令、回滚），Role 保持简洁。',
 }
 
@@ -151,7 +151,7 @@ const TASKTYPE_ZH: Record<Exclude<TaskType, 'other'>, string> = {
 const TASKTYPE_EN: Record<Exclude<TaskType, 'other'>, string> = {
   code: 'Task-type hint: this is a coding/development task. Section emphasis: Task and Format matter most (runnability, deliverables), keep Role brief.',
   writing: 'Task-type hint: this is a writing task. Section emphasis: spend the care on Role and Context (persona, audience, tone), keep Format usual.',
-  analysis: 'Task-type hint: this is an analysis/research task; lead with conclusions backed by evidence and data sources. Section emphasis: Task and Context matter most, let Format lead with the conclusion.',
+  analysis: 'Task-type hint: this is an analysis/research task; back conclusions with evidence and data sources. Section emphasis: Task and Context matter most.',
   ops: 'Task-type hint: this is an execution/operations task. Section emphasis: Task and Format matter most (steps, commands, rollback), keep Role concise.',
 }
 
@@ -171,8 +171,8 @@ export const ROLE_LIBRARY: Record<Exclude<TaskType, 'other'>, { zh: string; en: 
     en: 'Role reference: senior writer, skilled at business/marketing/technical writing; adapt tone and length to the genre.',
   },
   analysis: {
-    zh: '角色参考：数据分析师，擅长趋势解读与因果分析，结论先行、数据支撑。',
-    en: 'Role reference: data analyst, skilled at trend interpretation and causal analysis; lead with conclusions, back them with data.',
+    zh: '角色参考：数据分析师，擅长趋势解读与因果分析，结论以数据支撑。',
+    en: 'Role reference: data analyst, skilled at trend interpretation and causal analysis; back conclusions with data.',
   },
   ops: {
     zh: '角色参考：资深运维，熟悉 Linux 与部署流程，按步骤执行、先备份后变更。',

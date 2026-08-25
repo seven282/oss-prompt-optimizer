@@ -246,7 +246,7 @@ const FILL_RULES: Record<string, { zh: FillRuleData; en: FillRuleData }> = {
   },
   'analysis-data': {
     zh: {
-      role: '作为资深数据分析师，擅长趋势解读与因果分析，结论先行、数据支撑。',
+      role: '作为资深数据分析师，擅长趋势解读与因果分析，结论以数据支撑。',
       task: '分析数据：数据清洗 → 关键指标提取（同比/环比/趋势）→ 异常点识别 → 结论与可执行建议。',
       context: '面向业务决策者；说明数据来源与时间范围。',
       format: '结论先行 + 关键图表/数据 + 建议列表。',
