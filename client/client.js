@@ -190,6 +190,12 @@ window.__ModuleLoader__.load({
                       })
                       .catch(function () { /* stats are best-effort */ })
                   } else if (result && result.kind === 'error' && typeof result.text === 'string') {
+                    // dsh 协议：被中止的 handler 以 kind:'error' 结算（resolve 而非
+                    // reject）——用户点取消时若宿主返回 error，须识别为取消而非失败。
+                    if (controller && controller.signal.aborted) {
+                      setAnnounce('已取消优化')
+                      return
+                    }
                     flashError(result.text)
                   } else {
                     console.error('prompt-optimizer: unexpected command result', response)

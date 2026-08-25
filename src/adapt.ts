@@ -195,7 +195,12 @@ export function formatAdaptationHints(hints: AdaptationHints, lang: 'zh' | 'en' 
 /**
  * Layer 1+2+3 resolution: compute final parameters from three layers.
  *
- * Priority: Layer 3 (user override) > Layer 1 (session learning) > Layer 2 (smart defaults) > base config.
+ * 实际优先级（与实现一致）：Layer 3（用户覆盖）> Layer 1（会话学习）>
+ * Layer 2 起点（smart defaults）——但**无会话学习时回落 base config**：
+ * 冷启动/autoAdapt 关时直接用用户显式配置（cordis.patch.yml），避免
+ * smart defaults 与显式配置打架。即完整顺序为：
+ * Layer 3 > Layer 1（有 session hints）> base config（无 session hints）>
+ * Layer 2 smart 仅作 Layer 1 部分命中时的字段级起点。
  *
  * @param taskType - Detected task type for smart defaults
  * @param sessionHints - Layer 1 adaptation hints (from episode log), may be empty

@@ -63,7 +63,7 @@ export class EpisodeLog {
 
   /** Return all episodes (copy, safe to mutate). */
   all(): readonly Episode[] {
-    return this.episodes
+    return this.episodes.slice()
   }
 
   /** Return the N most recent episodes. */

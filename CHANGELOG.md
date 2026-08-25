@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.7.5] - 2026-08-25
+
+### Fixed
+- **✨ 取消不再误报失败（P1，全面检查发现）**：dsh 协议中中止的 handler 以
+  `kind:'error'` **resolve**（非 reject）——此前 error 分支未检查
+  `controller.signal.aborted`，用户点取消会被显示为「优化失败」；现
+  resolve-error 分支先识别取消
+- **episode.all() 返回复制（P2）**：此前返回内部数组引用（注释声称 safe to
+  mutate 但实际共享），改 `slice()` 防污染日志
+- **adapt.resolveParams 注释对齐（P2）**：实际优先级为 Layer3 > Layer1 >
+  base config（无 session hints 时）> Layer2 仅作字段级起点——注释与实现一致
+- 测试 540 全绿（build 同步 lib/client.js）。
+
 ## [1.7.4] - 2026-08-25
 
 ### Fixed
