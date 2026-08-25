@@ -1253,7 +1253,7 @@ describe('localTemplate zero-token path (1.5.6)', () => {
     // 「写一份周报…」→ writing-report + 可抽取信号 → 本地渲染参考模板（seed），
     // auto 默认走 seed 优化：LLM 基于参考模板感知目标优化（refined:true）。
     const state = makeCtx([textStream(FOUR_SECTIONS)])
-    const service = makeService(state, { ...DEFAULT_CONFIG, localTemplate: 'auto' })
+    const service = makeService(state, { ...DEFAULT_CONFIG, localTemplate: 'hybrid' })
     const result = await service.optimize('写一份周报，总结本周进展和下周计划', { signal: new AbortController().signal })
     expect(result.optimized).toBe(true)
     expect(result.local).toBe(true)
@@ -1272,7 +1272,7 @@ describe('localTemplate zero-token path (1.5.6)', () => {
   it('falls back to the LLM pipeline when the gate rejects (auto)', async () => {
     // 无子类命中的指令 → 门控拒绝 → 走 LLM。
     const state = makeCtx([textStream(FOUR_SECTIONS)])
-    const service = makeService(state, { ...DEFAULT_CONFIG, localTemplate: 'auto' })
+    const service = makeService(state, { ...DEFAULT_CONFIG, localTemplate: 'hybrid' })
     const result = await service.optimize('帮我写一份 PRD', { signal: new AbortController().signal })
     expect(result.optimized).toBe(true)
     expect(result.local).toBeUndefined()
@@ -1299,7 +1299,7 @@ describe('localTemplate zero-token path (1.5.6)', () => {
 
   it('counts local renders in stats and /optimize-stats LOCAL token', async () => {
     const state = makeCtx([])
-    const service = makeService(state, { ...DEFAULT_CONFIG, localTemplate: 'auto' })
+    const service = makeService(state, { ...DEFAULT_CONFIG, localTemplate: 'hybrid' })
     await service.optimize('写一份周报，总结本周进展和下周计划', { signal: new AbortController().signal })
     expect(service.getStats().local).toBe(1)
   })
@@ -1309,7 +1309,7 @@ describe('localTemplate per-call override (1.5.6 方案 C)', () => {
   it('forces the LLM pipeline for a single call even when config is auto (refine path)', async () => {
     // 本地直出结果不满意 → 对同一指令以 localTemplate: 'off' 再调用 → 走 LLM 精修。
     const state = makeCtx([textStream(FOUR_SECTIONS)])
-    const service = makeService(state, { ...DEFAULT_CONFIG, localTemplate: 'auto' })
+    const service = makeService(state, { ...DEFAULT_CONFIG, localTemplate: 'hybrid' })
     const result = await service.optimize('写一份周报，总结本周进展和下周计划', {
       signal: new AbortController().signal,
       localTemplate: 'off',
@@ -1380,33 +1380,8 @@ describe('localTemplate hybrid mode (1.6.1)', () => {
   })
 })
 
-describe('seed optimization goal alignment (1.6.2)', () => {
-  it('retries with goal-misalignment diagnosis when the output misses anchors', async () => {
-    // 首次输出 FOUR_SECTIONS（产品经理 PRD，缺「不超过 200 字」约束）→ 未对齐；
-    // 重试输出补全版（含约束）→ 对齐。断言恰好 2 次调用 + 第二次带诊断。
-    const aligned = '## Role\n资深数据分析师\n\n## Task\n分析销售趋势，结论先行，不超过 200 字。\n\n## Context\n数据支撑。\n\n## Format\n结论先行，200 字内。'
-    const state = makeCtx([textStream(FOUR_SECTIONS), textStream(aligned)])
-    const service = makeService(state, { ...DEFAULT_CONFIG, localTemplate: 'auto' })
-    const result = await service.optimize('你是数据分析师，分析销售数据，必须包含数据表格', { signal: new AbortController().signal })
-    expect(result.optimized).toBe(true)
-    expect(result.refined).toBe(true)
-    expect(result.prompt).toContain('数据表格') // 对齐后的输出保留约束
-    expect(state.streamCalls).toHaveLength(2) // 首次 + 目标对齐重试
-    const secondSystem = state.streamCalls[1]?.system ?? ''
-    expect(secondSystem).toContain('上一次输出未体现以下目标/约束')
-    expect(secondSystem).toContain('约束：必须包含数据表格')
-  })
-
-  it('accepts the first output when it already aligns with the goal', async () => {
-    const aligned = '## Role\n资深数据分析师\n\n## Task\n分析销售数据并给出趋势，必须包含数据表格。\n\n## Context\n数据支撑。\n\n## Format\n结论先行。'
-    const state = makeCtx([textStream(aligned)])
-    const service = makeService(state, { ...DEFAULT_CONFIG, localTemplate: 'auto' })
-    const result = await service.optimize('你是数据分析师，分析销售数据，必须包含数据表格', { signal: new AbortController().signal })
-    expect(result.optimized).toBe(true)
-    expect(result.refined).toBe(true)
-    expect(state.streamCalls).toHaveLength(1) // 对齐 → 无重试
-  })
-})
+// [1.8.0] 移除 localTemplate 'auto'——seed 优化（1.6.2）随 auto 移除；
+// 目标对齐重试由 LLM 管线承担（GOAL_MISALIGNED + goalDiagnosis，见既有用例）。
 
 describe('output purity gate (1.6.3)', () => {
   it('retries the full pipeline when the output carries meta content', async () => {
@@ -1428,21 +1403,6 @@ Task（任务描述）优化标准
     expect(state.streamCalls).toHaveLength(2)
     const secondSystem = state.streamCalls[1]?.system ?? ''
     expect(secondSystem).toContain('只输出优化后的提示词本身')
-  })
-
-  it('retries the seed-optimization path when the output carries meta content', async () => {
-    const polluted = `${FOUR_SECTIONS}
-
-总结：以上是提示词优化方法论。`
-    const state = makeCtx([textStream(polluted), textStream(FOUR_SECTIONS)])
-    const service = makeService(state, { ...DEFAULT_CONFIG, localTemplate: 'auto' })
-    const result = await service.optimize('写一份周报，总结本周进展和下周计划', { signal: new AbortController().signal })
-    expect(result.optimized).toBe(true)
-    expect(result.refined).toBe(true)
-    expect(result.prompt).not.toContain('方法论')
-    expect(state.streamCalls).toHaveLength(2)
-    const secondSystem = state.streamCalls[1]?.system ?? ''
-    expect(secondSystem).toContain('purity')
   })
 
   it('accepts a clean first output without retrying', async () => {

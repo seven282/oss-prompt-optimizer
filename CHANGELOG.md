@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.8.0] - 2026-08-25
+
+### Removed
+- **localTemplate `'auto'` 移除**（用户决策）：本地模板默认改为 **`off`**（默认全走 LLM
+  优化，行为更可预期）；合法值 `on | off | hybrid`——`on` 本地直出、`hybrid`
+  未对齐 seed 优化（原 auto 的 seed 优化语义由 hybrid 未对齐分支承担）
+- 设置页「本地模板」选项同步（off 默认 + on/hybrid）；`/optimize --set-local`
+  与 tool schema 同步；README 说明更新
+
+### Changed
+- 目标对齐重试（GOAL_MISALIGNED + goalDiagnosis）随 auto 移除由 LLM 管线承担
+  （seed 专属用例随 auto 删除：seed goal alignment 2 例 + purity seed 1 例）
+- 测试 551 → 548（移除 3 个 auto seed 用例）
+
 ## [1.7.9] - 2026-08-25
 
 ### Added

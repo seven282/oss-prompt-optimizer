@@ -4,21 +4,21 @@ import { toRoleTaskGoal } from '../src/validate.js'
 import { buildSituationProfile } from '../src/situation.js'
 
 describe('localTemplateGate (1.5.6)', () => {
-  it('passes a structured subcategory with extractable signals in auto mode', () => {
-    const g = localTemplateGate('写一份周报，总结本周进展和下周计划', 'auto')
+  it('passes a structured subcategory with extractable signals in hybrid mode', () => {
+    const g = localTemplateGate('写一份周报，总结本周进展和下周计划', 'hybrid')
     expect(g.ok).toBe(true)
     expect(g.reason).toBe('pass')
     expect(g.subtype).toBe('writing-report')
   })
 
-  it('rejects a bare category without signals in auto mode (no-signal)', () => {
+  it('rejects a bare category without signals in hybrid mode (no-signal)', () => {
     // 命中 writing 大类但子类不明确 / 无信号 → 回落 LLM。
-    const g = localTemplateGate('帮我写个东西', 'auto')
+    const g = localTemplateGate('帮我写个东西', 'hybrid')
     expect(g.ok).toBe(false)
     expect(['no-subtype', 'no-signal', 'other-task']).toContain(g.reason)
   })
 
-  it('rejects open-ended subcategories (creative) in auto and on modes', () => {
+  it('rejects open-ended subcategories (creative) in hybrid and on modes', () => {
     const g = localTemplateGate('写一首诗，关于秋天', 'on')
     expect(g.ok).toBe(false)
     expect(g.reason).toBe('open-creative')
@@ -36,8 +36,8 @@ describe('localTemplateGate (1.5.6)', () => {
     expect(g.reason).toBe('off')
   })
 
-  it('auto mode passes with conversation context even without other signals', () => {
-    const g = localTemplateGate('写周报', 'auto', '第一轮：明确了目标，第二轮：补充了数据')
+  it('hybrid mode passes with conversation context even without other signals', () => {
+    const g = localTemplateGate('写周报', 'hybrid', '第一轮：明确了目标，第二轮：补充了数据')
     expect(g.ok).toBe(true)
   })
 })

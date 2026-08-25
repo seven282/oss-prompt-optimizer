@@ -59,7 +59,7 @@
 
 运行时可通过命令临时调整自迭代系统配置（会话级覆盖，重启回落）：
 - `/optimize --set-profile fast|balanced` — 临时覆盖优化时长档位
-- `/optimize --set-local on|off|auto|hybrid` — 临时覆盖本地模板模式
+- `/optimize --set-local on|off|hybrid` — 临时覆盖本地模板模式（默认 off，LLM 优化）
 - `/optimize --set-temperature <0-2>` — 临时覆盖采样温度
 - `/optimize --clear` — 清除所有临时覆盖，恢复配置值
 - `/optimize --insights` — 查看当前会话的学习洞察（任务类型分布、偏好配置、成功率）

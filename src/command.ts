@@ -160,8 +160,8 @@ export function registerOptimizeCommand(ctx: Context, service: PromptOptimizerSe
       if (raw.startsWith('--set-local')) {
         const arg = raw.replace(/^--set-local\s*/, '').trim().toLowerCase()
         if (arg === 'clear') { service.clearUserOverride('local'); return { kind: 'success', text: 'SET_LOCAL:CLEAR' } }
-        if (['auto','on','off','hybrid'].includes(arg)) { service.setUserOverride('local', arg); return { kind: 'success', text: `SET_LOCAL:${arg.toUpperCase()}` } }
-        return { kind: 'error', text: '用法: /optimize --set-local auto|on|off|hybrid|clear' }
+        if (['on','off','hybrid'].includes(arg)) { service.setUserOverride('local', arg); return { kind: 'success', text: `SET_LOCAL:${arg.toUpperCase()}` } }
+        return { kind: 'error', text: '用法: /optimize --set-local on|off|hybrid|clear' }
       }
       if (raw.startsWith('--set-temperature')) {
         const arg = raw.replace(/^--set-temperature\s*/, '').trim()
@@ -227,7 +227,7 @@ export function registerOptimizeCommand(ctx: Context, service: PromptOptimizerSe
       }
       const en = service.getMetaPromptLanguage() === 'en'
       if (instruction !== undefined) {
-        const gate = localTemplateGate(instruction, 'auto')
+        const gate = localTemplateGate(instruction, 'hybrid')
         if (gate.ok) {
           return { kind: 'success', text: buildLocalTemplate(instruction, subtype, en ? 'en' : 'zh') }
         }

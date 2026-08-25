@@ -4,7 +4,7 @@ import { STATUS_EVENT_MAX, formatStatus, type StatusSnapshot } from '../src/stat
 /** Minimal realistic snapshot. */
 function makeSnapshot(overrides: Partial<StatusSnapshot> = {}): StatusSnapshot {
   return {
-    effective: { profile: 'balanced', localTemplate: 'auto', temperature: 0.2, source: 'config' },
+    effective: { profile: 'balanced', localTemplate: 'off', temperature: 0.2, source: 'config' },
     stats: {
       runs: 3, success: 2, failed: 1, cached: 1, local: 1, refined: 0,
       totalDurationMs: 3000, maxDurationMs: 2000, lastOutputTokens: 800,

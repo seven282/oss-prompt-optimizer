@@ -183,14 +183,13 @@ export interface OptimizeOptions {
   senseNeeds?: boolean
   /**
    * Per-call override for the local zero-token template path (1.5.6).
-   * `'auto'` renders locally when the confidence gate passes (subcategory +
-   * extractable signals), else the LLM pipeline; `'on'` forces local whenever
-   * a subcategory matches; `'off'` forces the LLM pipeline; `'hybrid'`
-   * (1.6.1) renders locally and refines via a cheap LLM call when the
-   * goal-anchor alignment score is below `hybridAlignThreshold`. Absent →
-   * the configured `localTemplate` value applies.
+   * `'off'` (default) forces the LLM pipeline; `'on'` renders locally whenever
+   * a subcategory matches; `'hybrid'` (1.6.1) renders locally and refines via
+   * a cheap LLM call when the goal-anchor alignment score is below
+   * `hybridAlignThreshold`. Absent → the configured `localTemplate` value
+   * applies.
    */
-  localTemplate?: 'auto' | 'on' | 'off' | 'hybrid'
+  localTemplate?: 'on' | 'off' | 'hybrid'
 }
 
 /** The service result: the optimized prompt, or a clear fallback. */
@@ -692,7 +691,7 @@ export class PromptOptimizerService extends Service {
     if (key === 'profile') {
       if (value === 'balanced' || value === 'fast') this.userOverrides.profile = value
     } else if (key === 'local') {
-      if (value === 'auto' || value === 'on' || value === 'off' || value === 'hybrid') this.userOverrides.localTemplate = value
+      if (value === 'on' || value === 'off' || value === 'hybrid') this.userOverrides.localTemplate = value
     } else if (key === 'temperature') {
       const n = parseFloat(value)
       if (Number.isFinite(n) && n >= 0 && n <= 2) this.userOverrides.temperature = n
@@ -747,7 +746,7 @@ export class PromptOptimizerService extends Service {
    */
   private resolveEffectiveParams(rawInput: string): {
     profile: 'balanced' | 'fast'
-    localTemplate: 'auto' | 'on' | 'off' | 'hybrid'
+    localTemplate: 'on' | 'off' | 'hybrid'
     temperature: number
     source: string
   } {
@@ -809,9 +808,8 @@ export class PromptOptimizerService extends Service {
     // 渲染四段**参考模板（seed）**——不调模型、零 token、~<5ms。
     // - `on`：seed 即成品直接返回（0 token 模板形态，/template 预填同源）
     // - `hybrid`（1.6.1）：目标锚点对齐（≥ 阈值）→ seed 直接返回（0 token）；
-    //   未对齐 → seed 优化
-    // - `auto`（1.6.2 起默认）：**seed 优化**——本地参考模板 + LLM 感知目标，
-    //   输出经目标对齐校验；省 token（~600-1300 vs 全量 ~1300-2300），非 0 token
+    //   未对齐 → LLM 精修（refineLocal，省 token 的 seed 优化路径）
+    // - `off`（默认，1.8.0）：跳过本地路径，走完整 LLM 管线
     // 门控拒绝的指令仍回落下方完整 LLM 管线。
     // D1（1.6.8）：senseNeeds 不再整体绕过本地路径——seed/on 渲染与造梦附录可
     // 组合（单次调用同时产出精修正文＋附录）；仅 on/hybrid 的零调用直出在 dream
@@ -858,7 +856,7 @@ export class PromptOptimizerService extends Service {
             outputTokens: this.estimateTextTokens(out),
           }
         }
-        // auto mode or hybrid with low alignment: refine via LLM.
+        // hybrid with low alignment: refine via LLM.
         const refinedStartedAt = Date.now()
         const refined = await this.refineLocal(seed, rawInput, metaLanguage, options, profile, senseNeeds, effective)
         this.emitCompleted('optimize', rawInput, refined, Date.now() - refinedStartedAt)

@@ -24,18 +24,18 @@ function makeEpisode(overrides: Partial<Episode> = {}): Episode {
     durationMs: 500,
     callCount: 1,
     profile: 'balanced',
-    localMode: 'auto',
+    localMode: 'on',
     ...overrides,
   }
 }
 
 describe('getSmartDefaults', () => {
   const cases: [TaskType, { profile: string; localTemplate: string; temperature: number }][] = [
-    ['code',     { profile: 'fast',    localTemplate: 'auto', temperature: 0.15 }],
-    ['writing',  { profile: 'balanced', localTemplate: 'auto', temperature: 0.4  }],
-    ['analysis', { profile: 'balanced', localTemplate: 'auto', temperature: 0.2  }],
-    ['ops',      { profile: 'fast',    localTemplate: 'auto', temperature: 0.15 }],
-    ['other',    { profile: 'balanced', localTemplate: 'auto', temperature: 0.2  }],
+    ['code',     { profile: 'fast',    localTemplate: 'off', temperature: 0.15 }],
+    ['writing',  { profile: 'balanced', localTemplate: 'off', temperature: 0.4  }],
+    ['analysis', { profile: 'balanced', localTemplate: 'off', temperature: 0.2  }],
+    ['ops',      { profile: 'fast',    localTemplate: 'off', temperature: 0.15 }],
+    ['other',    { profile: 'balanced', localTemplate: 'off', temperature: 0.2  }],
   ]
 
   for (const [taskType, expected] of cases) {
@@ -54,12 +54,12 @@ describe('getSmartDefaults', () => {
 })
 
 describe('resolveParams', () => {
-  const baseConfig = { profile: 'balanced' as const, localTemplate: 'auto' as const, temperature: 0.2 }
+  const baseConfig = { profile: 'balanced' as const, localTemplate: 'off' as const, temperature: 0.2 }
 
   it('returns base config when no overrides and no session hints', () => {
     const result = resolveParams('writing', { reasons: [] }, {}, baseConfig)
     expect(result.profile).toBe('balanced')
-    expect(result.localTemplate).toBe('auto')
+    expect(result.localTemplate).toBe('off')
     expect(result.temperature).toBe(0.2)
     expect(result.source).toBe('config')
   })
@@ -123,7 +123,7 @@ describe('computeAdaptation', () => {
     const log = new EpisodeLog()
     for (let i = 0; i < 5; i++) log.push(makeEpisode())
     const prefs = computePreferences(log)
-    const hints = computeAdaptation(prefs, 'balanced', 'auto', 0.2)
+    const hints = computeAdaptation(prefs, 'balanced', 'on', 0.2)
     expect(hints.profile).toBeUndefined()
     expect(hints.reasons[0]).toContain('Insufficient data')
   })
@@ -134,7 +134,7 @@ describe('computeAdaptation', () => {
       log.push(makeEpisode({ accepted: i < 5 })) // 67% edit rate
     }
     const prefs = computePreferences(log)
-    const hints = computeAdaptation(prefs, 'fast', 'auto', 0.2)
+    const hints = computeAdaptation(prefs, 'fast', 'on', 0.2)
     expect(hints.profile).toBe('balanced')
     expect(hints.reasons.some(r => r.includes('edit rate'))).toBe(true)
   })
@@ -145,7 +145,7 @@ describe('computeAdaptation', () => {
       log.push(makeEpisode({ accepted: true })) // 0% edit rate
     }
     const prefs = computePreferences(log)
-    const hints = computeAdaptation(prefs, 'balanced', 'auto', 0.2)
+    const hints = computeAdaptation(prefs, 'balanced', 'on', 0.2)
     expect(hints.profile).toBe('fast')
     expect(hints.reasons.some(r => r.includes('edit rate'))).toBe(true)
   })
@@ -156,7 +156,7 @@ describe('computeAdaptation', () => {
       log.push(makeEpisode({ local: true, accepted: false })) // 0% acceptance
     }
     const prefs = computePreferences(log)
-    const hints = computeAdaptation(prefs, 'balanced', 'auto', 0.2)
+    const hints = computeAdaptation(prefs, 'balanced', 'on', 0.2)
     expect(hints.localTemplate).toBe('off')
     expect(hints.reasons.some(r => r.includes('local acceptance'))).toBe(true)
   })
@@ -168,7 +168,7 @@ describe('computeAdaptation', () => {
     }
     const prefs = computePreferences(log)
     const hints = computeAdaptation(prefs, 'balanced', 'off', 0.2)
-    expect(hints.localTemplate).toBe('auto')
+    expect(hints.localTemplate).toBe('on')
     expect(hints.reasons.some(r => r.includes('local acceptance'))).toBe(true)
   })
 
@@ -178,7 +178,7 @@ describe('computeAdaptation', () => {
       log.push(makeEpisode({ local: false })) // 0% usage
     }
     const prefs = computePreferences(log)
-    const hints = computeAdaptation(prefs, 'balanced', 'auto', 0.2)
+    const hints = computeAdaptation(prefs, 'balanced', 'on', 0.2)
     expect(hints.localTemplate).toBeUndefined()
   })
 
@@ -193,7 +193,7 @@ describe('computeAdaptation', () => {
       log.push(makeEpisode({ quality: 0.5 }))
     }
     const prefs = computePreferences(log)
-    const hints = computeAdaptation(prefs, 'balanced', 'auto', 0.5)
+    const hints = computeAdaptation(prefs, 'balanced', 'on', 0.5)
     expect(hints.temperature).toBeLessThan(0.5)
     expect(hints.reasons.some(r => r.includes('declining'))).toBe(true)
   })
@@ -203,7 +203,7 @@ describe('computeAdaptation', () => {
     for (let i = 0; i < 8; i++) log.push(makeEpisode({ quality: 0.9 }))
     for (let i = 0; i < 8; i++) log.push(makeEpisode({ quality: 0.5 }))
     const prefs = computePreferences(log)
-    const hints = computeAdaptation(prefs, 'balanced', 'auto', 0.2)
+    const hints = computeAdaptation(prefs, 'balanced', 'on', 0.2)
     expect(hints.temperature).toBeUndefined()
   })
 })

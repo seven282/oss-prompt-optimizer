@@ -62,8 +62,8 @@ export function registerPromptOptimizeTool(
         },
         localTemplate: {
           type: 'string',
-          enum: ['auto', 'on', 'off'],
-          description: 'Optional local-render override (1.5.6): `off` forces the LLM pipeline (e.g. to refine a previously returned local template with full model quality); `on` renders locally whenever a subcategory matches; `auto` (default) renders locally when the confidence gate passes. `auto` is the default when absent.',
+          enum: ['on', 'off', 'hybrid'],
+          description: 'Optional local-render override (1.5.6): `off` (default) forces the LLM pipeline; `on` renders locally whenever a subcategory matches (zero token); `hybrid` renders locally when goal anchors align, otherwise refines via a cheap LLM call.',
         },
       },
       output: {
@@ -107,7 +107,7 @@ export function registerPromptOptimizeTool(
           signal: exec.signal,
           ...(args.temperature !== undefined ? { temperature: args.temperature } : {}),
           ...(args.maxTokens !== undefined ? { maxTokens: args.maxTokens } : {}),
-          ...(args.localTemplate !== undefined ? { localTemplate: args.localTemplate as 'auto' | 'on' | 'off' } : {}),
+          ...(args.localTemplate !== undefined ? { localTemplate: args.localTemplate as 'on' | 'off' | 'hybrid' } : {}),
         }
         if (args.lastOptimized !== undefined) {
           return service.iterate(args.lastOptimized, args.iterateInstruction ?? '', base)

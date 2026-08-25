@@ -21,7 +21,7 @@ export interface AdaptationHints {
   /** Suggested optimization profile (if different from current). */
   profile?: 'balanced' | 'fast'
   /** Suggested local template mode (if different from current). */
-  localTemplate?: 'auto' | 'on' | 'off' | 'hybrid'
+  localTemplate?: 'on' | 'off' | 'hybrid'
   /** Suggested temperature (if different from current). */
   temperature?: number
   /** Reason for each suggestion (for logging/debugging). */
@@ -61,16 +61,16 @@ export const DEFAULT_ADAPT_CONFIG: AdaptConfig = {
  */
 export interface SmartDefaults {
   profile: 'balanced' | 'fast'
-  localTemplate: 'auto' | 'on' | 'off' | 'hybrid'
+  localTemplate: 'on' | 'off' | 'hybrid'
   temperature: number
 }
 
 const SMART_DEFAULTS: Record<TaskType, SmartDefaults> = {
-  code:     { profile: 'fast',    localTemplate: 'auto', temperature: 0.15 },
-  writing:  { profile: 'balanced', localTemplate: 'auto', temperature: 0.4  },
-  analysis: { profile: 'balanced', localTemplate: 'auto', temperature: 0.2  },
-  ops:      { profile: 'fast',    localTemplate: 'auto', temperature: 0.15 },
-  other:    { profile: 'balanced', localTemplate: 'auto', temperature: 0.2  },
+  code:     { profile: 'fast',    localTemplate: 'off', temperature: 0.15 },
+  writing:  { profile: 'balanced', localTemplate: 'off', temperature: 0.4  },
+  analysis: { profile: 'balanced', localTemplate: 'off', temperature: 0.2  },
+  ops:      { profile: 'fast',    localTemplate: 'off', temperature: 0.15 },
+  other:    { profile: 'balanced', localTemplate: 'off', temperature: 0.2  },
 }
 
 /** Get smart defaults for a task type. */
@@ -85,7 +85,7 @@ export function getSmartDefaults(taskType: TaskType): SmartDefaults {
  */
 export interface UserOverrides {
   profile?: 'balanced' | 'fast'
-  localTemplate?: 'auto' | 'on' | 'off' | 'hybrid'
+  localTemplate?: 'on' | 'off' | 'hybrid'
   temperature?: number
 }
 
@@ -97,7 +97,7 @@ export interface UserOverrides {
 export function computeAdaptation(
   prefs: PreferenceModel,
   currentProfile: 'balanced' | 'fast',
-  currentLocalTemplate: 'auto' | 'on' | 'off' | 'hybrid',
+  currentLocalTemplate: 'on' | 'off' | 'hybrid',
   currentTemperature: number,
   config: AdaptConfig = DEFAULT_ADAPT_CONFIG,
 ): AdaptationHints {
@@ -135,8 +135,8 @@ export function computeAdaptation(
       }
     } else if (prefs.localAcceptanceRate > config.highLocalAcceptance) {
       if (currentLocalTemplate === 'off') {
-        hints.localTemplate = 'auto'
-        reasons.push(`High local acceptance (${Math.round(prefs.localAcceptanceRate * 100)}% > ${Math.round(config.highLocalAcceptance * 100)}%) → enable auto`)
+        hints.localTemplate = 'on'
+        reasons.push(`High local acceptance (${Math.round(prefs.localAcceptanceRate * 100)}% > ${Math.round(config.highLocalAcceptance * 100)}%) → enable local`)
       }
     }
   }
@@ -211,8 +211,8 @@ export function resolveParams(
   taskType: TaskType,
   sessionHints: AdaptationHints,
   userOverrides: UserOverrides,
-  baseConfig: { profile: 'balanced' | 'fast'; localTemplate: 'auto' | 'on' | 'off' | 'hybrid'; temperature: number },
-): { profile: 'balanced' | 'fast'; localTemplate: 'auto' | 'on' | 'off' | 'hybrid'; temperature: number; source: string } {
+  baseConfig: { profile: 'balanced' | 'fast'; localTemplate: 'on' | 'off' | 'hybrid'; temperature: number },
+): { profile: 'balanced' | 'fast'; localTemplate: 'on' | 'off' | 'hybrid'; temperature: number; source: string } {
   const smart = getSmartDefaults(taskType)
 
   // Layer 2: start with smart defaults

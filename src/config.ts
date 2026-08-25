@@ -249,7 +249,7 @@ export interface Config {
    * zero tokens, misaligned ones go through a cheap LLM refinement
    * (`refined: true`, ~400-800 tokens vs ~1300-2300 for the full pipeline).
    */
-  localTemplate: 'auto' | 'on' | 'off' | 'hybrid'
+  localTemplate: 'on' | 'off' | 'hybrid'
   /**
    * Goal-anchor alignment threshold for `localTemplate: 'hybrid'` (1.6.1):
    * when `goalAnchorsScore(profile)` is below this value the local render is
@@ -338,7 +338,7 @@ export const Config: z<Config> = z.object({
   builtinExamples: z.boolean().default(true),
   sceneRefEnabled: z.boolean().default(true),
   classifier: z.union(['heuristic', 'llm']).default('heuristic'),
-  localTemplate: z.union(['auto', 'on', 'off', 'hybrid']).default('auto'),
+  localTemplate: z.union(['on', 'off', 'hybrid']).default('off'),
   hybridAlignThreshold: z.number().min(0).max(1).default(0.4),
   templateId: z.string().default('default'),
   metaPromptTemplate: z.object({

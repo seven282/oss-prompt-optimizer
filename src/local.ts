@@ -1,5 +1,5 @@
 /**
- * Local zero-token template renderer (1.5.6, 方案 A `localTemplate: 'auto'`).
+ * Local zero-token template renderer (1.5.6, 方案 A).
  *
  * The four perception layers (task / role / situation / context) are pure
  * functions; the only model call in the whole pipeline is the prose
@@ -15,13 +15,15 @@ import { buildSituationProfile, detectMeasurable, detectTaskSubtype, extractMain
 import { type MetaLanguage, type TaskType } from './meta.js'
 
 /**
- * Local-render mode. `'auto'` renders only when the gate passes, else LLM;
+ * Local-render mode. `'off'` disables the local path (LLM only); `'on'` renders
+ * unconditionally when the gate passes; `'hybrid'` renders when the gate passes
+ * and refines mismatches with a cheap LLM call.
  * `'on'` forces local whenever a subcategory matches; `'off'` never local;
  * `'hybrid'` (1.6.1) renders locally and then checks goal-anchor alignment —
  * aligned results return at zero tokens, misaligned ones go through a cheap
  * LLM refinement (~400-800 tokens vs ~1300-2300 for the full pipeline).
  */
-export type LocalTemplateMode = 'auto' | 'on' | 'off' | 'hybrid'
+export type LocalTemplateMode = 'on' | 'off' | 'hybrid'
 
 /** Why the gate rejected (`ok === true` → `'pass'`). */
 export type LocalGateReason = 'pass' | 'off' | 'other-task' | 'no-subtype' | 'open-creative' | 'no-signal'
@@ -366,11 +368,11 @@ export function goalAnchorsScore(profile: SituationProfile): number {
  * - `mode === 'off'` → never local.
  * - `mode === 'on'` → local whenever a subcategory matches (except
  *   open-ended ones listed above).
- * - `mode === 'auto'` (default) → additionally require at least one
+ * - `mode === 'hybrid'` → require at least one
  *   extractable signal (role / main-verb+object / goal / measurable /
  *   conversation context) so a bare instruction without usable details
  *   still gets the full LLM treatment.
- * - `mode === 'hybrid'` → same pass rule as `'auto'`; the result carries
+ * - `mode === 'hybrid'` → same pass rule (usable signal required); the result carries
  *   `confidence` and the caller decides whether to refine locally (1.6.1).
  */
 export function localTemplateGate(input: string, mode: LocalTemplateMode, context?: string): LocalGateResult {
@@ -382,7 +384,7 @@ export function localTemplateGate(input: string, mode: LocalTemplateMode, contex
   if (subtype === undefined) return { ok: false, reason: 'no-subtype', taskType }
   if (OPEN_SUBTYPES.has(subtype)) return { ok: false, reason: 'open-creative', taskType, subtype }
   if (mode === 'on') return { ok: true, reason: 'pass', taskType, subtype }
-  // 'auto' / 'hybrid': require a usable signal beyond the bare category.
+  // 'hybrid': require a usable signal beyond the bare category.
   const vo = extractMainVerbObject(input)
   const hasSignal =
     profile.role.explicit !== undefined ||

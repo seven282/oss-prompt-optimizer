@@ -105,7 +105,7 @@ When enabled, any user message starting with `autoOptimizePrefix` is optimized b
 - `/optimize --language auto` / `/optimize --language 中文` / `/optimize --language 英文` / `/optimize --language status` — pin the role-document language or switch back to auto-detection (auto by default; session-scoped, falls back to `metaPromptLanguage` after restart).
 - `/optimize --auto on` / `off` / `toggle` / `status` — switch "optimize every message before the model step" at runtime (the `agent/pre-step` hook equivalent of `autoOptimizeAll: true`).
 - `/optimize --set-profile fast|balanced` — temporarily override the optimization profile (session-scoped, restart fallback).
-- `/optimize --set-local on|off|auto|hybrid` — temporarily override the local template mode (session-scoped, restart fallback).
+- `/optimize --set-local on|off|hybrid` — temporarily override the local template mode (default off, LLM path; session-scoped, restart fallback).
 - `/optimize --set-temperature <0-2>` — temporarily override the sampling temperature (session-scoped, restart fallback).
 - `/optimize --clear` — clear all temporary overrides, restore to config values.
 - `/optimize --insights` — display the current session's learning insights (task type distribution, preferred configs, success rate).

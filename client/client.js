@@ -136,8 +136,8 @@ window.__ModuleLoader__.load({
       { key: 'cacheEnabled', label: '结果缓存（相同请求零调用）', type: 'boolean', group: '缓存', defaultValue: true },
       { key: 'optimizationProfile', label: '优化档位', type: 'select', group: '运行', defaultValue: 'balanced',
         options: [['balanced', '均衡'], ['fast', '快速（省时，跳过部分校验）']] },
-      { key: 'localTemplate', label: '本地模板（零 token）', type: 'select', group: '运行', defaultValue: 'auto',
-        options: [['auto', '自动'], ['on', '开启'], ['off', '关闭'], ['hybrid', '混合']] },
+      { key: 'localTemplate', label: '本地模板（零 token）', type: 'select', group: '运行', defaultValue: 'off',
+        options: [['off', '关闭（默认，LLM 优化）'], ['on', '开启'], ['hybrid', '混合']] },
       { key: 'autoOptimize', label: '自动优化（前缀触发）', type: 'boolean', group: '自动', defaultValue: true },
       { key: 'autoAdapt', label: '自迭代学习（越用越好用）', type: 'boolean', group: '自动', defaultValue: true },
     ]

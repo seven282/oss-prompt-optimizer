@@ -32,7 +32,7 @@ export const STATUS_EVENT_MAX = 20
 export interface StatusSnapshot {
   effective: {
     profile: 'balanced' | 'fast'
-    localTemplate: 'auto' | 'on' | 'off' | 'hybrid'
+    localTemplate: 'on' | 'off' | 'hybrid'
     temperature: number
     source: string
   }
