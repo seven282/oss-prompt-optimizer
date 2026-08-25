@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.7.4] - 2026-08-25
+
+### Fixed
+- **✨ 取消功能回归**：`commands.execute` 恢复第四参 `signal`（AbortSignal）——
+  1.7.3 只补了 `images=[]`（修复 "got 2" 报错）但未传 signal，导致取消按钮
+  abort 仅作用于本地 controller、宿主请求无法感知取消（空跑浪费 token）；
+  现调用形态 `execute(sessionId, line, [], signal)` 与 dsh rc.2 协议
+  `(agentId, line, images, signal?)` 完全对齐
+- 测试 540 全绿（build 同步 lib/client.js）。
+
 ## [1.7.3] - 2026-08-25
 
 ### Fixed

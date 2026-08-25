@@ -165,7 +165,7 @@ window.__ModuleLoader__.load({
               var controller = typeof AbortController === 'function' ? new AbortController() : null
               cancelRef.current = controller
               var signal = controller ? controller.signal : undefined
-              ctx.remote.commands.execute(props.sessionId, '/optimize ' + draft, [])
+              ctx.remote.commands.execute(props.sessionId, '/optimize ' + draft, [], signal)
                 .then(function (response) {
                   var result = resultOf(response)
                   if (result && result.kind === 'success' && typeof result.text === 'string' && result.text.length > 0) {
