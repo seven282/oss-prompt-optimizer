@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.7.8] - 2026-08-25
+
+### Added
+- **设置面板（P0，dsh-settings 接入）**：插件将全部 45+ 配置项注册为
+  `prompt-optimizer` settings 命名空间——Harness 设置面板（设置 → 插件设置）
+  自动渲染表单，可查看默认值/当前值并调整，改动即时生效且持久化
+- 解析层级：schema 默认值 → base（现有 `cordis.patch.yml` 配置快照）→
+  用户文档（面板/命令写入）；每次 `optimize` 前自动采纳用户层
+- 新增 `src/settings.ts`（`createSettingsBridge`，可选接入）：宿主无
+  dsh-settings 时自动跳过（返回 null），配置仍走 entry-config，行为零变化；
+  新测试 `tests/settings.test.ts`（5 例：无 settings/注册失败/注册+同步/更新）
+- README 中英同步「设置面板」说明
+
+### Notes
+- 运行时命令（`/optimizer-language`、`--set-*`）仍为会话级内存覆盖（Layer 3），
+  设置面板改动作用于配置层（Layer 2/基础层）——两者互不覆盖
+- 测试 545 全绿（540 + 5）。
+
 ## [1.7.7] - 2026-08-25
 
 ### Changed

@@ -25,6 +25,8 @@ export type { ContextMessage, GatherContextOptions } from './context.js'
 export { buildSituationProfile, detectMeasurable, detectTaskSubtype, goalAlignment, goalDrift, mergeGoals, renderSituationBlock, subtypeLabel } from './situation.js'
 export type { GoalDrift, GoalProfile, RoleProfile, SituationProfile, SituationProfileLevel, TaskProfile, TaskSubtype } from './situation.js'
 export { registerOptimizeCommand } from './command.js'
+export { createSettingsBridge } from './settings.js'
+export type { SettingsBridge } from './settings.js'
 export { DEFAULT_TEMPLATES, validateTemplateSet } from './templates.js'
 export type { TemplateSet } from './templates.js'
 export {

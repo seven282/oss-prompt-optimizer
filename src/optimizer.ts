@@ -7,6 +7,7 @@ import {
 } from '@deepseek-ai/dsh-llm'
 import { deadline, timeoutOf } from '@deepseek-ai/dsh-timeout'
 import { Config, type Config as ConfigType } from './config.js'
+import { createSettingsBridge, type SettingsBridge } from './settings.js'
 import { OptimizeError, OptimizeErrorCode, INCOMPLETE_SECTIONS_MESSAGE, metaContentMessage, plainHeadingsMessage, thinOutputMessage, thinSectionsMessage, type OptimizeErrorCode as OptimizeErrorCodeType } from './errors.js'
 import { MaxTokensErrorWithPartial } from './llm.js'
 import { PROMPT_OPTIMIZER_EVENTS, type OptimizeMethod } from './events.js'
@@ -268,6 +269,8 @@ export class PromptOptimizerService extends Service {
   static Config = Config
 
   private readonly config: ConfigType
+  /** P0（1.7.8）dsh-settings 可选桥：null 表示宿主无 settings，完全跳过。 */
+  private readonly settingsBridge: SettingsBridge | null
   /** The active role-document template set (resolved and validated at construction). */
   private readonly templates: TemplateSet
   /** Runtime override for "optimize every message" (flipped by `/auto-optimize`). */
@@ -319,6 +322,11 @@ export class PromptOptimizerService extends Service {
       ttlMs: config.cacheTtlMs,
     })
     this.episodes = new EpisodeLog(200)
+    // P0（1.7.8）dsh-settings 可选接入：存在则注册命名空间并在每次调用前
+    // 采纳用户层（设置面板/命令持久化改动）；不存在则完全跳过（零影响）。
+    this.settingsBridge = createSettingsBridge(ctx, { ...config }, (resolved) => {
+      Object.assign(this.config, resolved)
+    })
     registerPromptOptimizeTool(ctx, config, this)
     registerAutoOptimizeHook(ctx, config, this)
     registerOptimizeCommand(ctx, this)
@@ -737,6 +745,8 @@ export class PromptOptimizerService extends Service {
     } catch {
       throw new OptimizeError(OptimizeErrorCode.EMPTY_INPUT, 'prompt-optimizer: instruction must be a non-empty string')
     }
+    // P0（1.7.8）设置面板：每次调用前采纳 settings 用户层（面板/命令改动即时生效）。
+    this.settingsBridge?.sync()
     // 方案 B: pass-through only when there is no meaningful NEW conversation
     // context. With a non-empty context the input is re-optimized — the
     // conversation has moved on and the result should reflect it. 造梦模式
