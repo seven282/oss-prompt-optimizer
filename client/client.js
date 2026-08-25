@@ -167,6 +167,20 @@ window.__ModuleLoader__.load({
               var signal = controller ? controller.signal : undefined
               ctx.remote.commands.execute(props.sessionId, '/optimize ' + draft, [], signal)
                 .then(function (response) {
+                  // 取消结算（dsh 协议）：宿主以 { ok:false, error:{message:'This
+                  // operation was aborted'} } resolve——须在 ok:false 信封层先识别
+                  // 取消，否则落入 unexpected 分支误报「优化失败」（1.7.6）。
+                  if (response === undefined || response.ok === false) {
+                    if (controller && controller.signal.aborted) {
+                      setAnnounce('已取消优化')
+                      return
+                    }
+                    var errMsg = response && response.error && typeof response.error.message === 'string'
+                      ? response.error.message
+                      : '优化失败，请重试'
+                    flashError(errMsg)
+                    return
+                  }
                   var result = resultOf(response)
                   if (result && result.kind === 'success' && typeof result.text === 'string' && result.text.length > 0) {
                     setUndo({ original: draft, optimized: result.text })

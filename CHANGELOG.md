@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.7.6] - 2026-08-25
+
+### Fixed
+- **✨ 取消误报失败（第二种结算形态）**：dsh 对取消以 `{ ok:false,
+  error:{message:'This operation was aborted'} }` **resolve**（RPC 信封失败）——
+  1.7.5 只覆盖了 `result.kind:'error'` resolve，`ok:false` 信封落入
+  unexpected 分支误报「优化失败」；现 `.then` 最前统一处理 `ok:false`：
+  aborted 时提示「已取消优化」，否则展示宿主 error.message
+- 取消三种结算形态现已全部覆盖：`ok:false` 信封（本次）+ `kind:'error'`
+  resolve（1.7.5）+ reject（原 catch）
+- 测试 540 全绿（build 同步 lib/client.js）。
+
 ## [1.7.5] - 2026-08-25
 
 ### Fixed
