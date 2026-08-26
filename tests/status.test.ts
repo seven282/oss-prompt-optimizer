@@ -8,7 +8,7 @@ function makeSnapshot(overrides: Partial<StatusSnapshot> = {}): StatusSnapshot {
     stats: {
       runs: 3, success: 2, failed: 1, cached: 1, local: 1, refined: 0,
       totalDurationMs: 3000, maxDurationMs: 2000, lastOutputTokens: 800,
-      lastCallMs: 900, avgCallMs: 900, maxCallMs: 1200, callCount: 3,
+      lastCallMs: 900, avgCallMs: 900, maxCallMs: 1200, totalCallMs: 2700, callCount: 3,
       lastRunCalls: 2, lastInputTokens: 500,
     },
     prefs: {

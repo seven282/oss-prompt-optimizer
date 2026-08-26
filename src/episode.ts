@@ -1,11 +1,12 @@
 /**
- * Episode logging: lightweight in-memory behavior collection for the
+ * Episode logging: lightweight behavior collection for the
  * auto-iteration system. Each optimization call records an Episode
  * with input metadata, cost, quality signals, and acceptance feedback.
  *
  * Pure functions + a bounded circular buffer — no harness dependency,
- * unit-testable standalone. Cleared on plugin reload (intentional:
- * no persistence, no privacy concerns).
+ * unit-testable standalone. Since 1.8.1 the log is persisted by
+ * `persistence.ts` (privacy-cropped, `persistState` on by default);
+ * with persistence off it stays in-memory and clears on plugin reload.
  *
  * @module episode
  */
@@ -40,9 +41,16 @@ export interface Episode {
   accepted?: boolean
   /** The optimization profile used ('balanced' | 'fast'). */
   profile: string
-  /** The local template mode used ('auto' | 'on' | 'off' | 'hybrid'). */
+  /** The local template mode used ('on' | 'off' | 'hybrid'). */
   localMode: string
 }
+
+/**
+ * Privacy-cropped episode for persistence (1.8.1): the raw instruction text
+ * is stripped — the preference model only consumes behavioral metadata, so
+ * learning is unaffected while no user content lands on disk.
+ */
+export type CroppedEpisode = Omit<Episode, 'input'>
 
 /** Circular buffer of recent episodes (most recent at the end). */
 export class EpisodeLog {
@@ -51,6 +59,15 @@ export class EpisodeLog {
 
   constructor(maxEntries = 200) {
     this.maxEntries = Math.max(1, maxEntries)
+  }
+
+  /** Rebuild a log from persisted (cropped) episodes, oldest→newest. */
+  static from(cropped: readonly CroppedEpisode[], maxEntries = 200): EpisodeLog {
+    const log = new EpisodeLog(maxEntries)
+    for (const ep of cropped) {
+      log.push({ input: '', ...ep } as Episode)
+    }
+    return log
   }
 
   /** Record a new episode. Evicts the oldest when at capacity. */

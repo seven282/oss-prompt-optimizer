@@ -8,19 +8,18 @@ By default the result is heading-free plain text (`outputStyle: 'plain'`, fewer 
 
 ## Features
 
-- **Output styles** — heading-free plain text by default (`outputStyle: 'plain'`, fewer tokens), with three parseable labels (`outputStyle: 'role-task-goal'` — `角色：/任务：/目标：` or `Role:/Task:/Goal:`) or the four-section structured style (`outputStyle: 'sections'` — `## Role` / `## Task` / `## Context` / `## Format`) configurable.
 - **Tool** — agents can call the `prompt_optimize` tool with an `instruction` and receive the optimized prompt back; passing a previous result as `lastOptimized` together with `iterateInstruction` iterates on it instead.
 - **Service** — other plugins can call `ctx.promptOptimizer.optimize(rawInput, { signal })` or `ctx.promptOptimizer.iterate(lastOptimized, instruction, { signal })`; the browser side can call them via `ctx.remote.promptOptimizer`.
 - **Input box ✨ button** — a persistent icon in the composer toolbar: click to optimize the current draft and write the result back; **clicking again while optimizing cancels**; success shows a transient "≈N tokens" cost hint; after success the button switches to undo (↺) — clicking restores the original text as long as the draft hasn't been manually edited; success / failure / undo announced via `aria-live` (screen readers).
 - **Role-document language auto-detection** — the optimizer's role document (its meta-prompt) follows the instruction's language by default: CJK-dominant input uses the Chinese role document, anything else the English one; pin or restore at runtime via `/optimize --language`.
-- **Auto-optimize hook** (optional, off by default) — user messages starting with a trigger prefix (e.g. `/optimize `) are optimized before they reach the model; toggle at runtime via `/optimize --auto on|off|toggle|status`.
+- **Auto-optimize hook** (optional, on by default, prefix-triggered) — user messages starting with a trigger prefix (e.g. `/optimize `) are optimized before they reach the model; unprefixed messages are unaffected; toggle at runtime via `/optimize --auto on|off|toggle|status`.
 - **Context awareness** (on by default) — the recent conversation before the instruction is injected into the meta-prompt ("pure data / background reference" guardrail) so the result fits prior discussion; set `contextAware: false` to disable.
 - **Situation awareness** — the raw instruction plus conversation context is parsed into **role / task / goal profiles** and injected into the meta-prompt (`{{情境画像}}`), so the optimized `## Role` stays strongly tied to the task and the goal/constraints are preserved; a dropped goal/constraint triggers an in-budget retry (`goalAlignmentRetry: false` opts out); `iterate` detects goal drift and annotates the change; passing `sessionId` enables **per-session goal carry-over** (30-min TTL). Role extraction covers explicit identities, **capability** clauses (proficient in…), **behavior** rules (lead with conclusions, never guess) and scene-style identities (acting as…) — a bare capability clause is enough to be recognized; `situationProfileLevel` controls the injection budget (full/minimal/off).
 - **Three-part role definition** — the optimized role is written as "identity + capability + behavior" (no "you are" prefix required; a capability or behavior clause alone qualifies); a per-task-type role-writing tip is injected (code → capability-oriented, writing → identity + genre, analysis → identity + method, ops → behavior + steps).
 - **Faster optimization** — stream early-stop (**off by default** — output completeness first; opt in via `earlyStop: true`, with a per-section ≥40-char gate and sentence-boundary stop protection); first-call output-budget linkage (oversized output falls back to resume); an `optimizationProfile: 'fast'` one-click speed profile (skips validation and goal-alignment retries, disables self-refine — opt-in).
 - **Result caching** — in-memory LRU+TTL cache of validated results; identical requests return with **zero model calls** (`cacheEnabled` on by default, cleared on restart).
 - **Settings panel** (1.7.8, requires the host to mount dsh-settings) — the plugin registers its full config as the `prompt-optimizer` namespace: all options (defaults/current values) are visible and editable under the Harness **Settings → plugin settings**; changes apply immediately and persist. On hosts without the settings service the bridge is skipped and config keeps resolving from `cordis.patch.yml` — zero behavioural change.
-- **Self-iteration system** — three-layer architecture for "the more you use it, the better it gets", zero token cost:
+- **Self-iteration system** — three-layer architecture for "the more you use it, the better it gets", zero token cost. Learning data (episode log) and run statistics persist to `~/.dsh/oss-prompt-optimizer/state.json` by default (1.8.1; shared user-level learning across profiles, `$DSH_HOME` and the `stateFile` config override the path, `persistState: false` restores the in-memory-only behavior). **Privacy**: only behavioral metadata (task type / duration / tokens / acceptance) is stored — never the instruction text. The result cache (`cacheEnabled`) stays in-memory and clears on restart by design:
   - **Session learning** (Layer 1) — records success/failure experiences from each optimization (task type, output style, temperature, etc.), building a preference model
   - **Smart defaults** (Layer 2) — automatically recommends optimal config by task type (code/writing/analysis/ops/other)
   - **User overrides** (Layer 3) — runtime adjustments via commands (`--set-profile`, `--set-local`, `--set-temperature`), fallback on restart
@@ -92,12 +91,12 @@ Or enable via config in `cordis.patch.yml`:
 
 When enabled, any user message starting with `autoOptimizePrefix` is optimized by the `agent/pre-step` hook before it reaches the model step — the prefix is stripped, the remainder is sent as the raw instruction, and the model actually receives the optimized four-section prompt (with a short "auto-optimized" note).
 
-- **Safety by design**: off by default; per-message opt-in (only prefixed messages are optimized) — normal conversation is never touched.
+- **Safety by design**: prefix-triggered only — unprefixed messages reach the model unchanged, normal conversation is never touched (`autoOptimize` is on by default but only applies to prefixed messages).
 - **Graceful degradation**: on a non-matching prefix, an empty remainder, or an optimization failure, the original message reaches the model unchanged.
 - At most one message is optimized per step, avoiding multiple model calls within a single step.
 - The hook is registered in effect scope and removed automatically on plugin dispose.
 
-> **Full configuration reference**: [docs/configuration.md](docs/configuration.md) (44 fields)
+> **Full configuration reference**: [docs/configuration.md](docs/configuration.md)
 
 **Runtime commands** (type them in the input box):
 
@@ -109,7 +108,7 @@ When enabled, any user message starting with `autoOptimizePrefix` is optimized b
 - `/optimize --set-temperature <0-2>` — temporarily override the sampling temperature (session-scoped, restart fallback).
 - `/optimize --clear` — clear all temporary overrides, restore to config values.
 - `/optimize --insights` — display the current session's learning insights (task type distribution, preferred configs, success rate).
-- `/optimize --status` — display live runtime status (effective params & source, stats, preference summary, recent events) (1.7.9; the ℹ️ button next to the composer also toggles the status panel).
+- `/optimize --status` — display live runtime status (effective params & source, stats, preference summary, recent events) (also available on the Settings → Prompt Optimizer page).
 
 ## Development
 

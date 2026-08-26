@@ -66,6 +66,7 @@ const DEFAULT_CONFIG: Config = {
   hybridAlignThreshold: 0.4,
   autoAdapt: false,
   minAdaptEpisodes: 10,
+  persistState: false,
 }
 
 function textStream(text: string): AsyncIterable<StreamChunk> {

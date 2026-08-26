@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.8.1] - 2026-08-26
+
+### Added
+
+- **状态/自迭代数据持久化**：运行统计、episode 日志（隐私裁剪，不含指令原文）、最近 20 条事件持久化到 `~/.dsh/oss-prompt-optimizer/state.json`（跨 profile 共享用户级学习；`$DSH_HOME` 与 `stateFile` 可覆盖）。`/optimize --status` 与自迭代（`minAdaptEpisodes=10` 阈值）跨重启生效——修复重启清零导致自迭代永远无法触发的问题。
+- 新配置 `persistState`（默认 `true`；`false` 恢复 1.8.1 之前的内存行为）与 `stateFile`。
+- `src/persistence.ts`：纯函数序列化/裁剪 + 原子写（tmp→rename）+ 防抖 500ms + 卸载同步 flush。
+
+### Notes
+
+- 结果缓存（`cacheEnabled`）与情境感知会话 registry 仍为内存（有意设计，重启即清空）。
+- 打破 1.7.2「episode 日志重启即清空是有意设计」约定（用户决策）：自迭代学习改为跨重启累计。
+
 ## [1.8.0] - 2026-08-25
 
 ### Removed

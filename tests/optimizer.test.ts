@@ -75,6 +75,7 @@ const DEFAULT_CONFIG: Config = {
   hybridAlignThreshold: 0.4,
   autoAdapt: false,
   minAdaptEpisodes: 10,
+  persistState: false,
 }
 
 /** Build a text-only chunk stream (delta-only, tolerated by BlockAssembler). */

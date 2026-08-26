@@ -56,6 +56,7 @@ const BASE_CONFIG: Config = {
   hybridAlignThreshold: 0.4,
   autoAdapt: false,
   minAdaptEpisodes: 10,
+  persistState: false,
 }
 
 const FOUR_SECTIONS = `## Role

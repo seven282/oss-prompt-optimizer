@@ -41,7 +41,12 @@
   面板中即可查看全部参数（默认值/当前值）并调整，改动即时生效并持久化；
   宿主无 settings 服务时自动跳过，配置仍走 `cordis.patch.yml`，行为零变化。
 - **自迭代系统**：三层架构实现「越用越好用」，零 token 成本（默认开启；
-  累计 10 次优化数据后才开始生效，避免小样本误适配）：
+  累计 10 次优化数据后才开始生效，避免小样本误适配）。学习数据（episode
+  日志）与运行统计默认持久化到 `~/.dsh/oss-prompt-optimizer/state.json`
+  （跨 profile 共享用户级学习；`$DSH_HOME` 环境变量与 `stateFile` 配置可
+  覆盖路径；`persistState: false` 恢复纯内存行为）。**隐私**：持久化只存
+  行为元数据（任务类型/耗时/token/接受率等），不存指令原文。结果缓存
+  （`cacheEnabled`）仍为内存、重启即清空（有意设计）：
   - **会话学习**（Layer 1）：记录每次优化的成功/失败经验（任务类型、输出风格、温度等），形成偏好模型
   - **智能默认值**（Layer 2）：按任务类型（代码/文案/分析/运维/其他）自动推荐最优配置
   - **用户覆盖**（Layer 3）：运行时通过命令临时调整（`--set-profile`、`--set-local`、`--set-temperature`），重启回落
@@ -55,7 +60,7 @@
 ![项目截图](./1.png)
 ![项目截图](./2.png)
 
-## 自迭代命令
+## 运行时命令
 
 运行时可通过命令临时调整自迭代系统配置（会话级覆盖，重启回落）：
 - `/optimize --set-profile fast|balanced` — 临时覆盖优化时长档位
@@ -64,7 +69,7 @@
 - `/optimize --clear` — 清除所有临时覆盖，恢复配置值
 - `/optimize --insights` — 查看当前会话的学习洞察（任务类型分布、偏好配置、成功率）
 - `/optimize --status` — 查看运行时状态（生效参数与来源、统计、偏好摘要、最近事件）
-  （1.7.9；输入框旁的 ℹ️ 按钮也可展开状态面板）
+  （设置页「提示词优化」也可查看）
 
 ## 快速场景模板（/template）
 
@@ -141,7 +146,7 @@ dsh plugin --profile web remove oss-prompt-optimizer
 
 安装/卸载后需**重启 harness**（`dsh web`）使 bundle 层生效。
 
-> **完整配置参考**：[docs/configuration.md](docs/configuration.md)（44 个字段）
+> **完整配置参考**：[docs/configuration.md](docs/configuration.md)
 
 ## 开发
 

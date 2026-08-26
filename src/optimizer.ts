@@ -44,6 +44,7 @@ import { bigramJaccard, createOptimizeCache, fnv1a, type OptimizeCache } from '.
 import { buildLocalTemplate, buildRefinePrompt, goalAnchorsScore, localTemplateGate, type LocalTemplateMode } from './local.js'
 import { toRoleTaskGoal } from './validate.js'
 import { EpisodeLog, truncateEpisodeInput, type Episode } from './episode.js'
+import { PERSIST_VERSION, createPersistence, cropEpisodes, cropEvents, type PersistAdapter, type PersistData } from './persistence.js'
 import { computePreferences, formatPreferences, type PreferenceModel } from './preference.js'
 import { computeAdaptation, formatAdaptationHints, DEFAULT_ADAPT_CONFIG, resolveParams, type AdaptationHints, type UserOverrides } from './adapt.js'
 
@@ -233,6 +234,7 @@ export interface OptimizeStats {
   lastCallMs: number
   avgCallMs: number
   maxCallMs: number
+  totalCallMs: number
   callCount: number
   lastRunCalls: number
   lastInputTokens: number
@@ -313,6 +315,12 @@ export class PromptOptimizerService extends Service {
   }
   /** Model-call count of the current run (reset by runPipeline). */
   private runCallCount = 0
+  /** P1（1.8.1）state persistence adapter (noop when persistState off). */
+  private readonly persistence: PersistAdapter
+  /** Debounce timer for state persistence. */
+  private persistTimer: ReturnType<typeof setTimeout> | undefined
+  /** Pending state captured at debounce time. */
+  private pendingPersist: PersistData | null = null
 
   constructor(ctx: Context, config: ConfigType) {
     super(ctx, 'promptOptimizer')
@@ -324,6 +332,25 @@ export class PromptOptimizerService extends Service {
       ttlMs: config.cacheTtlMs,
     })
     this.episodes = new EpisodeLog(200)
+    // 1.8.1: state persistence — load once at construction (sync read of a
+    // small JSON file), debounced saves on activity, sync flush at disposal.
+    this.persistence = createPersistence(config.persistState, config.stateFile)
+    const loaded = this.persistence.loadSync()
+    if (loaded) {
+      Object.assign(this.stats, loaded.stats)
+      this.episodes.clear()
+      for (const ep of loaded.episodes) {
+        this.episodes.push({ input: '', ...ep } as Episode)
+      }
+      this.recentEvents.push(...loaded.events)
+    }
+    // Disposal fallback: flush any pending debounced state before teardown
+    // (guarded — some hosts/mocks expose no `ctx.effect`).
+    if (typeof (ctx as { effect?: unknown }).effect === 'function') {
+      ctx.effect(() => () => {
+        this.flushPersist()
+      })
+    }
     // P0（1.7.8）dsh-settings 可选接入：存在则注册命名空间并在每次调用前
     // 采纳用户层（设置面板/命令持久化改动）；不存在则完全跳过（零影响）。
     this.settingsBridge = createSettingsBridge(ctx, { ...config }, (resolved) => {
@@ -332,6 +359,45 @@ export class PromptOptimizerService extends Service {
     registerPromptOptimizeTool(ctx, config, this)
     registerAutoOptimizeHook(ctx, config, this)
     registerOptimizeCommand(ctx, this)
+  }
+
+  /**
+   * Debounce a state snapshot for persistence (1.8.1). Merges bursts of
+   * events into a single write; a disposal flush covers process exit.
+   */
+  private schedulePersist(): void {
+    if (this.persistTimer !== undefined) {
+      clearTimeout(this.persistTimer)
+    }
+    this.pendingPersist = this.stateSnapshot()
+    this.persistTimer = setTimeout(() => {
+      this.persistTimer = undefined
+      const data = this.pendingPersist
+      this.pendingPersist = null
+      if (data) this.persistence.save(data)
+    }, 500)
+  }
+
+  /** Snapshot the current stats/episodes/events for persistence. */
+  private stateSnapshot(): PersistData {
+    return {
+      version: PERSIST_VERSION,
+      updatedAt: Date.now(),
+      stats: this.getStats(),
+      episodes: cropEpisodes(this.episodes.all()),
+      events: cropEvents(this.recentEvents),
+    }
+  }
+
+  /** Flush any pending debounced state (disposal / explicit). */
+  private flushPersist(): void {
+    if (this.persistTimer !== undefined) {
+      clearTimeout(this.persistTimer)
+      this.persistTimer = undefined
+    }
+    const data = this.pendingPersist
+    this.pendingPersist = null
+    if (data) this.persistence.flush(data)
   }
 
   /** Whether the auto-optimize hook should optimize every user text message. */
@@ -622,6 +688,8 @@ export class PromptOptimizerService extends Service {
         // Episode logging is best-effort; never break the pipeline.
       }
     }
+    // 1.8.1: schedule a debounced state persistence after every completed run.
+    this.schedulePersist()
   }
 
   /** Snapshot of the run statistics (观测; copy so callers cannot mutate). */

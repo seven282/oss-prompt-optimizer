@@ -288,6 +288,14 @@ export interface Config {
   autoAdapt: boolean
   /** Minimum episodes before adaptation kicks in (avoid small-sample bias). */
   minAdaptEpisodes: number
+  /**
+   * Persist run statistics, the episode log (privacy-cropped), and recent
+   * events to disk so `--status` and the auto-iteration system survive
+   * restarts (1.8.1). Off restores the pre-1.8.1 in-memory behavior.
+   */
+  persistState: boolean
+  /** Optional override for the state file path (default `~/.dsh/oss-prompt-optimizer/state.json`). */
+  stateFile?: string
 }
 
 /**
@@ -353,4 +361,6 @@ export const Config: z<Config> = z.object({
   earlyStopTailGrowth: z.number().step(1).min(1).max(200).default(24),
   autoAdapt: z.boolean().default(true),
   minAdaptEpisodes: z.number().step(1).min(5).max(100).default(10),
+  persistState: z.boolean().default(true),
+  stateFile: z.string().required(false),
 })
