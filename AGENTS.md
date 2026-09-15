@@ -7,7 +7,7 @@ DeepSeek Harness 插件 `oss-prompt-optimizer`：把原始指令优化为专业�
 ```sh
 pnpm install --store-dir .pnpm-store --cache-dir .pnpm-cache   # 沙箱内安装（publish 前勿用 --frozen-lockfile 装本地）
 pnpm run typecheck    # tsc --noEmit
-pnpm test             # vitest run（26 个测试文件 / 629 用例，mock llm，无需真实密钥）
+pnpm test             # vitest run（26 个测试文件 / 639 用例，mock llm，无需真实密钥）
 pnpm run build        # tsc -p tsconfig.build.json + node scripts/copy-client.mjs（client.js → lib/client.js）
 ```
 
@@ -32,7 +32,8 @@ pnpm run build        # tsc -p tsconfig.build.json + node scripts/copy-client.mj
 - `client/client.js` — **手写 ModuleLoader 客户端（无打包器）**，build 时复制到 `lib/client.js`；`package.json` 的 `dsh.client` 声明它。按钮经 `slots.inject('conversation.input.left')` 注册 ✨（优化/取消/撤销一体）；语言自动检测后不再有中/EN 按钮。
   ⚠️ **规则 R2**：`exports.inject` 只放真正不可缺的服务（当前只有 `remote`），**其余一律 `ctx.get('<name>')` 并判空**。
   `ctx.<name>` 直读一个不在 inject 里的服务会**抛错**且 `apply()` 不捕获 ⇒ 整个客户端半边不注册（✨ 按钮与设置页一起消失）。1.8.2 就是这样在真机上全废的。
-  由 `tests/client-inject-contract.test.ts`（静态）、`tests/client-apply.test.ts`（动态真跑 `apply()`）与 `preflight` P7 守着；详见 `docs/兼容性策略.md` 规则 R2。
+  ⚠️ **规则 R2b**：`<a>.<b>` 是**独立的服务名**，不是 `<a>` 的属性。`ctx.get('remote').commands` 会被 cordis 改写成 `ctx['remote.commands']` 读、再次撞上 inject 门禁并抛错（1.8.3 真机全废的根因）。正解是整体 `ctx.get('remote.commands')`，且**按调用时**解析（命名空间可能在本插件 `apply()` 之后才挂载）。
+  由 `tests/client-inject-contract.test.ts`（静态）、`tests/client-apply.test.ts`（动态真跑 `apply()`，宿主把 `remote`/`remote.commands` 注册为真 `Service`）与 `preflight` P7 守着；详见 `docs/兼容性策略.md` 规则 R2 / R2b。
 
 ## 关键约定（改代码前必读）
 

@@ -176,15 +176,19 @@ prompt-optimizer: host compat DEGRADED (defineTool=MISSING …) — defineTool: 
 pnpm preflight       # P1 dependency surface / P2 inject resolution / P3 artifact consistency
                      # P4 typecheck+test+build / P5 compatibility report
                      # P6 startup independence (entry still instantiates with every dsh package sealed)
-                     # P7 client inject contract (R2 static scan + apply() actually run on a minimal host)
+                     # P7 client service-read contract (R2/R2b static scan + apply() actually run
+                     #    on a faithful minimal host)
 dsh web              # on a real host: starts normally + one compat report line in the log
 ```
 
 **P6** seals every `@deepseek-ai/dsh*` specifier on both the ESM and CJS resolution paths in a child
 process, then imports the entry point — the dynamic proof that a host upgrade can cost features but
 never startup. **P7** actually **executes** `apply()` from `lib/client.js` — the only automated step
-in this project that runs the browser half at all — and scans it for direct reads of services it
-never injected.
+in this project that runs the browser half at all — on a **faithful** minimal host (`remote` and
+`remote.commands` both registered as real cordis `Service` instances), and scans for two classes of
+violation: reading a service that was never injected (R2), and reading a **dotted service name** as a
+property of its parent (R2b, e.g. `ctx.get('remote').commands`). Both classes are total-outage bugs
+on a real machine, and each one happened once (1.8.2 / 1.8.3).
 
 > Full strategy (three invariants, compatibility matrix, degradation table, residual risks):
 > **[docs/兼容性策略.md](docs/兼容性策略.md)** (Chinese).

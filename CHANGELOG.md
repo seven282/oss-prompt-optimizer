@@ -1,5 +1,65 @@
 # Changelog
 
+## [1.8.4] - 2026-09-16
+
+**修复 1.8.3 在真机上客户端半边仍不加载：`cannot get property "remote.commands" without inject`。**
+
+1.8.3 修好了 `ctx.locale`，却在同一段代码里留下了**同一类问题的另一种形态**：
+`client/client.js` 第 252 行把 `remote.commands` 当成 `remote` 服务的一个属性来读。
+
+`remote.commands` **不是** `remote` 的属性，而是一个**独立的服务名**：`dsh-api-gateway`
+为每个 remote 命名空间单独注册 `remote.<namespace>`（`remoteServiceKey(ns) === 'remote.' + ns`，
+每个命名空间各自挂一个 cordis `Service`）。而 `ctx.get('remote')` 拿到的值是 `Service`，
+当 `remote.commands` 这个带点服务名**已被注册**时，服务代理会把「读 `.commands`」**改写成
+「读 `ctx['remote.commands']`」**（cordis `createTraceable` 的 `tracker.associate` 分支）——
+于是又回到 inject 门禁，照样抛 `cannot get property "remote.commands" without inject`。
+`ctx.get('remote.commands')` 才是唯一安全的读法。
+
+同一段代码还有**第二处缺陷**：1.8.1 是**点击时**才解析命令通道（惰性），1.8.3 改成
+`apply()` 里解析一次并缓存。命名空间由「谁先加载谁挂载」决定，`apply()` 时可能还没装上 ——
+即便名字写对了，按钮也会**永久失效**。故改为**每次调用时解析**。
+
+### Fixed
+
+- `client/client.js`：删除两处点读（`ctx.get('remote').commands` 与兜底分支
+  `ctx.remote.commands`），改为在 `executeCommand()` 内部**按调用时**取
+  `ctx.get('remote.commands')`，取不到则 reject 明确错误。注释写明机制与"为什么必须惰性"。
+
+### Added
+
+- **静态门禁扩展为规则 R2b**（`tests/client-inject-contract.test.ts`，8 → 13 例）：除原有
+  `ctx.<name>` 外，另覆盖**点号路径**（`ctx.remote.commands`、`ctx['remote.commands']`）、
+  **内联点读**（`ctx.get('remote').commands`、`ctx.get('remote')['commands']`）与
+  **服务别名点读**（`var r = ctx.get('remote')` … `r.commands`）。命名空间根集合
+  `NAMESPACE_ROOTS` 保持显式且窄（当前仅 `remote`），并新增"不得误报"的控制用例
+  （`slots.inject()` / `locale.bind()` / `ctx.get('remote.commands')` 必须放行）——
+  会把普通方法读也判红的门禁迟早会被关掉。
+- **动态门禁改为忠实建模**（`tests/client-apply.test.ts`，6 → 10 例）：1.8.3 之所以蒙混过关，
+  是因为假宿主用**普通对象** `{ commands: … }` 提供 `remote`，那样 `.commands` 永远不会抛。
+  现在用 `new Service(ctx, name)` 提供 `remote` 与 `remote.commands`，与真机一致，
+  并新增控制用例断言 `ctx.get('remote').commands` 在这个宿主上**必须抛**（证明模型有对抗性）。
+  另增「命名空间尚未挂载时 apply() 仍成功」与「`ctx.get('remote.commands').execute()` 真能往返」
+  两例。
+- **`scripts/client-probe.mjs`** 同步以上全部规则与忠实宿主；并新增**推导步骤**：从本机已安装的
+  dsh 重新推导命名空间根（`super(ctx, <builder>())` / `super(ctx, 'a.b')` 两种形态），
+  与 `NAMESPACE_ROOTS` 不一致即 FAIL —— 上游新增第二个带点服务名时不会静默漏检。
+  无 dsh 安装时输出 `[SKIP]` 而非 PASS（CI 即如此）。控制数 3 → 7。
+- `preflight` P7 会在详情里回显 `[SKIP]` 行：看起来像通过的跳过项正是门禁腐烂的方式。
+
+### Notes
+
+- **两次事故是同一个根因的两种形态**：cordis 里「服务的属性读」可能被改写回服务名读。
+  1.8.2 漏的是「未注入服务直读」，1.8.3 漏的是「带点服务名的父级属性读」。
+  现在两者都有静态 + 动态 + 产物三道门禁，且都用"把 bug 放回去"验证过会咬：
+  - 静态侧报精确行号：`client.js:252/253/254/255/258 reads the nested service "remote.commands" as a property of its parent`
+  - 动态侧：`cannot get property "remote.commands" without inject` —— 与真机控制台字符串完全一致
+- **边界已实测**：扫遍 dsh 全部 358 个客户端产物文件，带点服务名共 18 个**全部以 `remote.` 开头**；
+  `super(ctx, '<字面量>')` 的 86 个名字**无一带点**；唯一用表达式拼带点名的就是
+  `remoteServiceKey()` ⇒ 只有 `remote` 需要禁止点读，`slots` / `locale` / `sessions` /
+  `settingsScope` 都是普通服务，点读安全。
+- **不覆盖已发布的 1.8.3**：npm 不允许重发同一版本号，修复以 1.8.4 发布。
+- 测试 629 → **639**（26 个文件）。
+
 ## [1.8.3] - 2026-09-16
 
 **修复 1.8.2 在真机上客户端半边完全不加载：`cannot get property "locale" without inject`。**

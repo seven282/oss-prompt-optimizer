@@ -32,8 +32,10 @@ jobs:
       #   P3 `lib/client.js` still matches its source
       #   P6 the entry point still instantiates with every `@deepseek-ai/dsh*`
       #      package sealed on both the ESM and CJS resolution paths
-      #   P7 the client half only reads injected services, and its `apply()`
-      #      really does register on a minimal host (the 1.8.2 `ctx.locale` bug)
+      #   P7 the client half only reads services it may read — injected, core, or
+      #      a nested name asked for in full — and its `apply()` really does
+      #      register on a faithful minimal host (the 1.8.2 `ctx.locale` and
+      #      1.8.3 `ctx.get('remote').commands` bugs)
       # `--offline` skips the recursive typecheck/test/build pass (the steps
       # above already ran them); P2 reports SKIP because a real dsh profile is
       # not reachable from CI.

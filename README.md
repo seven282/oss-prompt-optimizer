@@ -208,14 +208,17 @@ prompt-optimizer: host compat DEGRADED (defineTool=MISSING …) — defineTool: 
 ```sh
 pnpm preflight       # P1 依赖面 / P2 inject 真实解析 / P3 产物一致 / P4 typecheck+test+build
                      # P5 兼容性报告 / P6 启动独立性（封死全部 dsh 包后入口仍能实例化）
-                     # P7 客户端注入契约（R2 静态扫描 + 在最小宿主面上真跑 apply()）
+                     # P7 客户端服务读取契约（R2/R2b 静态扫描 + 在忠实最小宿主上真跑 apply()）
 dsh web              # 真机：正常启动 + 日志出现一行 compat report
 ```
 
 `pnpm preflight` 里 **P6** 会在子进程内同时封死 ESM 与 CJS 两条解析路径上的所有
 `@deepseek-ai/dsh*`，再导入入口——这是"宿主升级只会减功能、不会让服务起不来"的动态证明。
 **P7** 则真正**执行** `lib/client.js` 的 `apply()`（这是本项目里唯一会跑浏览器半边的自动化步骤），
-并扫描它有没有直读未注入的服务。
+在**忠实**的最小宿主上（`remote` 与 `remote.commands` 都用真的 cordis `Service` 注册）验证它
+不会因服务读取而整体失败，并扫描两类违规写法：直读未注入的服务（R2），以及把**带点服务名**
+当成父级属性来读（R2b，例如 `ctx.get('remote').commands`）。两类都是真机全废级事故，
+分别发生过一次（1.8.2 / 1.8.3）。
 
 > 完整策略（三条不变量、兼容矩阵、降级行为表、残余风险）：**[docs/兼容性策略.md](docs/兼容性策略.md)**
 

@@ -246,17 +246,29 @@ window.__ModuleLoader__.load({
         ? locale.bind(NS)
         : function (key) { return key }
 
-      // 1.8.2: the remote command channel is looked up defensively. Without it
-      // the button has nothing to call, so it is not registered.
-      var remote = ctx.get('remote')
-      var commandChannel = remote && remote.commands && typeof remote.commands.execute === 'function'
-        ? remote.commands
-        : ctx.remote && ctx.remote.commands && typeof ctx.remote.commands.execute === 'function'
-          ? ctx.remote.commands
-          : null
+      // `remote.commands` is a NESTED service name, not a property of the
+      // `remote` service: dsh-api-gateway registers every remote namespace
+      // separately as `remote.<namespace>` (`remoteServiceKey`, and each
+      // namespace is mounted as its own cordis `Service`). Because the value of
+      // `ctx.get('remote')` is a Service, cordis rewrites a read of `.commands`
+      // on it into a read of `ctx['remote.commands']` — straight back through
+      // the inject gate — so `ctx.get('remote').commands` throws
+      // `cannot get property "remote.commands" without inject`, and
+      // `ctx.remote.commands` throws the same. `ctx.get()` with the full dotted
+      // name is the only safe read, and it must stay out of `inject`: a nested
+      // name in the gate would turn "this namespace is not mounted yet" into
+      // "the whole client half never loads".
+      //
+      // Resolved per call rather than once here: a namespace is mounted by
+      // whichever contribution carries it, which may happen after this
+      // `apply()` already ran. Caching the lookup would pin the button to a
+      // channel that was still missing at registration time.
       function executeCommand(sessionId, command, args, signal) {
-        if (commandChannel === null) return Promise.reject(new Error('remote.commands is unavailable'))
-        return commandChannel.execute(sessionId, command, args, signal)
+        var channel = ctx.get('remote.commands')
+        if (!channel || typeof channel.execute !== 'function') {
+          return Promise.reject(new Error('remote.commands is unavailable'))
+        }
+        return channel.execute(sessionId, command, args, signal)
       }
 
       // ✨ Optimize button (composer tool row, left).
