@@ -30,6 +30,16 @@
  *       invariant I1: P1 shows no runtime host import exists, P6 shows the entry
  *       point still instantiates when the host is gone. Skipped with `--offline`
  *       only in the sense that it needs `lib/`; it never touches the network.
+ *   P7  Client inject contract (rule R2) — runs `scripts/client-probe.mjs`
+ *       against `lib/client.js`: no `ctx.<name>` read may target a service that
+ *       is neither declared in `exports.inject` nor a cordis core member, and
+ *       `apply()` must actually run on a minimal host (slots + remote). This is
+ *       the gate that was missing when 1.8.2 shipped `ctx.locale` on line 226:
+ *       a service outside `inject` throws at access time, `apply()` does not
+ *       catch it, and the whole client half stops registering. Neither the test
+ *       suite nor P1–P6 ever executed the hand-written browser bundle, so
+ *       nothing noticed. Local and offline: it needs `lib/` and a devDependency
+ *       (`@deepseek-ai/cordis`), never the network.
  *
  * Usage:  pnpm preflight  [--skip-tests] [--offline] [--dsh-home <path>]
  */
@@ -426,6 +436,48 @@ function checkStartupIndependence() {
 }
 
 // ---------------------------------------------------------------------------
+// P7 — client inject contract (rule R2)
+// ---------------------------------------------------------------------------
+
+/**
+ * P7 delegates to `scripts/client-probe.mjs` rather than reimplementing the
+ * rule here: the probe needs a real cordis context, and the artifact it checks
+ * (`lib/client.js`) is produced by P4's build, so it must run after P4 — like
+ * P6. `tests/client-inject-contract.test.ts` and `tests/client-apply.test.ts`
+ * cover the same rule at the source level, where `pnpm test` runs it; this
+ * keeps the gate in place for `--skip-tests` runs.
+ */
+function checkClientInjectContract() {
+  const probe = join(root, 'scripts', 'client-probe.mjs')
+  if (!existsSync(probe)) {
+    record('P7', 'client inject contract', FAIL, 'scripts/client-probe.mjs is missing')
+    return
+  }
+  if (!existsSync(join(root, 'lib', 'client.js'))) {
+    record('P7', 'client inject contract', FAIL, 'lib/client.js is missing — run `pnpm build`')
+    return
+  }
+  try {
+    const out = execFileSync(process.execPath, [probe], {
+      cwd: root,
+      stdio: 'pipe',
+      encoding: 'utf8',
+      env: process.env,
+    })
+    const passes = out.split(/\r?\n/).filter((line) => line.startsWith('[PASS]'))
+    record(
+      'P7',
+      'client inject contract',
+      PASS,
+      `${passes.length} check(s) held, including the negative controls\n    ${passes.join('\n    ')}`,
+    )
+  } catch (error) {
+    const out = `${error.stdout ?? ''}${error.stderr ?? ''}`.trim()
+    record('P7', 'client inject contract', FAIL, out.split(/\r?\n/).slice(-14).join('\n    '))
+  }
+}
+
+// ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 
@@ -438,6 +490,7 @@ if (offline) record('P4', 'build chain', SKIP, 'skipped (--offline)')
 else checkBuildChain()
 checkCompatibilityReport()
 checkStartupIndependence()
+checkClientInjectContract()
 
 let failed = 0
 for (const result of results) {

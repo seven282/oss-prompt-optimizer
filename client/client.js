@@ -31,6 +31,13 @@ window.__ModuleLoader__.load({
     // `ctx.get()`, so listing them here only turned "settings page missing" into
     // "the whole client half never loads". Gating everything on them is what made
     // a single renamed service take the ✨ button offline.
+    //
+    // RULE (docs/兼容性策略.md R2): every `ctx.<name>` read in this file must
+    // appear in `inject`, because reading a service that is not injected THROWS
+    // at access time. Optional services therefore have to go through
+    // `ctx.get('<name>')` and be null-checked — `inject` is a hard gate,
+    // `ctx.get()` is not. `tests/client-inject-contract.test.ts` scans for
+    // direct reads, and `scripts/client-probe.mjs` re-checks the built artifact.
     var inject = ['remote']
     var SETTINGS_NS = 'prompt-optimizer'
     var NS = 'prompt-optimizer-client'
@@ -221,9 +228,15 @@ window.__ModuleLoader__.load({
     async function apply(ctx) {
       var slots = ctx.get('slots')
       if (slots === undefined) return
-      // 1.8.2: `locale` is optional — a missing/renamed locale service must not
-      // abort `apply()`, which used to leave the button unregistered.
-      var locale = ctx.locale
+      // `locale` is deliberately NOT in `inject`, so it must be read through
+      // `ctx.get()` — never as `ctx.locale`. Direct property access on a
+      // service outside `inject` throws `cannot get property "locale" without
+      // inject`, and an uncaught throw here aborts this entire `apply()`. 1.8.2
+      // shipped exactly that: the inject list was cut down, this line was left
+      // behind, and every real machine lost BOTH the ✨ button and the settings
+      // page. `ctx.get()` returns the service when the host provides one and
+      // `undefined` when it does not, and never throws.
+      var locale = ctx.get('locale')
       if (locale && typeof locale.register === 'function') {
         ctx.effect(function () {
           return locale.register(NS, { zh: zh, en: en })

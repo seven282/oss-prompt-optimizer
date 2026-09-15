@@ -7,18 +7,18 @@ DeepSeek Harness 插件 `oss-prompt-optimizer`：把原始指令优化为专业�
 ```sh
 pnpm install --store-dir .pnpm-store --cache-dir .pnpm-cache   # 沙箱内安装（publish 前勿用 --frozen-lockfile 装本地）
 pnpm run typecheck    # tsc --noEmit
-pnpm test             # vitest run（13 个测试文件 / 480 用例，mock llm，无需真实密钥）
+pnpm test             # vitest run（26 个测试文件 / 629 用例，mock llm，无需真实密钥）
 pnpm run build        # tsc -p tsconfig.build.json + node scripts/copy-client.mjs（client.js → lib/client.js）
 ```
 
-- 单测单文件：`pnpm exec vitest run tests/meta.test.ts`。测试文件（13）：cache / command / config / context / diagnose / hook / llm / local / meta / optimizer / prompt / situation / validate。
+- 单测单文件：`pnpm exec vitest run tests/meta.test.ts`。**测试文件全清单与逐文件用例数不在此处硬编码**（会过期）——权威来源是 `docs/vault/50-Testing/测试覆盖清单.md`，由 `node scripts/check-testcounts.mjs` 双向校验（漏列/多列都报错）。改测试后必须同步该表，否则 CI/本地校验失败。
 - CI（`.github/workflows/ci.yml`）：`pnpm install --frozen-lockfile` → `pnpm audit --audit-level=high` → typecheck → test → build，node 22 / pnpm 10。
 - **项目没有 linter**：devDeps 无 biome/eslint，`scripts` 无 lint。编辑器里的 biome `organizeImports` 提示是**已知且接受**的既有噪音（用户已确认不处理）——不要"顺手修复"，也不要引入 lint 工具。
 - `pnpm prepare` = build；从 GitHub 源安装时 pnpm ≥10 会拒绝 `prepare`，需在 profile 的 pnpm-workspace.yaml 加 `allowBuilds: oss-prompt-optimizer: true`（README「安装」节有完整流程）。
 
 ## 架构（文件职责）
 
-- `src/index.ts` — 入口，re-export 全部公共符号；`name`/`inject = ['llm','tools','systemPrompt','commands']`。
+- `src/index.ts` — 入口，re-export 全部公共符号；`name`；`inject = ['llm']`（1.8.2 起从 `['llm','tools','systemPrompt','commands']` 收敛 —— 其余服务经 `ctx.inject()` 按功能作用域注册，见 `src/compat/scope.ts`，任一缺失只关掉对应功能）。
 - `src/config.ts` — schemastery schema + `Config` interface。**未知配置键加载即抛错**（白名单 `CONFIG_KEYS` 由 schema keys 派生，在 `optimizer.ts`）。
 - `src/templates.ts` — 角色文档骨架数据：`TemplateSet`（optimize/iterate × zh/en 四个骨架）、`DEFAULT_TEMPLATES`、加载期校验 `validateTemplateSet`；`META_PROMPT`/`META_PROMPT_EN`/`META_ITERATE` 定义于此、经 `meta.ts` re-export 保持公共面不变。自定义模板缺数据占位符、结构块或「视为纯数据」护栏即加载报错。
 - `src/meta.ts` — 渲染与检测层：`buildOptimizePrompt`/`buildIteratePrompt`（占位符 `{{原始指令}}` 等中英共用、单遍替换）、`detectLanguage`（非空白字符汉字占比 ≥30% → 中文文档）、`detectTaskType`（关键词计分 + `resolveWritingTieBreak` 平局裁决：与 code 同分恒判 code；writing 凭写作动词同分赢 ops/analysis）、`ROLE_LIBRARY`/`SUB_TOPIC_TEMPLATES`/`matchScene`（`/template` 场景匹配）。改分类或模板先跑 `meta.test.ts`。
@@ -30,6 +30,9 @@ pnpm run build        # tsc -p tsconfig.build.json + node scripts/copy-client.mj
 - `src/optimizer.ts` — 服务本体 `PromptOptimizerService`：只做编排（状态、校验/截断、重试管线、事件、路由）。失败返回原文+错误说明不 throw；运行时覆盖 `get/setMetaPromptLanguage`、`get/setAutoOptimizeAll`。
 - `src/tool.ts` — `prompt_optimize` 工具；`src/hook.ts` — `agent/pre-step` 自动优化钩子；`src/command.ts` — 六个命令：`/optimize`、`/dream`（优化+需求感应附录）、`/auto-optimize`、`/optimizer-language`、`/optimize-stats`、`/template`。
 - `client/client.js` — **手写 ModuleLoader 客户端（无打包器）**，build 时复制到 `lib/client.js`；`package.json` 的 `dsh.client` 声明它。按钮经 `slots.inject('conversation.input.left')` 注册 ✨（优化/取消/撤销一体）；语言自动检测后不再有中/EN 按钮。
+  ⚠️ **规则 R2**：`exports.inject` 只放真正不可缺的服务（当前只有 `remote`），**其余一律 `ctx.get('<name>')` 并判空**。
+  `ctx.<name>` 直读一个不在 inject 里的服务会**抛错**且 `apply()` 不捕获 ⇒ 整个客户端半边不注册（✨ 按钮与设置页一起消失）。1.8.2 就是这样在真机上全废的。
+  由 `tests/client-inject-contract.test.ts`（静态）、`tests/client-apply.test.ts`（动态真跑 `apply()`）与 `preflight` P7 守着；详见 `docs/兼容性策略.md` 规则 R2。
 
 ## 关键约定（改代码前必读）
 

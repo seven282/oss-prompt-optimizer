@@ -117,7 +117,7 @@ pnpm install --store-dir .pnpm-store --cache-dir .pnpm-cache   # sandboxed insta
 pnpm run typecheck    # tsc --noEmit
 pnpm test             # vitest (mocked llm, no real credentials needed)
 pnpm run build        # tsc -p tsconfig.build.json → lib/
-pnpm preflight        # compatibility gate P1–P6 (run before publishing)
+pnpm preflight        # compatibility gate P1–P7 (run before publishing)
 ```
 
 All tests use a mocked `llm` stream and never read `.credentials.yaml`.
@@ -140,12 +140,24 @@ moved and renamed. If the plugin statically `import`s them, a single failed reso
 Every other host package goes through `src/compat/loader.ts`, which loads it **synchronously and
 lazily** — a failure returns `null` and never throws.
 
+### Rule R2
+
+In `client/client.js` (the browser half), `ctx.<name>` may **only** read a service that is declared
+in `inject`. The cordis context is a Proxy, so reading a service that is not injected **throws** —
+and `apply()` does not catch it, which means **one optional-service read takes the whole client half
+offline**: the ✨ button and the settings page disappear together, leaving
+`failed to apply loader entry … cannot get property "locale" without inject` in the console. That is
+the 1.8.2 outage, so optional services (`locale` / `sessions` / `settingsScope`) always go through
+**`ctx.get('<name>')`**, which does not require inject, returns the service or `undefined`, and never
+throws.
+
 ### What happens when a host contract changes
 
 | Host change | Consequence |
 |---|---|
 | A helper is moved out of a package / renamed | **That feature degrades + one WARN line**; host and every other feature keep working |
 | A service is renamed (e.g. `systemPrompt`) | Only that feature disappears (per-feature gating, no more whole-plugin failure) |
+| A client-side optional service is missing / renamed (`locale`…) | Read via `ctx.get()`, so only its wording is lost; the ✨ button and settings page still register |
 | `BlockAssembler` is missing | `/optimize` returns error code `UNSUPPORTED_ENV` with explicit wording — **no faked response, no silent failure** |
 | Client slot props contract is renamed | A candidate chain adapts; if all candidates fail the button is **not registered** and a self-diagnosing log is printed |
 | Domain packages jump versions (`0.1.5-rc` → `0.2.x`) | Runtime capability probing decides the usable surface; anything unavailable degrades |
@@ -164,12 +176,15 @@ prompt-optimizer: host compat DEGRADED (defineTool=MISSING …) — defineTool: 
 pnpm preflight       # P1 dependency surface / P2 inject resolution / P3 artifact consistency
                      # P4 typecheck+test+build / P5 compatibility report
                      # P6 startup independence (entry still instantiates with every dsh package sealed)
+                     # P7 client inject contract (R2 static scan + apply() actually run on a minimal host)
 dsh web              # on a real host: starts normally + one compat report line in the log
 ```
 
 **P6** seals every `@deepseek-ai/dsh*` specifier on both the ESM and CJS resolution paths in a child
 process, then imports the entry point — the dynamic proof that a host upgrade can cost features but
-never startup.
+never startup. **P7** actually **executes** `apply()` from `lib/client.js` — the only automated step
+in this project that runs the browser half at all — and scans it for direct reads of services it
+never injected.
 
 > Full strategy (three invariants, compatibility matrix, degradation table, residual risks):
 > **[docs/兼容性策略.md](docs/兼容性策略.md)** (Chinese).

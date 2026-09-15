@@ -1,5 +1,56 @@
 # Changelog
 
+## [1.8.3] - 2026-09-16
+
+**修复 1.8.2 在真机上客户端半边完全不加载：`cannot get property "locale" without inject`。**
+
+1.8.2 把客户端 `inject` 收敛为 `['remote']`、把可选服务改为防御式读取，但
+`client/client.js` 第 226 行**漏改**，仍是直接属性访问 `ctx.locale`。
+cordis 的 context 是一个 Proxy，`ctx.<name>` 从 fiber 的 inject 集合解析，名字不在其中时
+**直接抛错**（`cannot get property "<name>" without inject`），而 `apply()` 没有捕获它 ——
+于是一个未注入的服务读，就让整个客户端半边注册失败：**✨ 按钮与设置页双双消失**，
+控制台留下一行 `failed to apply loader entry fa1f2970 (oss-prompt-optimizer)`。
+`ctx.get('<name>')` 则明确不要求 inject，返回服务或 `undefined`、永不抛错。
+
+### Fixed
+
+- `client/client.js` 第 226 行 `var locale = ctx.locale` → **`var locale = ctx.get('locale')`**。
+  改后与 1.8.1 的 locale 行为逐字节等价（拿到的仍是同一个服务对象）：语言字典照常注册、
+  设置页标题恢复本地化。注释同步改写，把"为什么不能直接读"写进代码旁边。
+
+### Added
+
+- **静态门禁 `tests/client-inject-contract.test.ts`（8 例）** —— 扫描 `client/client.js`，
+  `ctx.<name>` 直读必须落在 `exports.inject` 内或是 cordis 内核成员；内核集合**实测得出**
+  （在一个什么都不提供的真实 `Context` 上探测哪些名字可解析），不硬编码会过期的名单。
+  含反向控制：合成一段 `ctx.locale` 必须被判违规、`ctx.get('locale')` 必须被放行、
+  注释里的 `ctx.<name>` 不得被计入。
+- **动态门禁 `tests/client-apply.test.ts`（6 例）** —— 用**真实 cordis Context** 只提供
+  `slots` + `remote`（即真机最小宿主面），加载手写的 ModuleLoader bundle 并真正调用
+  `apply()`，断言不抛错且两个 slot 都注册；另测 locale 存在时字典被注册、`slots` 缺失时
+  静默降级。末例是反向控制：同一 context 上直读 `ctx.locale` 必须仍抛 `without inject`，
+  否则上面的断言就是空转。
+- **`scripts/client-probe.mjs`** —— 对**产物** `lib/client.js` 做同规则静态扫描 + 真实
+  `apply()` 运行，输出 `[PASS]` 行；三个反向控制保证"永远 PASS"不可能发生。
+- **`preflight` P7「client inject contract」** —— 跑上述探针。`--skip-tests` 时也生效，
+  所以 CI 的那一步同样覆盖。
+- **`docs/兼容性策略.md` 规则 R2** —— "客户端半边只能直读已 inject 的服务，可选服务一律走
+  `ctx.get()`"，附兼容矩阵新增行与残余风险说明。
+
+### Notes
+
+- **1.8.2 的 changelog 有一处与事实不符**：那里写着"`ctx.locale` 判空（缺失时退回恒等 `t`）"，
+  但判空从未生效 —— 访问本身就先抛错了。本次修复后才真正成立。
+- **为什么 615 例全绿 + P1–P6 全 PASS 也没抓住**：测试与 preflight 只跑 `lib/index.js`
+  （宿主半边）；`client/client.js` 是手写的非 TS 文件，**从未被任何自动化步骤执行过**。
+  P2 只校验 `dsh.client.inject` 里的包 id 能解析，不校验代码是否只碰已注入的服务。
+  这正是新增 P7 补的那一层。
+- **门禁已用真实回退验证过会咬**（把第 226 行改回 `ctx.locale`）：
+  - 静态侧：`client.js:239 reads ctx.locale, which is neither injected nor a cordis core member — use ctx.get('locale') or add it to \`inject\``
+  - 动态侧：`cannot get property "locale" without inject` —— 与真机控制台字符串完全一致
+- **不覆盖已发布的 1.8.2**：npm 不允许重发同一版本号，修复以 1.8.3 发布。
+- 测试 615 → **629**（26 个文件）。
+
 ## [1.8.2] - 2026-09-15
 
 **兼容性重构：本插件不再可能成为 `dsh web` 启动失败的起因。**
