@@ -42,3 +42,9 @@ MARKETPLACE.md
 # Session records & task/plan exports — any conversation/plan dumps must
 # never reach the public repo (session IDs, paths, environment references)
 *.jsonl
+
+# Local diagnosis / migration notes — machine paths, profile layout, session
+# references. Same policy as above: published docs live under docs/*.md with
+# product-facing names; these stay local.
+docs/dsh-*.md
+docs/oss-prompt-optimizer-*.md

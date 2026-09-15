@@ -1,0 +1,24 @@
+# Normalize all text files to LF in the repository AND in the working tree.
+# Git for Windows defaults to `core.autocrlf=true`, which rewrites every
+# checked-out file to CRLF and makes the first `git diff` after a clone look
+# like a whole-file change. Pinning `eol=lf` here keeps the tree byte-identical
+# to what CI checks out on Linux, independent of each contributor's local
+# git config.
+* text=auto eol=lf
+
+# Binary assets — never touch line endings.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.pdf binary
+*.zip binary
+*.tgz binary
+
+# Lockfiles are generated; keep them out of diffs and merge conflicts.
+pnpm-lock.yaml -diff merge=ours
