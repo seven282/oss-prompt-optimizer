@@ -25,9 +25,13 @@ window.__ModuleLoader__.load({
     // descriptor), so it is injectable — unlike a custom @Remote namespace,
     // which this deployment cannot claim on the host. Buttons drive the host's
     // `/optimize` and `/auto-optimize` commands through `remote.commands.execute`.
-    // `settingsScope` (dsh-client-ui-settings) drives the Settings-sidebar page;
-    // `locale` localizes the sidebar label per the user's language.
-    var inject = ['remote', 'remote.commands', 'settingsScope', 'locale', 'sessions']
+    //
+    // 1.8.2: the inject list is the MINIMUM the client half cannot work without.
+    // `settingsScope`, `sessions` and `locale` are all read defensively through
+    // `ctx.get()`, so listing them here only turned "settings page missing" into
+    // "the whole client half never loads". Gating everything on them is what made
+    // a single renamed service take the ✨ button offline.
+    var inject = ['remote']
     var SETTINGS_NS = 'prompt-optimizer'
     var NS = 'prompt-optimizer-client'
     var zh = {
@@ -143,14 +147,104 @@ window.__ModuleLoader__.load({
     ]
 
 
+    // ---------------------------------------------------------------------
+    // Composer contract adaptation (1.8.2)
+    //
+    // The slot props shape is a harness-internal contract and it MOVED between
+    // releases: 0.1.0-rc.6 passed the input snapshot as `props.input.draft`,
+    // 0.1.5-rc.2 replaced it with a `props.useInput(selector)` hook and strips
+    // the raw snapshot. Reading only one shape meant the button silently stayed
+    // disabled forever with no error anywhere. Each accessor below tries every
+    // known shape in turn and type-guards the result.
+    // ---------------------------------------------------------------------
+
+    /** Read the current draft text from any known slot-props shape. */
+    function resolveDraft(props) {
+      if (!props) return ''
+      var useInput = props.useInput
+      if (typeof useInput === 'function') {
+        var viaHook = useInput(function (state) {
+          return state && typeof state.draft === 'string' ? state.draft : ''
+        })
+        if (typeof viaHook === 'string') return viaHook
+      }
+      var snapshot = props.input
+      if (snapshot && typeof snapshot.draft === 'string') return snapshot.draft
+      var legacy = props.hooks && props.hooks.input
+      if (legacy && typeof legacy.draft === 'string') return legacy.draft
+      return ''
+    }
+
+    /** Write access to the composer draft, from any known slot-props shape. */
+    function resolveInputActions(props) {
+      if (!props) return null
+      var direct = props.inputActions
+      if (direct && typeof direct.setDraft === 'function') return direct
+      var hooked = props.hooks && props.hooks.inputActions
+      if (hooked && typeof hooked.setDraft === 'function') return hooked
+      return null
+    }
+
+    /** Whether props carry any known draft-reading contract. Pure. */
+    function hasInputContract(props) {
+      if (!props) return false
+      if (typeof props.useInput === 'function') return true
+      if (props.input && typeof props.input.draft === 'string') return true
+      var legacy = props.hooks && props.hooks.input
+      return !!(legacy && typeof legacy.draft === 'string')
+    }
+
+    /**
+     * Whether the harness exposes the composer contract this plugin needs.
+     * Pure — the hook-backed draft must already have been resolved by the
+     * caller, so no React hook is invoked from a predicate.
+     *
+     * When false, the button renders nothing at all (a missing button beats one
+     * that can never be clicked) and the prop names are logged once, so the next
+     * contract change diagnoses itself instead of silently disabling the UI.
+     */
+    function composerSupported(props, draft, inputActions) {
+      return typeof draft === 'string' && inputActions !== null && hasInputContract(props)
+    }
+
+    /** Log the unsupported-props diagnosis once per session. */
+    var unsupportedLogged = false
+    function warnUnsupportedComposer(props) {
+      if (unsupportedLogged) return
+      unsupportedLogged = true
+      console.warn(
+        '[prompt-optimizer] unsupported composer contract — the optimize button is not rendered. props keys:',
+        props ? Object.keys(props) : props,
+      )
+    }
+
     async function apply(ctx) {
       var slots = ctx.get('slots')
       if (slots === undefined) return
-      // Localize the settings-sidebar label per user language.
-      ctx.effect(function () {
-        return ctx.locale.register(NS, { zh: zh, en: en })
-      })
-      var t = ctx.locale.bind(NS)
+      // 1.8.2: `locale` is optional — a missing/renamed locale service must not
+      // abort `apply()`, which used to leave the button unregistered.
+      var locale = ctx.locale
+      if (locale && typeof locale.register === 'function') {
+        ctx.effect(function () {
+          return locale.register(NS, { zh: zh, en: en })
+        })
+      }
+      var t = locale && typeof locale.bind === 'function'
+        ? locale.bind(NS)
+        : function (key) { return key }
+
+      // 1.8.2: the remote command channel is looked up defensively. Without it
+      // the button has nothing to call, so it is not registered.
+      var remote = ctx.get('remote')
+      var commandChannel = remote && remote.commands && typeof remote.commands.execute === 'function'
+        ? remote.commands
+        : ctx.remote && ctx.remote.commands && typeof ctx.remote.commands.execute === 'function'
+          ? ctx.remote.commands
+          : null
+      function executeCommand(sessionId, command, args, signal) {
+        if (commandChannel === null) return Promise.reject(new Error('remote.commands is unavailable'))
+        return commandChannel.execute(sessionId, command, args, signal)
+      }
 
       // ✨ Optimize button (composer tool row, left).
       slots.inject('conversation.input.left', function () {
@@ -183,9 +277,16 @@ window.__ModuleLoader__.load({
             var announceState = React.useState('')
             var announce = announceState[0]
             var setAnnounce = announceState[1]
-            // Owner prop: point-in-time InputState snapshot (the skeleton
-            // re-renders on input changes, so the button stays current).
-            var draft = props.input && typeof props.input.draft === 'string' ? props.input.draft : ''
+            // Composer contract resolution (1.8.2) — see the helpers above.
+            // Deliberately after every hook call so hook order stays
+            // unconditional: an unsupported contract renders nothing at all
+            // rather than a button that can never be clicked.
+            var draft = resolveDraft(props)
+            var inputActions = resolveInputActions(props)
+            if (!composerSupported(props, draft, inputActions)) {
+              warnUnsupportedComposer(props)
+              return null
+            }
             // The error flash never blocks a retry: clicking again retries
             // immediately (and clears the flash).
             var canOptimize = draft.trim().length > 0 && !busy
@@ -212,7 +313,7 @@ window.__ModuleLoader__.load({
                 return
               }
               if (canUndo) {
-                props.inputActions.setDraft(undo.original)
+                inputActions.setDraft(undo.original)
                 setUndo(null)
                 setAnnounce('已恢复优化前的原文')
                 return
@@ -223,7 +324,7 @@ window.__ModuleLoader__.load({
               var controller = typeof AbortController === 'function' ? new AbortController() : null
               cancelRef.current = controller
               var signal = controller ? controller.signal : undefined
-              ctx.remote.commands.execute(props.sessionId, '/optimize ' + draft, [], signal)
+              executeCommand(props.sessionId, '/optimize ' + draft, [], signal)
                 .then(function (response) {
                   // 取消结算（dsh 协议）：宿主以 { ok:false, error:{message:'This
                   // operation was aborted'} } resolve——须在 ok:false 信封层先识别
@@ -242,11 +343,11 @@ window.__ModuleLoader__.load({
                   var result = resultOf(response)
                   if (result && result.kind === 'success' && typeof result.text === 'string' && result.text.length > 0) {
                     setUndo({ original: draft, optimized: result.text })
-                    props.inputActions.setDraft(result.text)
+                    inputActions.setDraft(result.text)
                     setAnnounce('提示词已优化，可点击撤销按钮恢复原文')
                     // 成本可见: read the last run's output tokens and show a
                     // transient hint. Best-effort; a failure is ignored.
-                    ctx.remote.commands.execute(props.sessionId, '/optimize --stats', [])
+                    executeCommand(props.sessionId, '/optimize --stats', [])
                       .then(function (statsResponse) {
                         var statsResult = resultOf(statsResponse)
                         var match = statsResult && typeof statsResult.text === 'string'
@@ -427,7 +528,7 @@ window.__ModuleLoader__.load({
               setStatusText('设置页无法确定当前会话——请在对话中运行 /optimize --status 查看状态。')
               return
             }
-            ctx.remote.commands.execute(sessionId, '/optimize --status', [])
+            executeCommand(sessionId, '/optimize --status', [])
               .then(function (response) {
                 var result = resultOf(response)
                 if (result && result.kind === 'success' && typeof result.text === 'string') {

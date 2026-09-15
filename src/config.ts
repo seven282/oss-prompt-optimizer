@@ -1,5 +1,8 @@
 import z from '@deepseek-ai/schemastery'
-import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
+// 1.8.2: MAX_TIMER_DELAY_MS used to come from `@deepseek-ai/dsh-timeout` as a
+// static import — a host peer whose export list can change at any rc release.
+// Owning the constant here keeps the config schema loadable on any host.
+import { MAX_TIMER_DELAY_MS } from './compat/timing.js'
 
 /** One few-shot demonstration injected into the meta-prompt. */
 export interface PromptExample {

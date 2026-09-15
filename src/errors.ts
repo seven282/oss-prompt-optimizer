@@ -46,6 +46,13 @@ export const OptimizeErrorCode = {
   UNSUPPORTED_FINISH: 'UNSUPPORTED_FINISH',
   /** The model produced no text at all. */
   NO_TEXT: 'NO_TEXT',
+  /**
+   * The host does not expose a capability this operation needs (1.8.2). The
+   * plugin probes host packages at startup instead of importing them
+   * statically, so a harness upgrade that drops an export disables one
+   * feature — and says so — rather than taking the process down.
+   */
+  UNSUPPORTED_ENV: 'UNSUPPORTED_ENV',
   /** Any other failure not covered above. */
   UNKNOWN: 'UNKNOWN',
 } as const
@@ -82,6 +89,7 @@ export const OPTIMIZE_ERROR_TEXT: Record<OptimizeErrorCode, string> = {
   [OptimizeErrorCode.TOOL_CALL]: 'prompt-optimize: 模型意外请求调用工具',
   [OptimizeErrorCode.UNSUPPORTED_FINISH]: 'prompt-optimize: 模型返回了不支持的结束原因',
   [OptimizeErrorCode.NO_TEXT]: 'prompt-optimize: 模型未输出任何文本',
+  [OptimizeErrorCode.UNSUPPORTED_ENV]: 'prompt-optimize: 当前宿主缺少本功能所需的接口（模型输出装配/消息构造），该功能已自动关闭',
   [OptimizeErrorCode.UNKNOWN]: 'prompt-optimize: 未知错误',
 }
 

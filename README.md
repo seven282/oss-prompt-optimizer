@@ -155,9 +155,56 @@ pnpm install --store-dir .pnpm-store --cache-dir .pnpm-cache   # 沙箱内安装
 pnpm run typecheck    # tsc --noEmit
 pnpm test             # vitest（mock llm，不依赖真实密钥）
 pnpm run build        # tsc -p tsconfig.build.json → lib/
+pnpm preflight        # 兼容性门禁 P1–P6（发版前必跑）
 ```
 
 测试全部使用 mock 的 `llm` 流，绝不读取 `.credentials.yaml`。
+
+## 兼容性与失败模式
+
+本插件与 dsh 运行在**同一个 Node 进程**里，因此有一条硬约束：
+
+> **插件的任何内部缺陷都不得阻止 `dsh web` 启动。**
+
+dsh 的域包（`dsh-llm`、`dsh-tools`、`dsh-timeout`…）仍在 `0.1.x-rc` 阶段，导出会被搬迁或改名。
+若插件在顶层静态 `import` 这些包，一旦解析失败，**ESM 的失败无法被捕获**，整个服务起不来
+（1.8.1 的 `deepFreeze` 事故正是如此）。
+
+### 规则 R1
+
+`src/**` 只允许静态 import 两类包：**框架本体 `@deepseek-ai/cordis`**，以及
+**本包 `dependencies` 里自己安装的包**。其余宿主包一律经 `src/compat/loader.ts`
+**同步懒加载**——失败只返回 `null`，永不抛错。
+
+### 宿主契约变化时会发生什么
+
+| 宿主变化 | 后果 |
+|---|---|
+| 某工具函数被移出包 / 改名 | **该功能降级 + 一行 WARN**；宿主与其余功能正常 |
+| 某服务改名（如 `systemPrompt`） | 仅对应功能消失（按功能门禁，不再整插件失效） |
+| `BlockAssembler` 缺失 | `/optimize` 返回错误码 `UNSUPPORTED_ENV` 并给出明确文案，**不伪造消息、不静默失败** |
+| 客户端 slot props 契约改名 | 候选链自适配；全部失败则**不注册按钮**并打印自诊断日志 |
+| 域包整体升级（`0.1.5-rc` → `0.2.x`） | 运行时能力探测决定可用面；不可用即降级 |
+
+降级不是静默的：插件构造时**必定打印一行 compat report**（健康时 `info`，降级时 `warn`）：
+
+```
+prompt-optimizer: host compat ok (defineTool=ok createUserMessage=ok BlockAssembler=ok)
+prompt-optimizer: host compat DEGRADED (defineTool=MISSING …) — defineTool: the `prompt_optimize` tool is not registered; the /optimize command and the input-box button still work | …
+```
+
+### 升级 dsh 后怎么验证
+
+```sh
+pnpm preflight       # P1 依赖面 / P2 inject 真实解析 / P3 产物一致 / P4 typecheck+test+build
+                     # P5 兼容性报告 / P6 启动独立性（封死全部 dsh 包后入口仍能实例化）
+dsh web              # 真机：正常启动 + 日志出现一行 compat report
+```
+
+`pnpm preflight` 里 **P6** 会在子进程内同时封死 ESM 与 CJS 两条解析路径上的所有
+`@deepseek-ai/dsh*`，再导入入口——这是"宿主升级只会减功能、不会让服务起不来"的动态证明。
+
+> 完整策略（三条不变量、兼容矩阵、降级行为表、残余风险）：**[docs/兼容性策略.md](docs/兼容性策略.md)**
 
 ## 优化生命周期事件（供其他插件订阅）
 

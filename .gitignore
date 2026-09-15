@@ -3,6 +3,15 @@ node_modules/
 .pnpm-store/
 .pnpm-cache/
 
+# pnpm 11+ build-script policy. Kept machine-local on purpose: approving a
+# dependency's install-time script is a supply-chain decision about *this*
+# machine, not a property of the package. pnpm scaffolds this file by itself
+# (with an undecided placeholder) whenever it meets an unapproved build script,
+# so committing it would also force pnpm-10 CI runners to parse a key only
+# pnpm 11+ understands. `prepare` no longer goes through pnpm, so publishing
+# does not depend on this file existing.
+pnpm-workspace.yaml
+
 # Build output — built from source by `pnpm run build` / the `prepare` script
 lib/
 dist/
@@ -20,6 +29,13 @@ dist/
 !.env.example
 *.log
 
+# Scratch dumps from local verification runs — `node -e "…" > file` redirects,
+# probe output, column listings. Transient by definition, and they routinely
+# capture machine paths and host-profile layouts.
+.*.txt
+_*.txt
+.probe-*
+
 # OS / editor
 .DS_Store
 Thumbs.db
@@ -32,6 +48,7 @@ Thumbs.db
 # Personal Obsidian knowledge base — private content, never pushed to the public repo
 docs/vault/
 scripts/check-vault.mjs
+scripts/check-testcounts.mjs
 
 # Marketplace submission checklist — internal doc, keep out of repo
 MARKETPLACE.md

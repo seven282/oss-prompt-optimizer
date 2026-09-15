@@ -27,3 +27,17 @@ jobs:
         run: pnpm test
       - name: Build
         run: pnpm build
+      # Gate the invariants that keep the plugin from ever blocking the host:
+      #   P1 no illegal static host imports survive into `lib/`
+      #   P3 `lib/client.js` still matches its source
+      #   P6 the entry point still instantiates with every `@deepseek-ai/dsh*`
+      #      package sealed on both the ESM and CJS resolution paths
+      # `--offline` skips the recursive typecheck/test/build pass (the steps
+      # above already ran them); P2 reports SKIP because a real dsh profile is
+      # not reachable from CI.
+      #
+      # Invoked as `node scripts/preflight.mjs` rather than `pnpm preflight`:
+      # `--offline` is also a pnpm flag, so passing it through pnpm risks pnpm
+      # consuming it instead of forwarding it to the script.
+      - name: Preflight
+        run: node scripts/preflight.mjs --offline --skip-tests

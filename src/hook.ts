@@ -1,7 +1,9 @@
 import type { Context } from '@deepseek-ai/cordis'
-import { createUserMessage, type UserMessage } from '@deepseek-ai/dsh-llm'
+import type { UserMessage } from '@deepseek-ai/dsh-llm'
+import { probeCapabilities, type Capabilities } from './compat/capability.js'
 import type { Config } from './config.js'
 import { contextMessageText, gatherConversationContext } from './context.js'
+import { OptimizeError, OptimizeErrorCode } from './errors.js'
 import type { PromptOptimizerService } from './optimizer.js'
 
 /**
@@ -25,8 +27,25 @@ export const AUTO_OPTIMIZE_NOTE = '（原始指令已由 prompt-optimizer 自动
  * Build the replacement user message carrying the optimized prompt. When
  * `includeOriginal` is true, the original instruction text is kept alongside
  * the optimized prompt so the model can compare wording.
+ *
+ * `createUserMessage` is resolved through the compat layer (1.8.2) instead of
+ * being imported from `@deepseek-ai/dsh-llm`, so a harness upgrade that drops
+ * the export degrades the auto-optimize hook rather than breaking the process.
+ * Passing a capability set explicitly lets callers reuse one probe result.
  */
-export function optimizedMessage(optimized: string, includeOriginal = false, original = ''): UserMessage {
+export function optimizedMessage(
+  optimized: string,
+  includeOriginal = false,
+  original = '',
+  capabilities: Capabilities = probeCapabilities(),
+): UserMessage {
+  const createUserMessage = capabilities.createUserMessage
+  if (createUserMessage === null) {
+    throw new OptimizeError(
+      OptimizeErrorCode.UNSUPPORTED_ENV,
+      'prompt-optimizer: host does not expose createUserMessage, autoOptimize cannot build messages',
+    )
+  }
   const body = includeOriginal && original.length > 0
     ? `原始指令：\n${original}\n\n优化后提示词：\n${optimized}`
     : optimized
@@ -49,13 +68,24 @@ export function optimizedMessage(optimized: string, includeOriginal = false, ori
  * degradation: an empty instruction or any optimization failure preserves
  * the original messages (`next()`). At most one message per step is
  * optimized. Effect-scoped: the listener is removed on plugin dispose.
+ *
+ * Degradation (1.8.2): when the host exposes no `createUserMessage`, the
+ * replacement message cannot be built, so the hook is not registered at all and
+ * a single warning is logged. Everything else keeps working.
  */
 export function registerAutoOptimizeHook(
   ctx: Context,
   config: Config,
   service: PromptOptimizerService,
+  capabilities: Capabilities = probeCapabilities(),
 ): void {
   if (!config.autoOptimize) return
+  if (capabilities.createUserMessage === null) {
+    ctx.logger?.warn?.(
+      'prompt-optimizer: autoOptimize is disabled — host does not expose createUserMessage',
+    )
+    return
+  }
   const prefix = config.autoOptimizePrefix
   ctx.on('agent/pre-step', async (payload, next) => {
     let attempted = false
@@ -86,7 +116,7 @@ export function registerAutoOptimizeHook(
             ...(context.length > 0 ? { context } : {}),
           })
           if (result.optimized) {
-            nextMessages.push(optimizedMessage(result.prompt, config.hookIncludeOriginal, instruction))
+            nextMessages.push(optimizedMessage(result.prompt, config.hookIncludeOriginal, instruction, capabilities))
             replaced = true
             continue
           }

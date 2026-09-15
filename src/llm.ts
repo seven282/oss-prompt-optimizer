@@ -1,4 +1,5 @@
-import type { BlockAssembler, FinishReason } from '@deepseek-ai/dsh-llm'
+import type { FinishReason } from '@deepseek-ai/dsh-llm'
+import type { StreamAssembler } from './compat/capability.js'
 import { OptimizeError, OptimizeErrorCode } from './errors.js'
 
 /**
@@ -48,8 +49,15 @@ export function finishToError(finish: FinishReason): Error | undefined {
   }
 }
 
-/** Concatenate the text blocks of a finished stream assembler. Pure function. */
-export function assembleStream(assembler: BlockAssembler): string {
+/**
+ * Concatenate the text blocks of a finished stream assembler. Pure function.
+ *
+ * Takes the structural {@link StreamAssembler} rather than the host's
+ * `BlockAssembler` type: the assembler is resolved at runtime by the compat
+ * loader (1.8.2), and a real host `BlockAssembler` satisfies this interface
+ * unchanged.
+ */
+export function assembleStream(assembler: StreamAssembler): string {
   return assembler
     .blocks()
     .filter((block) => block.type === 'text')

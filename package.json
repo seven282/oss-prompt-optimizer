@@ -1,6 +1,6 @@
 {
   "name": "oss-prompt-optimizer",
-  "version": "1.8.1",
+  "version": "1.8.2",
   "description": "DeepSeek Harness plugin bundle: optimize raw instructions into professional Role / Task / Context / Format prompts through the harness llm service",
   "repository": {
     "type": "git",
@@ -30,8 +30,6 @@
     },
     "client": {
       "inject": [
-        "@deepseek-ai/dsh-client-runtime",
-        "@deepseek-ai/dsh-client-ui-slots",
         "@deepseek-ai/dsh-client-ui-conversation",
         "@deepseek-ai/dsh-api-remotes",
         "@deepseek-ai/dsh-client-connection"
@@ -41,39 +39,30 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json && node scripts/copy-client.mjs",
-    "prepare": "pnpm run build",
+    "prepare": "npm run build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "preflight": "node scripts/preflight.mjs"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-agent": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-api-remotes": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-connection": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-ui-conversation": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-ui-slots": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-commands": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-llm": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-system-prompt": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-timeout": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-tools": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-typert-protocol": "^0.1.0-rc.6",
     "react": "^18.2.0"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": false
+    }
   },
   "dependencies": {
     "@deepseek-ai/schemastery": "^3.18.1"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-agent": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-commands": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-llm": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-system-prompt": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-timeout": "^0.1.0-rc.6",
     "@deepseek-ai/dsh-tools": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-typert-protocol": "^0.1.0-rc.6",
     "@types/node": "^24.0.0",
     "typescript": "^5.8.3",
     "vitest": "^3.2.0"

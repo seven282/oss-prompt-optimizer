@@ -1,5 +1,71 @@
 # Changelog
 
+## [1.8.2] - 2026-09-15
+
+**兼容性重构：本插件不再可能成为 `dsh web` 启动失败的起因。**
+
+1.8.1 的 `deepFreeze` 事故根因是：产物里存在 **7 处对宿主域包的静态 `import`**，
+而 Node ESM 下静态导入解析失败**无法被捕获** → 整个服务起不来。本次把这 7 处全部消解，
+并把"不能再发生"变成脚本与测试自动断言。详见 `docs/兼容性策略.md`。
+
+### Added
+
+- **`src/compat/` 兼容层**：
+  - `freeze.ts` —— 自建 `deepFreeze` / `isFrozen`（环形安全、跳过 `AbortSignal`、返回同引用），
+    彻底断开对宿主该 helper 的依赖（即 1.8.1 事故点）
+  - `timing.ts` —— 自建 `MAX_TIMER_DELAY_MS` / `deadline()` / `timeoutOf()` / `TimeoutReason`，
+    `dsh-timeout` 依赖**整体归零**；`TimeoutReason` 按**结构**判别（非 `instanceof`），兼容多份类副本
+  - `loader.ts` —— 同步 `createRequire` 懒加载 + 缓存，**永不抛错**（失败返回 `null`），
+    使插件 `apply()` 保持同步，服务/工具注册时序与 1.8.1 完全一致
+  - `capability.ts` —— 运行时**能力探测**（不判版本号）+ 降级说明 + 启动报告
+  - `scope.ts` —— `ctx.inject` 防御式包装
+- **按功能门禁**：`inject` 从 `['llm','tools','systemPrompt','commands']` 收敛为 `['llm']`，
+  其余经 `ctx.inject()` 作用域化注册。任一服务改名只关掉对应功能，插件整体与宿主照常工作。
+- **降级可见**：构造时必定打印一行 compat report —— `host compat ok (...)` 或
+  `host compat DEGRADED (...)` + 逐项说明"哪个功能停了、还有什么还能用"。降级是静默减功能，
+  必须让它可被发现。
+- 新错误码 **`UNSUPPORTED_ENV`**：`BlockAssembler` 缺失时 `/optimize` 明确报错，
+  不伪造消息、不静默失败。
+- **`scripts/preflight.mjs`**（`pnpm preflight`）—— 六道门禁：P1 依赖面审计 /
+  P2 `dsh.client.inject` 真实解析 / P3 产物字节一致性 / P4 typecheck→test→build /
+  P5 兼容性报告 / P6 启动独立性。P2 从宿主**实际加载插件的目录**发起解析，
+  走 Node 真实的查找顺序（profile 层 → 共享 anchor 层 → CLI 内嵌）并报告解析来源层级；
+  列举固定目录的旧做法会与 Node 的 realpath 行为背离，能在宿主实际解析到别处时仍报 PASS。
+  可用 `--dsh-home <path>` 指定目标 profile。
+- **`scripts/startup-probe.mjs`** —— 启动独立性动态证明：在同进程内同时封死 ESM `resolve`
+  与 CJS `Module._load` 两条路径上的所有 `@deepseek-ai/dsh*`，再导入 `lib/index.js`，
+  断言入口仍能实例化、能力全部降级、降级被报告。内含**反向控制**（先证明封印真的生效），
+  杜绝"封印失效 → 断言空转 → 永远 PASS"。
+- **5 个新测试**（共 53 例）：`compat-freeze` / `compat-timing` / `compat-loader` /
+  `compat-capability` / `policy-static-imports`（源码级规则 R1 的第二道锁）。
+- **`docs/兼容性策略.md`** —— 三条不变量、规则 R1、兼容矩阵、降级行为表、升级验证步骤、残余风险。
+- `.gitattributes`（`* text=auto eol=lf`），从机制上根治 CRLF 复发。
+
+### Changed
+
+- `package.json`：`peerDependencies` 只保留 `@deepseek-ai/cordis` + `react`；
+  移除 8 个从未被 import 的 peer（`dsh-agent`、`dsh-api-remotes`、`dsh-client-connection`、
+  `dsh-client-runtime`、`dsh-client-ui-conversation`、`dsh-client-ui-slots`、
+  `dsh-system-prompt`、`dsh-typert-protocol`）——它们只造成"未满足 peer"告警。
+  `dsh.client.inject` 收敛为实测存在的 3 项。
+- 客户端 `inject` 收敛为 `['remote']`；`ctx.locale` 判空（缺失时退回恒等 `t`）；
+  命令通道防御式取值；新增 composer 契约自适应候选链（`useInput` hook →
+  `props.input.draft` → `props.hooks.input.draft`），**全部失败则不注册按钮**并打印
+  自诊断日志（`Object.keys(props)`），让下次事故自曝而非靠人肉挖。
+- `preflight` 调用 pnpm 时带 `--config.verify-deps-before-run=false`：裸 `pnpm run`
+  会先重新校验依赖图，在 link farm 陈旧时**静默重装**依赖 —— 只读门禁不该改动 `node_modules`。
+- 测试 562 → **615**（24 个文件）。
+
+### Notes
+
+- **不要用内联 `import { type X } from 'pkg'`**：`verbatimModuleSyntax` 下它会被保留成
+  `import {} from 'pkg'`，**仍是运行时导入**。只能用顶层 `import type { X } from 'pkg'`。
+  改造中曾误写此形式，由 P1 拦下，现有专门用例守护。
+- peer 范围**不能**作为兼容性保障：semver 的 prerelease 排除规则使 `^0.1.0-rc.6`
+  等范围在 `0.1.5-rc.2` 上全部返回 `false`（连 `*` 都不例外）。兼容性改由运行时能力探测保证。
+- 残余风险：`@deepseek-ai/cordis`（框架本体）与 `schemastery`（自有 `dependencies`）仍为静态
+  import，前者为固有成本，后者解析自我保证。
+
 ## [1.8.1] - 2026-08-26
 
 ### Added

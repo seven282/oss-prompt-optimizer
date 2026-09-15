@@ -117,9 +117,62 @@ pnpm install --store-dir .pnpm-store --cache-dir .pnpm-cache   # sandboxed insta
 pnpm run typecheck    # tsc --noEmit
 pnpm test             # vitest (mocked llm, no real credentials needed)
 pnpm run build        # tsc -p tsconfig.build.json → lib/
+pnpm preflight        # compatibility gate P1–P6 (run before publishing)
 ```
 
 All tests use a mocked `llm` stream and never read `.credentials.yaml`.
+
+## Compatibility & failure modes
+
+This plugin runs in the **same Node process** as dsh, which imposes one hard constraint:
+
+> **No internal defect in this plugin may prevent `dsh web` from starting.**
+
+dsh's domain packages (`dsh-llm`, `dsh-tools`, `dsh-timeout`…) are still at `0.1.x-rc`, so exports get
+moved and renamed. If the plugin statically `import`s them, a single failed resolution is
+**uncatchable under ESM** and takes the whole service down — which is exactly what happened in the
+1.8.1 `deepFreeze` incident.
+
+### Rule R1
+
+`src/**` may only statically import two kinds of package: the **framework itself
+(`@deepseek-ai/cordis`)** and **packages this plugin installs via its own `dependencies`**.
+Every other host package goes through `src/compat/loader.ts`, which loads it **synchronously and
+lazily** — a failure returns `null` and never throws.
+
+### What happens when a host contract changes
+
+| Host change | Consequence |
+|---|---|
+| A helper is moved out of a package / renamed | **That feature degrades + one WARN line**; host and every other feature keep working |
+| A service is renamed (e.g. `systemPrompt`) | Only that feature disappears (per-feature gating, no more whole-plugin failure) |
+| `BlockAssembler` is missing | `/optimize` returns error code `UNSUPPORTED_ENV` with explicit wording — **no faked response, no silent failure** |
+| Client slot props contract is renamed | A candidate chain adapts; if all candidates fail the button is **not registered** and a self-diagnosing log is printed |
+| Domain packages jump versions (`0.1.5-rc` → `0.2.x`) | Runtime capability probing decides the usable surface; anything unavailable degrades |
+
+Degradation is not silent: the plugin **always prints one compat report line** at construction
+(`info` when healthy, `warn` when degraded):
+
+```
+prompt-optimizer: host compat ok (defineTool=ok createUserMessage=ok BlockAssembler=ok)
+prompt-optimizer: host compat DEGRADED (defineTool=MISSING …) — defineTool: the `prompt_optimize` tool is not registered; the /optimize command and the input-box button still work | …
+```
+
+### How to verify after upgrading dsh
+
+```sh
+pnpm preflight       # P1 dependency surface / P2 inject resolution / P3 artifact consistency
+                     # P4 typecheck+test+build / P5 compatibility report
+                     # P6 startup independence (entry still instantiates with every dsh package sealed)
+dsh web              # on a real host: starts normally + one compat report line in the log
+```
+
+**P6** seals every `@deepseek-ai/dsh*` specifier on both the ESM and CJS resolution paths in a child
+process, then imports the entry point — the dynamic proof that a host upgrade can cost features but
+never startup.
+
+> Full strategy (three invariants, compatibility matrix, degradation table, residual risks):
+> **[docs/兼容性策略.md](docs/兼容性策略.md)** (Chinese).
 
 ## Lifecycle events (for other plugins)
 
