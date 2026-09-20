@@ -51,6 +51,32 @@ DSH STORE 的复检在 **1.8.4（固定 Commit `d954cac`）** 上给出两条结
   新建 profile 是**空的**，必须先 `--from-default-profile web` 才有 web 应用可启动。
 - **`npm run e3`**：上架/发版前的本地验收入口。
 
+### Changed
+
+- **兼容性声明收窄到最新一版**：`engines.dsh` / `dsh.compatibility.dsh` 由
+  `^0.1.5-rc.1 || ^0.1.6-alpha.1` 改为 **`^0.1.6-alpha.2`**，`dshReleases` 只留
+  **`0.1.6-alpha.2: compatible`** 一条。理由：Catalog 要的是「在某个确定版本上真的装过、
+  起来过」的证据，逐版本声明才有意义；旧版本由「旧 dsh 配旧插件」自然分流，在此重复声明
+  只会引入没人读、也不会去复验的记录。按 semver 预发布规则，`^0.1.6-alpha.2` 覆盖
+  `0.1.6-alpha.2` / `0.1.6-alpha.3` / `0.1.6-beta.1` / `0.1.6` / `0.1.7`，
+  **不覆盖** `0.1.5-rc.1` / `0.1.5-rc.2` / `0.1.6-alpha.1`。
+- **删除 `docs/兼容性策略.md`**：兼容性的权威说明改为本文件 + `AGENTS.md` 的规则条目，
+  规则 R1 / R2 / R2b 的正文不再单独维护（内容未搬迁，避免两处漂移）。
+  `client/client.js` 与相关脚本、测试里指向该文档的引用一并去掉。
+
+### Verified
+
+- **E3 验收在 `0.1.6-alpha.2` 宿主上全绿**（`1.8.5` 产物，沙箱外执行）：
+  E3.1–E3.9 九步全 PASS，反向控制 `RC1` / `RC2` / `RC3` 全部通过 ——
+  其中 **E3.7 真的启动了 `dsh web`、拿到 HTTP 200 并取到插件自身的客户端模块**，
+  证明客户端半边确实挂载（不只是宿主起来了）。证据 JSON：
+  `plugin: oss-prompt-optimizer@1.8.5`、`dshHost: 0.1.6-alpha.2`、`entryId: prompt-optimizer`。
+- **`scripts/e3-acceptance.mjs` 删掉了内建的一次性删除补偿逻辑**：此前把它当成
+  「宿主批量删除防护」的迹象，用三组对照实验证伪了 —— 真正装上防护的是一层
+  **`--require` 注入的 shim**，而它的旁路判据正是 `os.tmpdir()`，偏偏 E3 的临时 home
+  就在那之下，所以防护对它从来不生效（1062 条目树在临时目录内外都干净删完）。
+  现在只做一次删除、然后**按实际残留判据**结论，不再猜原因。
+
 ## [1.8.4] - 2026-09-16
 
 **修复 1.8.3 在真机上客户端半边仍不加载：`cannot get property "remote.commands" without inject`。**

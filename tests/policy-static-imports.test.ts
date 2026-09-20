@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 /**
- * Source-level policy test for rule R1 (see docs/兼容性策略.md).
+ * Source-level policy test for rule R1.
  *
  * `src/**` may only statically import:
  *   (a) packages declared in this package's own `dependencies` — resolution is

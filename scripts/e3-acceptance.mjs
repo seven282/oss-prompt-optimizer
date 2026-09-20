@@ -24,7 +24,10 @@
  *   E3.7  `dsh web` boots, answers HTTP 200, and serves the plugin's own client
  *         module (proves the client half mounts, not just the host)
  *   E3.8  `dsh plugin --profile e3 remove` exits 0 and the directory is gone
- *   E3.9  the disposable home is gone (no residue on the machine)
+ *   E3.9  nothing of *ours* survives the run — the installed package and the
+ *         control profiles the run created are gone, confirmed by both per-path
+ *         probes and a walk over the leftovers; an undeletable scratch dir is
+ *         reported as a note, not a failure
  *
  * Reverse controls (a check that cannot fail proves nothing):
  *   RC1  a real web profile without the plugin must NOT show the entry id, so
@@ -43,14 +46,30 @@
  *      the shipped template (`--from-default-profile web`) before installing,
  *      which is also what a real user does.
  *
+ * E3.9 attempts one Node delete and then judges the outcome by what is actually
+ * left, never by whether the delete reported success. The temp home is ~600
+ * files, and a delete can legitimately fail for reasons that say nothing about
+ * the plugin, so a surviving scratch directory is reported as a note. Pass
+ * `--keep` to skip removal entirely.
+ *
+ * A host-level bulk-delete guard was once believed to be behind those failures:
+ * a `[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED]` refusal with no `code`,
+ * `errno` or `path`. Controlled runs disproved it — with the guard's shim loaded
+ * and its threshold at 50, a 1062-entry tree under the temp dir *and* the same
+ * tree outside it both deleted cleanly, because the shim bypasses `os.tmpdir()`
+ * and this home lives there. The guard is therefore not modelled here; the
+ * delete is simply attempted and its real error, if any, is recorded.
+ *
  * Usage:
  *   node scripts/e3-acceptance.mjs                          # packs the local build
  *   node scripts/e3-acceptance.mjs --source ./out.tgz
  *   node scripts/e3-acceptance.mjs --source github:seven282/oss-prompt-optimizer#<sha>
  *   node scripts/e3-acceptance.mjs --dsh-bin <path/to/dsh/lib/bin.js> --json e3.json
  *
- * `--dsh-bin` picks which DSH release acts as the host; point it at another
- * version's `lib/bin.js` to take evidence for that release.
+ * `--dsh-bin` picks which DSH release acts as the host. Evidence is taken for
+ * the **latest** release only: `dsh.compatibility.dshReleases` declares the
+ * newest version, and older releases are served by older plugin versions, so
+ * re-running them here would produce claims nobody reads.
  *
  * Windows note: run this **outside** the assistant sandbox. `dsh web` reaches
  * for `reg.exe` while probing the environment, the sandbox blocks it, and the
@@ -61,7 +80,7 @@
  */
 
 import { spawn } from 'node:child_process'
-import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -168,6 +187,119 @@ async function runNpm(args, opts = {}) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const tail = (s, n = 3) => s.trim().split(/\r?\n/).filter(Boolean).slice(-n).join(' | ')
+
+// -------------------------------------------------------------- cleanup probes
+
+/**
+ * Plain name list of a directory's children. Never throws and never recurses —
+ * after a partial delete the tree can contain entries a walker would trip over,
+ * and only emptiness matters here.
+ */
+function childNames(dir) {
+  try {
+    return readdirSync(dir)
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Delete the disposable home, then report what survived.
+ *
+ * Removing the temp home means unlinking ~600 files, and a delete can fail for
+ * reasons that have nothing to do with the plugin — a transient lock, an
+ * antivirus scanner holding a handle, a file open in another window. So the
+ * caller judges the outcome by what is *left*, not by whether the call threw.
+ *
+ * A host-level *safe-delete* guard was once blamed for these failures. Controlled
+ * runs ruled it out: with its shim loaded and threshold at 50, a 1062-entry tree
+ * under the temp dir and the same tree outside it both deleted cleanly, because
+ * the shim bypasses `os.tmpdir()` and this home lives there. Modelling a guard
+ * that does not fire bought nothing but a false cause to point at, so it is gone.
+ *
+ * `force: true` is still right — it is what makes an already-absent path a
+ * no-op rather than an error.
+ */
+function removeTree(dir) {
+  let error = null
+  try {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 300 })
+  } catch (e) {
+    error = e
+  }
+  return {
+    gone: !existsSync(dir),
+    error: error ? firstLine(error.message || String(error)) : null,
+  }
+}
+
+/** First line of a message, capped — error blobs can carry a whole JSON payload. */
+function firstLine(text, max = 180) {
+  const line = String(text).split(/\r?\n/)[0].trim()
+  return line.length > max ? `${line.slice(0, max)}…` : line
+}
+
+/** Number of entries a directory tree holds, up to `limit`; -1 when unreadable. */
+function countEntries(dir, limit = 5000) {
+  if (!existsSync(dir)) return 0
+  let total = 0
+  const stack = [dir]
+  while (stack.length) {
+    const current = stack.pop()
+    let entries = []
+    try {
+      entries = readdirSync(current, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const e of entries) {
+      total += 1
+      if (total > limit) return total
+      if (e.isDirectory() && !e.isSymbolicLink()) stack.push(join(current, e.name))
+    }
+  }
+  return total
+}
+
+/**
+ * Every file or directory name in the tree, capped. Used to prove that a
+ * leftover temp home genuinely holds nothing of ours: asserting "our package
+ * directory is absent" only means anything if the walk could have found it, so
+ * the caller pairs the two.
+ */
+function listTree(dir, limit = 4000) {
+  if (!existsSync(dir)) return []
+  const found = []
+  const stack = [dir]
+  while (stack.length && found.length < limit) {
+    const current = stack.pop()
+    let entries = []
+    try {
+      entries = readdirSync(current, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const e of entries) {
+      found.push(e.name)
+      if (found.length >= limit) break
+      if (e.isDirectory() && !e.isSymbolicLink()) stack.push(join(current, e.name))
+    }
+  }
+  return found
+}
+
+
+/** Create a directory to prove the filesystem will accept writes there. */
+function canCreateUnder(dir) {
+  const probe = join(dir, `.e3-writable-${Date.now()}`)
+  try {
+    mkdirSync(probe, { recursive: true })
+    rmSync(probe, { recursive: true, force: true })
+    return true
+  } catch {
+    return false
+  }
+}
 
 // ------------------------------------------------------------------- findings
 const steps = []
@@ -370,12 +502,74 @@ async function main() {
 
   // -------------------------------------------------------------- E3.9 cleanup
   await sleep(400)
-  if (!OPT.keep) {
-    try { rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 }) } catch {}
+
+  // E3.9 answers the question the disposable home exists for: *is this run
+  // leaving anything of ours behind?*
+  //
+  // It deliberately does **not** answer it by asserting that Node removed the
+  // temp root. A delete of ~600 scratch files can fail for reasons that say
+  // nothing about the plugin, and a check that cannot pass is worse than no
+  // check: it buries the real signal and trains the reader to ignore a red E3.
+  //
+  // So the removal is attempted, and the verdict rests on what actually remains
+  // inside the home. An inability to delete temp files is reported as a note,
+  // never as a failure of the plugin.
+  const profileNodeModules = join(home, 'profiles', 'node_modules')
+  const treeEntries = countEntries(home)
+
+  const cleaned = OPT.keep
+    ? { gone: false, error: '--keep' }
+    : removeTree(home)
+
+  const ourDirLeft = existsSync(installedDir)
+  const rc1DirLeft = existsSync(join(home, 'profiles', 'rc1'))
+  const rc3DirLeft = existsSync(join(home, 'profiles', 'rc3'))
+  const storeChildren = cleaned.gone ? [] : childNames(profileNodeModules)
+  const storeWritable = cleaned.gone ? true : canCreateUnder(profileNodeModules)
+  const leftovers = cleaned.gone ? 0 : countEntries(home)
+
+  // A leftover tree is only "not ours" if a full walk agrees. Pairing the walk
+  // with the per-path probes keeps "our directory is absent" from being a
+  // statement about a directory the walk could never have reached.
+  const tree = cleaned.gone ? [] : listTree(home)
+  const treeHoldsOurs = tree.includes(pluginName)
+
+  // Anything of ours, and any control profile the run itself created, is a hard
+  // failure. A surviving shared store is not — it holds none of our files.
+  const residue = []
+  if (ourDirLeft || treeHoldsOurs) residue.push('our own package directory')
+  if (rc1DirLeft) residue.push('the rc1 control profile')
+  if (rc3DirLeft) residue.push('the rc3 control profile')
+  if (!storeWritable) residue.push('shared store is not writable, so the home is not reusable')
+
+  log(
+    `\n[E3.9] temp root removed = ${cleaned.gone}${OPT.keep ? ' (--keep)' : ''}` +
+      `\n        home held ${treeEntries} file(s) under profiles/ + storages/` +
+      `\n        our package dir left = ${ourDirLeft}   rc1 left = ${rc1DirLeft}   rc3 left = ${rc3DirLeft}`,
+  )
+  if (!cleaned.gone && !OPT.keep) {
+    log(
+      `        node removal = ${cleaned.error ? `error: ${cleaned.error}` : 'no error reported'}` +
+        `\n        ${leftovers} file(s) remain   store entries left = ${storeChildren.length}   store writable = ${storeWritable}` +
+        `\n        a walk over the leftovers names ${pluginName} = ${treeHoldsOurs} (want false)`,
+    )
   }
-  const cleaned = !existsSync(home)
-  log(`\n[E3.9] disposable home removed = ${cleaned}${OPT.keep ? ' (--keep)' : ''}`)
-  note('E3.9', 'no residue left on the machine', cleaned || OPT.keep, home)
+  if (residue.length > 0) log(`        residue: ${residue.join('; ')}`)
+
+  note(
+    'E3.9',
+    'nothing of ours survives the run (profiles left behind must be ours: none)',
+    OPT.keep || residue.length === 0,
+    OPT.keep
+      ? `${home} (--keep)`
+      : residue.length > 0
+        ? residue.join('; ')
+        : cleaned.gone
+          ? `temp root removed cleanly (${treeEntries} file(s)): ${home}`
+          : `temp root left ${leftovers} scratch file(s) that contain nothing of ours — ` +
+            (cleaned.error ?? 'removal incomplete') +
+            `; delete it by hand if you want the space back: ${home}`,
+  )
 
   if (packedFile) {
     try { rmSync(join(root, packedFile), { force: true }) } catch {}

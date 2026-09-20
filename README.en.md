@@ -71,8 +71,11 @@ installers can check it:
 | Item | Value |
 |---|---|
 | Node.js | `>=22` |
-| DSH range | `^0.1.5-rc.1 \|\| ^0.1.6-alpha.1` |
-| Verified releases | `0.1.5-rc.2`, `0.1.6-alpha.1`, `0.1.6-alpha.2` (each with disposable-profile install / start / uninstall evidence) |
+| DSH range | `^0.1.6-alpha.2` |
+| Verified releases | `0.1.6-alpha.2` (with disposable-profile install / start / uninstall evidence) |
+
+This plugin declares the **current latest** DSH release only: older releases are served by older
+plugin versions, so re-taking evidence for them would produce claims nobody reads.
 
 > ⚠️ The range must enumerate tuples with `||`; writing `>=0.1.5-rc.1 <0.2.0` does **not** match
 > `0.1.6-alpha.2`. By the semver prerelease rule a prerelease version only satisfies a range when
@@ -218,9 +221,6 @@ in this project that runs the browser half at all — on a **faithful** minimal 
 violation: reading a service that was never injected (R2), and reading a **dotted service name** as a
 property of its parent (R2b, e.g. `ctx.get('remote').commands`). Both classes are total-outage bugs
 on a real machine, and each one happened once (1.8.2 / 1.8.3).
-
-> Full strategy (three invariants, compatibility matrix, degradation table, residual risks):
-> **[docs/兼容性策略.md](docs/兼容性策略.md)** (Chinese).
 
 ## Lifecycle events (for other plugins)
 

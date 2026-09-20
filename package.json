@@ -26,17 +26,15 @@
   "license": "MIT",
   "engines": {
     "node": ">=22",
-    "dsh": "^0.1.5-rc.1 || ^0.1.6-alpha.1"
+    "dsh": "^0.1.6-alpha.2"
   },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
     },
     "compatibility": {
-      "dsh": "^0.1.5-rc.1 || ^0.1.6-alpha.1",
+      "dsh": "^0.1.6-alpha.2",
       "dshReleases": {
-        "0.1.5-rc.2": "compatible",
-        "0.1.6-alpha.1": "compatible",
         "0.1.6-alpha.2": "compatible"
       }
     },

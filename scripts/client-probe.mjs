@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * Client-half inject probe — the dynamic half of rules R2 / R2b
- * (docs/兼容性策略.md), run against the *built* artifact.
+ * Client-half inject probe — the dynamic half of rules R2 / R2b, run against the
+ * *built* artifact.
  *
  * R2  — the client half may only read a service as `ctx.<name>` when that name
  *       is in its declared `inject`. Optional services go through

@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { beforeAll, describe, expect, it } from 'vitest'
 
 /**
- * Source-level policy test for rule R2 (see docs/兼容性策略.md).
+ * Source-level policy test for rule R2.
  *
  * Rule R2 — the client half may only read a service as `ctx.<name>` when that
  * name appears in its declared `inject` list. Everything optional goes through
