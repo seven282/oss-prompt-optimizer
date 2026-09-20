@@ -218,12 +218,12 @@ function canonical(path) {
  * from, instead of enumerating a fixed list of `node_modules` directories.
  *
  * The enumeration approach was wrong in a way that mattered: Node walks *up*
- * from the importing file, and this machine's profile layer reaches the dsh CLI
- * bundle through junctions, so the plugin's host packages came from
- * `D:\npm-global\...\dsh\node_modules\...` — a directory the old check never
- * looked at. It could therefore report PASS while the host resolved something
- * else entirely. Resolving from the real install directory cannot diverge that
- * way, because it is the same lookup the host performs.
+ * from the importing file, and a real profile layer often reaches the dsh CLI
+ * bundle through junctions, so the plugin's host packages can come from a
+ * global-prefix directory the old check never looked at. It could therefore
+ * report PASS while the host resolved something else entirely. Resolving from
+ * the real install directory cannot diverge that way, because it is the same
+ * lookup the host performs.
  */
 function checkInjectExistence(manifest) {
   const ids = manifest.dsh?.client?.inject ?? []
@@ -333,8 +333,8 @@ function checkArtifactConsistency() {
  * `node_modules/pnpm/bin/pnpm.mjs` that sits beside it, because a global pnpm
  * install puts the shim at `<prefix>/pnpm.cmd` and the CLI at
  * `<prefix>/node_modules/pnpm/bin/pnpm.mjs`. Hard-coding `APPDATA/npm` misses
- * any prefix configured elsewhere (this repository's machine uses
- * `D:\npm-global`), and the `shell: true` fallback that used to catch that case
+ * any prefix configured elsewhere (a machine whose npm prefix lives on another
+ * drive, say), and the `shell: true` fallback that used to catch that case
  * would happily invoke an unrelated pnpm.
  */
 function findPnpmCli() {
