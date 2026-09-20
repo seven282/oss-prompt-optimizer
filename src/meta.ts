@@ -366,6 +366,24 @@ const STRUCTURE_RTG_EN = `Output structure (Role / Task / Goal):
 const SELFCHECK_RTG_EN = `- Self-check before output: are the Role:/Task:/Goal: labels present with substantive content, free of invented facts and filler? Stay within the length anchor — never pad to fill it, never drop an execution essential.`
 
 /**
+ * Placeholders filled by the **caller** after `renderBlocks` returns, not by
+ * the block map below. The substitution is deliberately two-stage: the data
+ * slots are filled here, and the raw instruction (or the iterate pair) last,
+ * so that a placeholder-looking literal *inside the user's own text* can never
+ * be clobbered by an earlier pass.
+ *
+ * The placeholder check in `renderBlocks` must know about these, otherwise it
+ * reports them as unknown on every single call — a false alarm that trains
+ * everyone to ignore the one warning that would flag a genuinely unrendered
+ * template.
+ */
+const CALLER_FILLED_PLACEHOLDERS: readonly string[] = [
+  '{{原始指令}}',
+  '{{上次结果}}',
+  '{{迭代指令}}',
+]
+
+/**
  * Placeholder-to-block-key mapping for efficient template rendering.
  * Single-replace strategy prevents double-substitution issues.
  */
@@ -878,11 +896,13 @@ function renderBlocks(template: string, blocks: MetaBlocks): string {
     result = result.replace(placeholder, replacement)
   }
 
-  // Validate: check for any remaining unknown placeholders
+  // Validate: any placeholder still present must be one the caller fills
+  // afterwards. Anything else means a template slot we never substituted.
   const remainingPlaceholders = result.match(/{{[\w\u4e00-\u9fff]+}}/g)
   if (remainingPlaceholders !== null && remainingPlaceholders.length > 0) {
-    const knownPlaceholders = Object.keys(PLACEHOLDER_MAP)
-    const unknownPlaceholders = remainingPlaceholders.filter(p => !knownPlaceholders.includes(p))
+    const unknownPlaceholders = remainingPlaceholders.filter(
+      p => !CALLER_FILLED_PLACEHOLDERS.includes(p),
+    )
     if (unknownPlaceholders.length > 0) {
       // Log warning but don't break (allow dynamic placeholders)
       console.warn(`Unknown placeholders found: ${unknownPlaceholders.join(', ')}`)

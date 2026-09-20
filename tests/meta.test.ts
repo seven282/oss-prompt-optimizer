@@ -890,3 +890,62 @@ describe('compact tier for simple instructions (1.6.8 P-A)', () => {
     expect(prompt).toContain('精简、可执行')
   })
 })
+
+/**
+ * The placeholder check used to flag the caller-filled slots as unknown on
+ * every call, because it treated `PLACEHOLDER_MAP` as the whole known set while
+ * `{{原始指令}}` / `{{上次结果}}` / `{{迭代指令}}` are substituted by the
+ * callers *after* rendering. A warning that fires unconditionally is worse than
+ * no warning: it buries the one case that matters.
+ */
+describe('placeholder self-check', () => {
+  /** Capture console.warn for the duration of `fn`. */
+  function captureWarnings(fn: () => void): string[] {
+    const seen: string[] = []
+    const original = console.warn
+    console.warn = (...args: unknown[]) => { seen.push(args.map(String).join(' ')) }
+    try { fn() } finally { console.warn = original }
+    return seen
+  }
+
+  const placeholderWarnings = (warnings: string[]): string[] =>
+    warnings.filter(w => w.includes('Unknown placeholders found'))
+
+  it('stays silent for the optimize path', () => {
+    const warnings = captureWarnings(() => { buildOptimizePrompt(INPUT) })
+    expect(placeholderWarnings(warnings)).toEqual([])
+  })
+
+  it('stays silent for the iterate path', () => {
+    const warnings = captureWarnings(() => { buildIteratePrompt('上次的提示词', '再精简一些') })
+    expect(placeholderWarnings(warnings)).toEqual([])
+  })
+
+  it('stays silent for the English template and every output style', () => {
+    for (const metaLanguage of ['zh', 'en'] as const) {
+      for (const outputStyle of ['plain', 'sections', 'role-task-goal'] as const) {
+        const warnings = captureWarnings(() => {
+          buildOptimizePrompt(INPUT, 'auto', undefined, undefined, outputStyle, metaLanguage)
+        })
+        expect(placeholderWarnings(warnings), `${metaLanguage}/${outputStyle}`).toEqual([])
+      }
+    }
+  })
+
+  it('still fires for a template slot nobody fills', () => {
+    // Reverse control: the check has to be capable of failing, otherwise the
+    // three assertions above prove nothing. A custom template carrying a typo'd
+    // placeholder models a genuinely unrendered slot.
+    const broken: TemplateSet = {
+      ...DEFAULT_TEMPLATES,
+      optimizeZh: DEFAULT_TEMPLATES.optimizeZh.replace('{{自查}}', '{{自查}} {{拼错的占位符}}'),
+    }
+    const warnings = captureWarnings(() => {
+      buildOptimizePrompt(INPUT, 'auto', undefined, undefined, 'plain', 'zh', undefined, broken)
+    })
+    const placeholderWarnings_ = placeholderWarnings(warnings)
+    expect(placeholderWarnings_).toHaveLength(1)
+    expect(placeholderWarnings_[0]).toContain('{{拼错的占位符}}')
+    expect(placeholderWarnings_[0]).not.toContain('{{原始指令}}')
+  })
+})
