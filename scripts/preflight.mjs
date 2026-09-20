@@ -46,6 +46,17 @@
  *       service upstream cannot slip past unnoticed. Local and offline: it needs
  *       `lib/` and a devDependency (`@deepseek-ai/cordis`), never the network —
  *       the derivation reports SKIP when no dsh install is present, as in CI.
+ *   P8  Committed runtime artifacts — every path the manifest publishes
+ *       (`main`, `types`, `exports`) must exist on disk, be **tracked by git**,
+ *       and show **no diff against HEAD** under `lib/`. Staged-but-uncommitted
+ *       files therefore fail: the store validates a commit, and a green index is
+ *       not a commit. DSH STORE never runs install,
+ *       prepare or build, so a commit that ships only `src/` is an uninstallable
+ *       package while `npm publish` still looks perfectly healthy — npm rebuilds
+ *       via `prepublishOnly` and honours `files`. That is exactly how
+ *       oss-prompt-optimizer 1.8.4 was deferred: `lib/` was gitignored, and
+ *       every published path pointed into it. This gate is why `lib/` is tracked.
+ *       SKIP (with the reason) outside a git checkout, e.g. inside a tarball.
  *
  * Usage:  pnpm preflight  [--skip-tests] [--offline] [--dsh-home <path>]
  */
@@ -490,6 +501,128 @@ function checkClientInjectContract() {
 }
 
 // ---------------------------------------------------------------------------
+// P8 — committed runtime artifacts (the DSH STORE fixed-commit contract)
+// ---------------------------------------------------------------------------
+
+/**
+ * Every path the manifest promises a consumer, flattened and de-duplicated.
+ * `package.json` is dropped: it is always packed, whatever `files` says.
+ */
+function declaredRuntimePaths(manifest) {
+  const found = []
+  const push = (value) => {
+    if (typeof value !== 'string') return
+    if (!value.startsWith('./') && !value.startsWith('lib/')) return
+    const path = value.replace(/^\.\//, '')
+    if (path === 'package.json') return
+    if (!found.includes(path)) found.push(path)
+  }
+  push(manifest.main)
+  push(manifest.types)
+  for (const entry of Object.values(manifest.exports ?? {})) {
+    if (typeof entry === 'string') push(entry)
+    else if (entry && typeof entry === 'object') {
+      for (const value of Object.values(entry)) push(value)
+    }
+  }
+  return found
+}
+
+function gitLines(args) {
+  return execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+    .split(/\r?\n/)
+    .filter(Boolean)
+}
+
+function checkCommittedRuntimeArtifacts(manifest) {
+  if (!existsSync(join(root, '.git'))) {
+    record('P8', 'committed runtime artifacts', SKIP, 'not a git checkout (published tarball) — nothing to compare')
+    return
+  }
+
+  const declared = declaredRuntimePaths(manifest)
+  if (declared.length === 0) {
+    record('P8', 'committed runtime artifacts', FAIL, 'the manifest declares no runtime paths — check main/types/exports')
+    return
+  }
+
+  // A gate that cannot fail proves nothing, so prove the two probes discriminate
+  // before trusting them: `package.json` is tracked (so `ls-files` can say yes)
+  // and `node_modules` is ignored (so `check-ignore` can say yes).
+  const controls = []
+  try {
+    controls.push(gitLines(['ls-files', '--error-unmatch', 'package.json']).length > 0)
+  } catch {
+    controls.push(false)
+  }
+  try {
+    execFileSync('git', ['check-ignore', '-q', 'node_modules'], { cwd: root, stdio: 'ignore' })
+    controls.push(true)
+  } catch {
+    controls.push(false)
+  }
+  if (controls.some((ok) => !ok)) {
+    record(
+      'P8',
+      'committed runtime artifacts',
+      FAIL,
+      `the probes cannot discriminate in this checkout (tracked-probe=${controls[0]}, ignore-probe=${controls[1]})`,
+    )
+    return
+  }
+
+  const missing = []
+  const ignored = []
+  const untracked = []
+  for (const path of declared) {
+    if (!existsSync(join(root, path))) {
+      missing.push(path)
+      continue
+    }
+    try {
+      execFileSync('git', ['check-ignore', '-q', path], { cwd: root, stdio: 'ignore' })
+      ignored.push(path)
+    } catch {
+      /* not ignored — good */
+    }
+    try {
+      gitLines(['ls-files', '--error-unmatch', path])
+    } catch {
+      untracked.push(path)
+    }
+  }
+
+  // `git status` cannot see ignored files, so the ignore probe above is what
+  // catches the 1.8.4 shape; this one catches a rebuilt-but-uncommitted lib/.
+  //
+  // Staged-but-uncommitted counts as drift too. An earlier version compared the
+  // worktree against the *index*, so `git add lib` made the gate go green while
+  // the change still lived only in the index — and the store validates a commit,
+  // not an index. `HEAD` is the right baseline because HEAD is what a pinned
+  // commit resolves to.
+  const drift = gitLines(['status', '--porcelain', '--', 'lib']).filter(
+    (line) => line.slice(0, 2) !== '??',
+  )
+
+  const problems = []
+  if (missing.length > 0) problems.push(`not on disk: ${missing.join(', ')}`)
+  if (ignored.length > 0) problems.push(`gitignored: ${ignored.join(', ')}`)
+  if (untracked.length > 0) problems.push(`untracked: ${untracked.join(', ')}`)
+  if (drift.length > 0) problems.push(`not committed in lib/ (run: git add lib && git commit): ${drift.slice(0, 6).join(' | ')}`)
+
+  if (problems.length > 0) {
+    record('P8', 'committed runtime artifacts', FAIL, problems.join('\n    '))
+    return
+  }
+  record(
+    'P8',
+    'committed runtime artifacts',
+    PASS,
+    `${declared.length} declared path(s) on disk, tracked and clean (${declared.join(', ')})`,
+  )
+}
+
+// ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 
@@ -503,6 +636,7 @@ else checkBuildChain()
 checkCompatibilityReport()
 checkStartupIndependence()
 checkClientInjectContract()
+checkCommittedRuntimeArtifacts(manifest)
 
 let failed = 0
 for (const result of results) {

@@ -8,12 +8,17 @@ node_modules/
 # machine, not a property of the package. pnpm scaffolds this file by itself
 # (with an undecided placeholder) whenever it meets an unapproved build script,
 # so committing it would also force pnpm-10 CI runners to parse a key only
-# pnpm 11+ understands. `prepare` no longer goes through pnpm, so publishing
-# does not depend on this file existing.
+# pnpm 11+ understands. `prepublishOnly` runs the build through npm rather than
+# pnpm, so publishing does not depend on this file existing.
 pnpm-workspace.yaml
 
-# Build output — built from source by `pnpm run build` / the `prepare` script
-lib/
+# `lib/` is deliberately **tracked**, not ignored. It is the published bundle:
+# `main` / `types` / `exports` all point into it, and DSH STORE validates a
+# *fixed Git commit* without running install, prepare or build. A commit that
+# only carries `src/` is therefore an uninstallable package even though `npm
+# publish` looks fine (npm rebuilds via `prepublishOnly` and ships `files`).
+# Keep it in sync with `src/` in the same commit — preflight P8 fails on drift.
+# Only the staging dir below is scratch.
 dist/
 
 # npm pack artifacts

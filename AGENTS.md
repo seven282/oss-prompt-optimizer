@@ -7,14 +7,19 @@ DeepSeek Harness 插件 `oss-prompt-optimizer`：把原始指令优化为专业�
 ```sh
 pnpm install --store-dir .pnpm-store --cache-dir .pnpm-cache   # 沙箱内安装（publish 前勿用 --frozen-lockfile 装本地）
 pnpm run typecheck    # tsc --noEmit
-pnpm test             # vitest run（26 个测试文件 / 639 用例，mock llm，无需真实密钥）
+pnpm test             # vitest run（27 个测试文件 / 655 用例，mock llm，无需真实密钥）
 pnpm run build        # tsc -p tsconfig.build.json + node scripts/copy-client.mjs（client.js → lib/client.js）
+pnpm preflight        # 门禁 P1–P8（P8 校验提交产物新鲜度）
+pnpm e3               # 一次性 Profile 验收：安装 → 启动 → 卸载（Windows 上须在沙箱外跑）
 ```
 
 - 单测单文件：`pnpm exec vitest run tests/meta.test.ts`。**测试文件全清单与逐文件用例数不在此处硬编码**（会过期）——权威来源是 `docs/vault/50-Testing/测试覆盖清单.md`，由 `node scripts/check-testcounts.mjs` 双向校验（漏列/多列都报错）。改测试后必须同步该表，否则 CI/本地校验失败。
 - CI（`.github/workflows/ci.yml`）：`pnpm install --frozen-lockfile` → `pnpm audit --audit-level=high` → typecheck → test → build，node 22 / pnpm 10。
+- `scripts/e3-acceptance.mjs`（`pnpm e3`）——**上架/发版前的本地验收**：在临时 `DSH_HOME` 里初始化出厂 `web` 模板 → 装指定产物 → 合成配置 → 启动 `dsh web` 校验 HTTP 200 与插件客户端模块 → 卸载 → 清理，含 3 条反向控制。**不进 CI**（需要真实宿主与网络）。两个坑已写进脚本注释：`dsh plugin add <路径>` 会**按空白重新切分参数**（含空格路径会被 pnpm 当 `owner/repo` GitHub 简写 ⇒ 产物先落到无空格目录）；新建 profile 是**空的**，必须先 `--from-default-profile web`。
 - **项目没有 linter**：devDeps 无 biome/eslint，`scripts` 无 lint。编辑器里的 biome `organizeImports` 提示是**已知且接受**的既有噪音（用户已确认不处理）——不要"顺手修复"，也不要引入 lint 工具。
-- `pnpm prepare` = build；从 GitHub 源安装时 pnpm ≥10 会拒绝 `prepare`，需在 profile 的 pnpm-workspace.yaml 加 `allowBuilds: oss-prompt-optimizer: true`（README「安装」节有完整流程）。
+- **`lib/` 是入库的发布产物**（1.8.5 起）。DSH STORE 只读**固定 Commit**、**不跑 install / prepare / build**，而 `main`/`types`/`exports` 全指向 `lib/` —— 只带 `src/` 的提交就是不可安装的包（1.8.4 被「更新暂缓」正是如此，而 `npm publish` 一切正常）。**改 `src/` 必须重建并同笔提交 `lib/`**，由 preflight **P8** 守着（发布路径必须存在、被 git 跟踪、无未提交漂移）。
+- `pnpm prepublishOnly` = build（不再是 `prepare`）：构建只在发布时发生，git 源安装不再要求消费方允许执行构建脚本（pnpm ≥10/11 默认拦截 `prepare`）。
+- **上架契约字段**：`engines.node >=22`、`engines.dsh` 与 `dsh.compatibility.dsh` 同值、`dsh.compatibility.dshReleases` 逐精确版本记录。范围**必须逐 tuple 用 `||` 枚举**——`>=0.1.5-rc.1 <0.2.0` 按 semver 预发布规则**匹配不到 `0.1.6-alpha.2`**。由 `tests/manifest-contract.test.ts` + preflight P8 守着。
 
 ## 架构（文件职责）
 

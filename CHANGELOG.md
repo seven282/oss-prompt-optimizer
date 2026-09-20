@@ -1,5 +1,56 @@
 # Changelog
 
+## [1.8.5] - 2026-09-19
+
+**按 DSH STORE 上架契约补齐固定 Commit 的运行时产物与兼容性声明。**
+
+DSH STORE 的复检在 **1.8.4（固定 Commit `d954cac`）** 上给出两条结论：
+
+- 更新暂缓：`runtime artifact is missing from the fixed Git Commit: lib/index.js;
+  ./lib/types/index.d.ts; ./lib/client.js`；
+- 兼容性暂时下架：`Add an exact compatible dshReleases record at a new fixed Commit;
+  range-only or unknown compatibility is not installable evidence.`
+
+第一条的根因是 **`lib/` 被 `.gitignore` 排除**：manifest 的 `main` / `types` / `exports`
+全部指向 `lib/`，而固定 Commit 里只有 `src/`。npm 路完全正常（`prepublishOnly` 现构建 +
+`files` 强含 `lib`），所以 `npm publish` 与真机安装都没暴露问题；但 STORE 明确
+**不执行第三方 install / prepare / build**，只读源码 —— 一个不带 `lib/` 的 Commit 就是
+不可安装的包。第二条是 manifest **完全没有 `dsh.compatibility`**，Catalog 无法把任何
+已验证的安装映射成兼容记录。
+
+### Fixed
+
+- **`lib/` 纳入版本控制**（`.gitignore` 移除该规则）：它**就是发布产物**，必须与 `src/`
+  在同一笔提交里保持同步 —— 这也正是同一生态参照实现的既有惯例。同时天然解决了
+  「从 GitHub 源安装时 pnpm ≥10 拒绝 `prepare`」的问题。
+- **`prepare` → `prepublishOnly`**：构建只在发布时发生，git 源安装不再要求消费方的
+  包管理器执行我们的构建脚本（`pnpm` 11+ 默认拦截 `prepare`，需人工加 `allowBuilds`）。
+- **新增 `dsh.compatibility` 与 `engines`**：`engines.node: >=22`；`engines.dsh` 与
+  `dsh.compatibility.dsh` 同值，逐 tuple 枚举 `^0.1.5-rc.1 || ^0.1.6-alpha.1`；
+  `dshReleases` 给出精确版本记录（只列必须声明的最新三个，历史版本交由「旧 dsh 配旧插件」
+  自然分流）。⚠️ 范围**不能**写成 `>=0.1.5-rc.1 <0.2.0`：按 semver 的预发布规则，
+  带预发布号的版本只有在比较集中存在**同一 `[major.minor.patch]` 且带预发布**的项时才满足
+  范围，因此该写法**匹配不到 `0.1.6-alpha.2`**。
+
+### Added
+
+- **门禁 P8「提交产物新鲜度」**（`scripts/preflight.mjs`）：manifest 发布的每个路径都必须
+  在磁盘上、**被 git 跟踪**、且与新建构建**无未提交漂移**；并先证明两条探测本身能判别
+  （已跟踪文件能查出来、被忽略路径能认出）—— 不能失败的门禁等于没有门禁。worktree
+  非 git 检出时记为 SKIP 并说明原因。
+- **`tests/manifest-contract.test.ts`**（16 例）：在源码层面锁住上述契约 —— 运行文件存在性、
+  `files` 覆盖、不得被 `.gitignore` 命中、`prepublishOnly` 形态、Node/DSH 范围一致、
+  `dshReleases` 键为精确版本且能被范围覆盖（含「错误范围必须判否」的反向控制）、
+  patch 仅插入自有 entry id、插件名不占用 `@deepseek-ai/*` 命名空间。
+- **`scripts/e3-acceptance.mjs`**：一次性 Profile 的**安装 → 启动 → 卸载**验收脚本。
+  在临时 `DSH_HOME` 中初始化出厂 `web` 模板、安装指定产物、合成配置、启动 `dsh web`
+  并校验 HTTP 200 与插件客户端模块、卸载、清理，输出 JSON 证据；含三条反向控制
+  （未装插件的 profile 不得含 entry id、伪造 token 必须被拒、不存在的版本必须安装失败）。
+  两个环境事实被写进脚本注释：`dsh plugin add <路径>` 会**按空白重新切分参数**
+  （含空格路径会被 pnpm 当成 `owner/repo` GitHub 简写），故产物先落到无空格目录；
+  新建 profile 是**空的**，必须先 `--from-default-profile web` 才有 web 应用可启动。
+- **`npm run e3`**：上架/发版前的本地验收入口。
+
 ## [1.8.4] - 2026-09-16
 
 **修复 1.8.3 在真机上客户端半边仍不加载：`cannot get property "remote.commands" without inject`。**

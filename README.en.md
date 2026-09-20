@@ -39,15 +39,14 @@ Published on npm (`oss-prompt-optimizer`). Pick any of the three ways:
 dsh plugin --profile web add oss-prompt-optimizer
 ```
 
-**Option 2: from GitHub (source build, requires `prepare` permission)**
+**Option 2: from GitHub**
 ```sh
 dsh plugin --profile web add github:seven282/oss-prompt-optimizer
-# pnpm ≥10 refuses to run prepare on first install; add the package key pnpm
-# suggests to that profile's pnpm-workspace.yaml and retry:
-#   allowBuilds:
-#     oss-prompt-optimizer: true
 # Pin a commit: github:seven282/oss-prompt-optimizer#<sha>
 ```
+The built bundle (`lib/`) is committed — it *is* the published artifact — so installing from
+source needs **no build permission** and pnpm ≥10/11 will not ask for `allowBuilds`. The build
+only happens at `npm publish` time, driven by `prepublishOnly`.
 
 **Option 3: from a local directory (development)**
 ```sh
@@ -63,6 +62,28 @@ dsh plugin --profile web remove oss-prompt-optimizer
 ```
 
 Restart the harness (`dsh web`) after installing or removing the plugin.
+
+### Runtime requirements & compatibility declaration
+
+Declared per release in the manifest (`engines` + `dsh.compatibility`) so DSH STORE and
+installers can check it:
+
+| Item | Value |
+|---|---|
+| Node.js | `>=22` |
+| DSH range | `^0.1.5-rc.1 \|\| ^0.1.6-alpha.1` |
+| Verified releases | `0.1.5-rc.2`, `0.1.6-alpha.1`, `0.1.6-alpha.2` (each with disposable-profile install / start / uninstall evidence) |
+
+> ⚠️ The range must enumerate tuples with `||`; writing `>=0.1.5-rc.1 <0.2.0` does **not** match
+> `0.1.6-alpha.2`. By the semver prerelease rule a prerelease version only satisfies a range when
+> some comparator carries the *same* `[major.minor.patch]` plus a prerelease.
+
+Reproduce the evidence locally (throwaway `DSH_HOME`, your real profile is untouched):
+```sh
+node scripts/e3-acceptance.mjs --dsh-bin <path/to/dsh/lib/bin.js> --json e3.json
+# On Windows run this outside the assistant sandbox: `dsh web` calls reg.exe, and a blocked
+# sandbox leaves the host hanging with no output at all.
+```
 
 ## Quick scene templates (/template)
 
@@ -83,7 +104,7 @@ Or enable via config in `cordis.patch.yml`:
 ```yaml
 - insert:
     - id: prompt-optimizer
-      name: 'prompt-optimizer'
+      name: 'oss-prompt-optimizer'
       config:
         autoOptimize: true
         autoOptimizePrefix: '/optimize '
@@ -117,10 +138,16 @@ pnpm install --store-dir .pnpm-store --cache-dir .pnpm-cache   # sandboxed insta
 pnpm run typecheck    # tsc --noEmit
 pnpm test             # vitest (mocked llm, no real credentials needed)
 pnpm run build        # tsc -p tsconfig.build.json → lib/
-pnpm preflight        # compatibility gate P1–P7 (run before publishing)
+pnpm preflight        # compatibility gate P1–P8 (run before publishing)
+pnpm e3               # disposable-profile acceptance: install → start → uninstall (outside the sandbox)
 ```
 
 All tests use a mocked `llm` stream and never read `.credentials.yaml`.
+
+> **`lib/` is tracked.** It *is* the published artifact: `main` / `types` / `exports` all point into
+> it, and DSH STORE only reads a fixed commit — it never runs install, prepare or build. So a change
+> under `src/` must rebuild and commit `lib/` in the same commit; gate P8 fails when the artifacts are
+> missing, ignored, or carry uncommitted drift.
 
 ## Compatibility & failure modes
 
@@ -178,6 +205,8 @@ pnpm preflight       # P1 dependency surface / P2 inject resolution / P3 artifac
                      # P6 startup independence (entry still instantiates with every dsh package sealed)
                      # P7 client service-read contract (R2/R2b static scan + apply() actually run
                      #    on a faithful minimal host)
+                     # P8 committed runtime artifacts (published paths exist, are tracked, no drift)
+pnpm e3 --dsh-bin <that release's dsh/lib/bin.js>   # disposable profile: install → start → uninstall
 dsh web              # on a real host: starts normally + one compat report line in the log
 ```
 

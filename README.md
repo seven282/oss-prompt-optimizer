@@ -96,7 +96,7 @@ bug 修复 / 新功能 / 重构 / 审查 / 脚本 / 部署 / 安装 / 排查 / �
 ```yaml
 - insert:
     - id: prompt-optimizer
-      name: 'prompt-optimizer'
+      name: 'oss-prompt-optimizer'
       config:
         autoOptimize: true
         autoOptimizePrefix: '/optimize '
@@ -121,15 +121,13 @@ bug 修复 / 新功能 / 重构 / 审查 / 脚本 / 部署 / 安装 / 排查 / �
 dsh plugin --profile web add oss-prompt-optimizer
 ```
 
-**方式二：从 GitHub 安装（源码构建，需授权 prepare）**
+**方式二：从 GitHub 安装**
 ```sh
 dsh plugin --profile web add github:seven282/oss-prompt-optimizer
-# 首次会因 pnpm ≥10 拒绝运行 prepare 而失败；把 pnpm 提示的包键加进该 profile 的
-# pnpm-workspace.yaml 后重试：
-#   allowBuilds:
-#     oss-prompt-optimizer: true
 # 建议锁定 commit：github:seven282/oss-prompt-optimizer#<sha>
 ```
+`lib/` 构建产物随仓库提交（它就是发布产物），所以从源码安装**不需要任何构建授权**，
+pnpm ≥10/11 不会再要求 `allowBuilds`。构建只在 `npm publish` 时由 `prepublishOnly` 触发。
 
 **方式三：从本地目录安装（开发用）**
 ```sh
@@ -148,6 +146,26 @@ dsh plugin --profile web remove oss-prompt-optimizer
 
 > **完整配置参考**：[docs/configuration.md](docs/configuration.md)
 
+### 运行环境与兼容性声明
+
+manifest 里以 `engines` + `dsh.compatibility` 逐版本声明，供 DSH STORE 与安装方核对：
+
+| 项 | 值 |
+|---|---|
+| Node.js | `>=22` |
+| DSH 范围 | `^0.1.5-rc.1 \|\| ^0.1.6-alpha.1` |
+| 已验证版本 | `0.1.5-rc.2`、`0.1.6-alpha.1`、`0.1.6-alpha.2`（各含一次性 Profile 安装 / 启动 / 卸载证据） |
+
+> ⚠️ 范围必须**逐 tuple 用 `||` 枚举**，不能写成 `>=0.1.5-rc.1 <0.2.0`：按 semver 的预发布规则，
+> 带预发布号的版本只有当比较集中存在**同一 `[major.minor.patch]` 且带预发布**的项时才满足范围，
+> 因此那个写法**匹配不到 `0.1.6-alpha.2`**。
+
+本地复现证据（临时 `DSH_HOME`，不碰真实 profile）：
+```sh
+node scripts/e3-acceptance.mjs --dsh-bin <path/to/dsh/lib/bin.js> --json e3.json
+# Windows 上须在助手沙箱外运行：dsh web 会调 reg.exe，沙箱拦下后宿主零输出挂住
+```
+
 ## 开发
 
 ```sh
@@ -155,10 +173,15 @@ pnpm install --store-dir .pnpm-store --cache-dir .pnpm-cache   # 沙箱内安装
 pnpm run typecheck    # tsc --noEmit
 pnpm test             # vitest（mock llm，不依赖真实密钥）
 pnpm run build        # tsc -p tsconfig.build.json → lib/
-pnpm preflight        # 兼容性门禁 P1–P7（发版前必跑）
+pnpm preflight        # 兼容性门禁 P1–P8（发版前必跑）
+pnpm e3               # 一次性 Profile 验收：安装 → 启动 → 卸载（沙箱外跑）
 ```
 
 测试全部使用 mock 的 `llm` 流，绝不读取 `.credentials.yaml`。
+
+> **`lib/` 是入库的。** 它就是发布产物：`main` / `types` / `exports` 全部指向它，而 DSH STORE
+> 只读固定 Commit、不跑 install / prepare / build。因此**改了 `src/` 必须重建并同笔提交 `lib/`** ——
+> 门禁 P8 会在产物缺失、被忽略或存在未提交漂移时直接 FAIL。
 
 ## 兼容性与失败模式
 
@@ -209,6 +232,8 @@ prompt-optimizer: host compat DEGRADED (defineTool=MISSING …) — defineTool: 
 pnpm preflight       # P1 依赖面 / P2 inject 真实解析 / P3 产物一致 / P4 typecheck+test+build
                      # P5 兼容性报告 / P6 启动独立性（封死全部 dsh 包后入口仍能实例化）
                      # P7 客户端服务读取契约（R2/R2b 静态扫描 + 在忠实最小宿主上真跑 apply()）
+                     # P8 提交产物新鲜度（发布路径存在、被 git 跟踪、与新建构建无漂移）
+pnpm e3 --dsh-bin <目标版本的 dsh/lib/bin.js>   # 一次性 Profile：安装 → 启动 → 卸载
 dsh web              # 真机：正常启动 + 日志出现一行 compat report
 ```
 
