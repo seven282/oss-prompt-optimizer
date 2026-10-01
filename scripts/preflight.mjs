@@ -57,6 +57,14 @@
  *       oss-prompt-optimizer 1.8.4 was deferred: `lib/` was gitignored, and
  *       every published path pointed into it. This gate is why `lib/` is tracked.
  *       SKIP (with the reason) outside a git checkout, e.g. inside a tarball.
+ *   P9  Desktop/web dual compatibility — reads the desktop app's own runtime
+ *       (`resources/app.asar` → `dsh/package.json`, e.g.
+ *       `@deepseek-ai/dsh-desktop-runtime@0.2.0-rc.2`) and fails when that
+ *       version's tuple is not enumerated by `dsh.compatibility.dsh` +
+ *       `dshReleases`, or when a `dsh.client.inject` package is missing from it.
+ *       The desktop ships a different dsh release line than the CLI/web one, so
+ *       a range that only spans one tuple silently withholds the plugin there.
+ *       SKIP when no desktop install is present (CI), so the gate is portable.
  *
  * Usage:  pnpm preflight  [--skip-tests] [--offline] [--dsh-home <path>]
  */
@@ -345,7 +353,15 @@ function findPnpmCli() {
     if (!existsSync(join(dir, 'pnpm.cmd')) && !existsSync(join(dir, 'pnpm'))) continue
     candidates.push(join(dir, 'node_modules', 'pnpm', 'bin', 'pnpm.mjs'))
   }
-  return candidates.find((candidate) => candidate && existsSync(candidate)) ?? null
+  // Windows shells export a *shim* as `npm_execpath` (`pnpm.cmd` / `pnpm.ps1`),
+  // and `node <shim>` dies with ERR_UNKNOWN_FILE_EXTENSION before pnpm ever runs.
+  // Only a JavaScript CLI entry may be handed to `process.execPath`, so the
+  // shim candidate falls through to the PATH-derived `node_modules/pnpm/bin`.
+  return (
+    candidates.find(
+      (candidate) => candidate && /\.(mjs|cjs|js)$/.test(candidate) && existsSync(candidate),
+    ) ?? null
+  )
 }
 
 function runScript(name) {
@@ -623,6 +639,44 @@ function checkCommittedRuntimeArtifacts(manifest) {
 }
 
 // ---------------------------------------------------------------------------
+// P9 — desktop/web dual compatibility
+// ---------------------------------------------------------------------------
+
+/**
+ * The desktop app ships its own harness runtime inside an Electron `app.asar`
+ * (a different dsh release line from the CLI/web one). This gate reads that
+ * runtime and fails when its version tuple is not enumerated by
+ * `dsh.compatibility.dsh` / `dshReleases`, or when a `dsh.client.inject` id is
+ * absent from it. SKIPs when no desktop install exists, so CI stays green while
+ * a developer machine with the app installed gets the real check.
+ */
+function checkDesktopCompatibility() {
+  const script = join(root, 'scripts', 'check-desktop-compat.mjs')
+  if (!existsSync(script)) {
+    record('P9', 'desktop compatibility', FAIL, 'scripts/check-desktop-compat.mjs is missing')
+    return
+  }
+  try {
+    const stdout = execFileSync(process.execPath, [script], { encoding: 'utf8' })
+    const text = stdout.trim()
+    const first = text.split(/\r?\n/)[0] ?? ''
+    const detail = text.replace(/^P9 desktop compatibility:\s*(PASS|SKIP)\s*(—\s*)?/, '')
+    record('P9', 'desktop compatibility', first.includes('SKIP') ? SKIP : PASS, detail)
+  } catch (error) {
+    const details = [error?.stdout, error?.stderr]
+      .filter((part) => typeof part === 'string' && part.trim().length > 0)
+      .join('\n')
+      .trim()
+    record(
+      'P9',
+      'desktop compatibility',
+      FAIL,
+      details.replace(/^P9 desktop compatibility:\s*FAIL\s*(—\s*)?/, '') || String(error?.message ?? error),
+    )
+  }
+}
+
+// ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 
@@ -637,6 +691,7 @@ checkCompatibilityReport()
 checkStartupIndependence()
 checkClientInjectContract()
 checkCommittedRuntimeArtifacts(manifest)
+checkDesktopCompatibility()
 
 let failed = 0
 for (const result of results) {

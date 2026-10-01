@@ -174,6 +174,25 @@ describe('manifest contract — DSH STORE compatibility declarations', () => {
     const covered = wrongRange.split('||').some((clause) => clause.trim().replace(/^[\^~]/, '').startsWith(tuple))
     expect(covered).toBe(false)
   })
+
+  it('enumerates both release lines the plugin must serve: CLI/web and desktop', () => {
+    // The desktop app bundles its own runtime (a different dsh release line from
+    // the CLI/web one), so a range that spans only one tuple withholds the
+    // plugin on the other surface. `scripts/preflight.mjs` P9 proves the desktop
+    // tuple against an actually installed app; this assertion is the portable
+    // half that also runs in CI.
+    const range = manifest.dsh?.compatibility?.dsh ?? ''
+    const releases = manifest.dsh?.compatibility?.dshReleases ?? {}
+    const clauses = range.split('||').map((clause) => clause.trim().replace(/^[\^~]/, ''))
+    for (const version of ['0.1.6-alpha.2', '0.2.0-rc.2']) {
+      const tuple = version.replace(/-.*$/, '')
+      expect(
+        clauses.some((clause) => clause.startsWith(tuple)),
+        `${version} is not enumerated by "${range}"`,
+      ).toBe(true)
+      expect(releases[version], `${version} has no dshReleases verdict`).toBe('compatible')
+    }
+  })
 })
 
 describe('manifest contract — bundle patch stays additive and plugin-owned', () => {

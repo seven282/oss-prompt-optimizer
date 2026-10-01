@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.9.0] - 2026-09-22
+
+- **桌面端适配（与 web 双端兼容）**：桌面 App 自带独立运行时
+  `@deepseek-ai/dsh-desktop-runtime@0.2.0-rc.2`（与 CLI/web 的 dsh 不同发布线）。
+  兼容契约按 semver 预发布规则**逐 tuple 枚举**两条线：
+  - `engines.dsh` / `dsh.compatibility.dsh`：`^0.1.6-alpha.2 || ^0.2.0-rc.2`
+  - `dsh.compatibility.dshReleases`：新增 `"0.2.0-rc.2": "compatible"`（保留
+    `0.1.6-alpha.2`，web 端不受影响）
+  - `tests/manifest-contract.test.ts` 新增双线锁定断言（两条 tuple 必须都被枚举
+    且都有 verdict）——CI 即可拦住"只覆盖一端"的回归
+- **新增 `scripts/check-desktop-compat.mjs`（`pnpm desktop:compat`）**：直接读桌面
+  `resources/app.asar` 的 `dsh/package.json`，校验（a）运行时版本被兼容范围覆盖且
+  在 `dshReleases` 中有精确 verdict；（b）`dsh.client.inject` 每个包在桌面运行时中
+  存在；含**覆盖规则自检反向控制**；无桌面安装时报 SKIP，可移植
+- **preflight 新增 P9（桌面兼容门）**：接入上述脚本，P1–P9 全部门禁；CI/无桌面机器
+  自动 SKIP，装有桌面 App 的开发机获得真机校验
+- 实测结论：桌面端宿主契约与插件已对齐——`commands.execute(agent, line,
+  submittedAttachments, signal)` 四参（插件客户端早已 4 参调用）、
+  `CommandDefinition/CommandInvocation` 字段兼容、`llm.stream`/`StreamChunk` 未变、
+  `conversation.input.left` 插槽存在、cordis 4.0.4 满足 peer `^4.0.1`
+
 ## [1.8.6] - 2026-09-20
 
 **修复每次优化都刷屏的假警告 `Unknown placeholders found: {{原始指令}}`。**
