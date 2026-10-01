@@ -462,7 +462,11 @@ async function main() {
         const m = new RegExp(`"id":"${pluginName}"[^}]*?"url":"([^"]+)"`).exec(html)
         manifestHasPlugin = Boolean(m)
         if (m) {
-          const asset = await fetch(`${base}${m[1]}`, { headers: { cookie } })
+          // The manifest URL is relative on 0.2.x (`plugins/??<name>/client.js&rev=...`)
+          // and was site-absolute earlier, so it must be resolved against the
+          // base rather than concatenated — `${base}${url}` silently produced
+          // `http://host:portplugins/...`, a URL that fails to parse.
+          const asset = await fetch(new URL(m[1], `${base}/`).href, { headers: { cookie } })
           clientAssetOk = asset.status === 200 && (await asset.arrayBuffer()).byteLength > 0
         }
       } catch {}
