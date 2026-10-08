@@ -7,7 +7,7 @@ DeepSeek Harness 插件 `oss-prompt-optimizer`：把原始指令优化为专业�
 ```sh
 pnpm install --store-dir .pnpm-store --cache-dir .pnpm-cache   # 沙箱内安装（publish 前勿用 --frozen-lockfile 装本地）
 pnpm run typecheck    # tsc --noEmit
-pnpm test             # vitest run（31 个测试文件 / 809 用例，mock llm，无需真实密钥）
+pnpm test             # vitest run（31 个测试文件 / 812 用例，mock llm，无需真实密钥）
 pnpm run build        # tsc -p tsconfig.build.json + node scripts/copy-client.mjs（client.js → lib/client.js）
 pnpm preflight        # 门禁 P1–P10（P8 校验提交产物新鲜度，P10 校验评测判官/金标集进了发布产物）
 pnpm eval:grader      # 单独跑 P10：构建产物上的判官 + 金标集 + 择优/反馈反向控制自检（88 项）

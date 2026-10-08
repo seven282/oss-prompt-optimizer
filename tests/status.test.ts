@@ -128,4 +128,39 @@ describe('formatStatus (P1, 1.7.9)', () => {
   it('exports a sane event buffer cap', () => {
     expect(STATUS_EVENT_MAX).toBe(20)
   })
+
+  it('renders the best-of-N and host-feedback lines (1.12.0)', () => {
+    const base = makeSnapshot().stats
+    const text = formatStatus(makeSnapshot({ stats: base }), 'zh')
+    // Selected 2 of 3 candidates at 0.88 with 3 through the gate; 2 runs, 1
+    // of which replaced the first draw.
+    expect(text).toContain('择优: 上次 2/3 候选（0.88，结构门 3）')
+    expect(text).toContain('累计 2 次择优，其中 1 次换用非首个候选（50%）')
+    expect(text).toContain('宿主反馈: 👍 4 / 👎 1')
+    const en = formatStatus(makeSnapshot({ stats: base }), 'en')
+    expect(en).toContain('Selection: last 2/3 candidates')
+    expect(en).toContain('Host feedback: 👍 4 / 👎 1')
+  })
+
+  it('renders no selection or feedback line when neither ever ran', () => {
+    const base = makeSnapshot().stats
+    const idle = {
+      ...base,
+      selectRuns: 0, selectGains: 0, lastSelectCandidates: 0, lastSelectChosen: 0,
+      lastSelectScore: 0, lastSelectGate: 0,
+      feedbackSessions: 0, feedbackPositive: 0, feedbackNegative: 0, feedbackBiasApplied: 0,
+    }
+    const text = formatStatus(makeSnapshot({ stats: idle }), 'zh')
+    // An unrun feature must not look like a measured zero.
+    expect(text).not.toContain('择优:')
+    expect(text).not.toContain('宿主反馈:')
+    expect(formatStatus(makeSnapshot({ stats: idle }), 'en')).not.toContain('Selection:')
+  })
+
+  it('states the temperature bias when feedback moved it', () => {
+    const base = { ...makeSnapshot().stats, feedbackBiasApplied: 0.1 }
+    expect(formatStatus(makeSnapshot({ stats: base }), 'zh')).toContain('温度偏置 +0.1')
+    expect(formatStatus(makeSnapshot({ stats: { ...base, feedbackBiasApplied: -0.1 } }), 'zh')).toContain('温度偏置 -0.1')
+    expect(formatStatus(makeSnapshot({ stats: { ...base, feedbackBiasApplied: 0 } }), 'zh')).toContain('温度偏置 无偏置')
+  })
 })
