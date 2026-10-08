@@ -333,7 +333,12 @@ export interface Config {
     evalThreshold: number;
     /** How far a run may fall below the baseline before it counts as a regression. */
     evalRegressionTolerance: number;
-    /** Cases per `run` when `--all` is not passed; `0` = every case. */
+    /**
+     * Cases per `run` when `--all` is NOT passed; `0` = every core case. `--all`
+     * means every case and therefore ignores this cap (an explicit per-call
+     * `maxCases` still overrides both), so the knob bounds a default run's cost
+     * without making `--all` a no-op.
+     */
     evalMaxCases: number;
     /**
      * Whether the LLM judge runs. `false` (with `evalJudge: false`) keeps the

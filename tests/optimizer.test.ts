@@ -1511,6 +1511,23 @@ describe('PromptOptimizerService.runEval (1.11.0)', () => {
     expect(run.cases).toBe(cases.length)
   })
 
+  it('lets --all mean "every case" instead of letting evalMaxCases silently cap it', async () => {
+    // 1.12.1: `--all` used to be a no-op under the default config — the pool is
+    // the 14-case golden set, the cap is 8, and the intersection happened to be
+    // exactly the 8 core cases, so six cases (the vague instruction, the
+    // already-optimized one, the English script, …) could NEVER be run. The cap
+    // is still what bounds a DEFAULT run's cost; it just no longer overrides an
+    // explicit request for everything.
+    const state = makeCtx(goodOutput)
+    const service = makeService(state, { ...DEFAULT_CONFIG, evalJudge: false, evalMaxCases: 3 })
+    expect(service.listEvalCases({})).toHaveLength(3)
+    expect(service.listEvalCases({ all: true })).toHaveLength(14)
+    const { run } = await service.runEval({ all: true })
+    expect(run.cases).toBe(14)
+    // An explicit per-call cap still wins over `all`.
+    expect(service.listEvalCases({ all: true, maxCases: 2 })).toHaveLength(2)
+  })
+
   it('mines the session history when asked and never persists the mined text', async () => {
     const state = makeCtx(goodOutput)
     const engine = {

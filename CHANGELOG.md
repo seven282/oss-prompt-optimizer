@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.12.1] - 2026-09-23
+
+**修复：`/optimize-eval run --all` 在默认配置下是空操作。**
+
+配置注释与 `docs/configuration.md` 都写「`evalMaxCases` 是**未加 `--all` 时**的上限」，
+但用例池无条件套用这个 cap。默认 `evalMaxCases: 8`、金标集 14 例，两者一交恰好就是那
+8 条 core——于是 `--all` 与不加 `--all` **结果完全相同**，6 条非 core 用例（模糊指令、
+已优化指令、英文脚本、PPT、排查、长多约束）在任何默认配置下**永远不可能被度量**。
+文档承诺了一个不存在的行为，而"我要量全部"这个请求被静默打折。
+
+### Fixed
+
+- **`evalCasePool` 让 `--all` 真正表示"全部用例"**（`src/optimizer.ts`）：`all: true`
+  时不再套用 `evalMaxCases` cap。cap 仍然约束**默认**运行的成本（这是它的本意），只是
+  不再覆盖一个显式的全量请求；调用方显式传入的 `maxCases` 依旧优先于两者（`selectCases`
+  的纯函数语义未改，`--all` 的语义在服务层收敛——那才是它唯一被赋予意义的地方）。
+- `Config.evalMaxCases` 与 `docs/configuration.md` 的说明同步为该语义，并注明
+  **1.12.1 起 `--all` 不受上限约束**（此前该承诺未实现）。
+- 测试：新增「`--all` 跑满 14 例 / 默认仍被 cap 到 3 / 显式 `maxCases` 仍胜过 `--all`」
+  三条断言（`tests/optimizer.test.ts`）。原有那条"想要全量必须同时设
+  `evalMaxCases: 0`"的测试仍然通过——它测的是 `selectCases` 纯函数，而纯函数语义未变。
+
 ## [1.12.0] - 2026-09-23
 
 **P1：把度量用起来——best-of-N 择优（判官给候选排序）＋ 接宿主真实反馈信号。**

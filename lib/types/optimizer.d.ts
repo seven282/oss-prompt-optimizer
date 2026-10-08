@@ -416,6 +416,12 @@ export declare class PromptOptimizerService extends Service {
      * The case pool for a run: the built-in golden set, then the deployment's
      * own cases. Ids are de-duplicated (a configured case may deliberately
      * override a golden one by reusing its id).
+     *
+     * `all` means "every case", so the configured `evalMaxCases` cap does not
+     * apply to it: asking for all 14 golden cases and silently receiving 8 of
+     * them is not a cap, it is a lie — and it is exactly what the docs promised
+     * against before 1.12.1. An EXPLICIT `maxCases` still wins over `all`, so a
+     * caller that wants a bounded slice of everything keeps that ability.
      */
     private evalCasePool;
     /** The judge route: an explicit `evalJudgeProvider`/`evalJudgeModel` pair, else the optimizer's. */

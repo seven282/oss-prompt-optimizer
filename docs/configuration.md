@@ -188,7 +188,7 @@
 |---|---|---|---|
 | `evalThreshold` | number 0–1 | `0.6` | 综合分通过阈值；低于此值判 `below-threshold` |
 | `evalRegressionTolerance` | number 0–1 | `0.02` | 低于基线多少才算回归。**判回归优先于判未达阈值**（先看方向，再看绝对值） |
-| `evalMaxCases` | number | `8` | 未加 `--all` 时一轮评测的用例上限（`0` = 不限制，跑全部 core）。默认跑金标集的 core 子集，保证两次运行度量同一批用例 |
+| `evalMaxCases` | number | `8` | `run` **未加** `--all` 时的用例上限（`0` = 不限，跑全部 core）。默认跑金标集的 core 子集，保证两次运行度量同一批用例。⚠️ `--all` 意为「全部用例」，因此**不受此上限约束**（1.12.1 起；此前默认配置下 `--all` 是空操作，非 core 的 6 条用例永远跑不到）；调用方显式传入的 `maxCases` 仍优先于两者 |
 | `evalJudge` | boolean | `true` | 是否启用 LLM 判官。`false` → 只跑确定性层（结构门 + 期望子串），全离线、零额外调用 |
 | `evalJudgeProvider` | string | — | 判官模型路由（须与 `evalJudgeModel` 同时配置，否则加载即报错）。不配则复用优化器路由；**建议换成不同模型**以避免自评偏差 |
 | `evalJudgeModel` | string | — | 判官模型 id（见上） |
