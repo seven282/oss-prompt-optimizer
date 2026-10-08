@@ -63,6 +63,12 @@ const BASE_CONFIG: Config = {
   evalJudge: false,
   evalMineSessions: false,
   evalMineLimit: 5,
+  // Best-of-N selection + host feedback signals (1.12.0): off/minimal by default.
+  selectCandidates: 1,
+  selectMinGain: 0.05,
+  selectJudge: true,
+  feedbackAdapt: true,
+  feedbackScanLimit: 8,
 }
 
 const FOUR_SECTIONS = `## Role

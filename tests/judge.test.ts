@@ -111,7 +111,7 @@ describe('parseJudgeReport (1.11.0)', () => {
     }), APPLICABLE)
     expect(report.complete).toBe(true)
     expect(report.missing).toEqual([])
-    expect(report.rejected).toBe(0)
+    expect(report.rejectedCount).toBe(0)
     // In rubric order, not in the answer's order.
     expect(report.scores.map((score) => score.id)).toEqual(APPLICABLE_IDS)
     // 0.25*5 + 0.2*4 + 0.25*5 + 0.2*5 + 0.1*3 = 4.6
@@ -144,7 +144,7 @@ describe('parseJudgeReport (1.11.0)', () => {
     const text = '维度: specificity\n分数: 5\n理由: 事后补的理由。\n\n' + answer({ context: 4 })
     const report = parseJudgeReport(text, DEFAULT_RUBRIC)
     expect(report.scores.map((score) => score.id)).toEqual(['context'])
-    expect(report.rejected).toBe(1)
+    expect(report.rejectedCount).toBe(1)
     // The dropped dimension is reported missing, never guessed.
     expect(report.missing).toContain('specificity')
   })
@@ -153,7 +153,7 @@ describe('parseJudgeReport (1.11.0)', () => {
     const noReason = '维度: specificity\n分数: 5\n\n维度: context\n理由:   \n分数: 4'
     const report = parseJudgeReport(noReason, DEFAULT_RUBRIC)
     expect(report.scores).toEqual([])
-    expect(report.rejected).toBe(2)
+    expect(report.rejectedCount).toBe(2)
     expect(report.mean).toBeUndefined()
     expect(report.complete).toBe(false)
   })
@@ -167,7 +167,7 @@ describe('parseJudgeReport (1.11.0)', () => {
     ].join('\n\n')
     const report = parseJudgeReport(text, DEFAULT_RUBRIC)
     expect(report.scores.map((score) => score.id)).toEqual(['fidelity'])
-    expect(report.rejected).toBe(3)
+    expect(report.rejectedCount).toBe(3)
   })
 
   it('records a fabricated dimension without scoring it', () => {
@@ -175,14 +175,14 @@ describe('parseJudgeReport (1.11.0)', () => {
     const report = parseJudgeReport(text, DEFAULT_RUBRIC)
     expect(report.fabricated).toEqual(['creativity'])
     expect(report.scores.map((score) => score.id)).toEqual(['specificity'])
-    expect(report.rejected).toBe(1)
+    expect(report.rejectedCount).toBe(1)
   })
 
   it('keeps only the first occurrence of a repeated dimension', () => {
     const text = answer({ specificity: 5 }) + '\n\n维度: specificity\n理由: 重复一次。\n分数: 1'
     const report = parseJudgeReport(text, DEFAULT_RUBRIC)
     expect(report.scores).toEqual([{ id: 'specificity', reason: '理由充分，引用了具体文本。', score: 5 }])
-    expect(report.rejected).toBe(1)
+    expect(report.rejectedCount).toBe(1)
   })
 
   it('never reports complete on an empty answer', () => {

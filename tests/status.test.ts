@@ -14,6 +14,10 @@ function makeSnapshot(overrides: Partial<StatusSnapshot> = {}): StatusSnapshot {
       inputTokens: 300, outputTokens: 1500, cacheReadTokens: 900,
       cacheWriteTokens: 100, reasoningTokens: 0,
       lastRunUsage: { calls: 2, inputTokens: 100, outputTokens: 700, cacheReadTokens: 200, cacheWriteTokens: 0, reasoningTokens: 0 },
+      // Best-of-N selection + host feedback (1.12.0).
+      selectRuns: 2, selectGains: 1, lastSelectCandidates: 3, lastSelectChosen: 2,
+      lastSelectScore: 0.88, lastSelectGate: 3, feedbackSessions: 1, feedbackPositive: 4,
+      feedbackNegative: 1, feedbackBiasApplied: 0,
     },
     prefs: {
       total: 2, taskTypeFreq: new Map([['writing', 2]]), subtypeFreq: new Map(),

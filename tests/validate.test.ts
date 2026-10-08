@@ -336,6 +336,18 @@ Task（任务描述）优化标准
     expect(hasMetaContent('## Format\n输出表格\n\n总结：以上是优化方法论')).toBe(true)
   })
 
+  it('answers identically on repeated calls (no stateful regex)', () => {
+    // 1.12.0 regression: the methodology-word pattern carried a `g` flag, so
+    // `RegExp.test` advanced `lastIndex` and the SAME text alternated between
+    // flagged and clean. A purity gate whose verdict depends on how many times
+    // it ran would silently accept meta content on every second attempt — and
+    // it fired inside the retry loop, which is what surfaced it.
+    const polluted = '## Task\ny\n核心约束逻辑：每段优化的本质是转化'
+    expect([0, 1, 2, 3, 4].map(() => hasMetaContent(polluted))).toEqual([true, true, true, true, true])
+    const clean = FOUR_SECTIONS
+    expect([0, 1, 2, 3, 4].map(() => hasMetaContent(clean))).toEqual([false, false, false, false, false])
+  })
+
   it('does not flag a clean four-section prompt', () => {
     expect(hasMetaContent(FOUR_SECTIONS)).toBe(false)
   })

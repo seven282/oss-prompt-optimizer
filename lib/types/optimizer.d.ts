@@ -6,6 +6,8 @@ import { type StatusSnapshot } from './status.js';
 import { type MetaLanguage } from './meta.js';
 import { type RubricDimension } from './judge.js';
 import { type EvalComparison, type EvalRun } from './eval.js';
+import { type SelectionSummary } from './select.js';
+import { type FeedbackLedger } from './feedback.js';
 import { type AdaptationHints, type UserOverrides } from './adapt.js';
 export { MaxTokensError } from './llm.js';
 /** Stable capability-owned timeout reason code for optimization calls. */
@@ -63,6 +65,15 @@ export interface OptimizeOptions {
      * applies.
      */
     localTemplate?: 'on' | 'off' | 'hybrid';
+    /**
+     * Explicit per-candidate sampling temperatures for one best-of-N run
+     * (1.12.0 P1-A), used INSTEAD of the derived
+     * `base + index·SELECT_TEMPERATURE_SPREAD` ladder. Providing them does not
+     * change any rule — the gate, the judge and the `minGain` requirement all
+     * still apply — it only lets a caller (a test, or a deployment with its own
+     * diversity policy) control where the candidates are sampled from.
+     */
+    selectTemperatures?: readonly number[];
 }
 /** The service result: the optimized prompt, or a clear fallback. */
 export interface OptimizeResult {
@@ -90,6 +101,14 @@ export interface OptimizeResult {
      * `localTemplate: 'hybrid'` when goal-anchor alignment was low).
      */
     refined?: boolean;
+    /**
+     * Best-of-N selection outcome (1.12.0 P1-A). Present only when a run
+     * generated more than one candidate; absent means the historical
+     * single-candidate path, which is not the same thing as "selection ran and
+     * candidate 1 won". Carries counts and scores — never judge reasoning, which
+     * would quote the prompt.
+     */
+    selection?: SelectionSummary;
 }
 /**
  * Provider-reported token usage for ONE optimization run, summed over its
@@ -148,6 +167,28 @@ export interface OptimizeStats {
      * reported 2 calls' worth of tokens.
      */
     lastRunUsage: RunUsage | null;
+    /**
+     * Best-of-N selection counters (1.12.0 P1-A). `selectRuns` counts runs that
+     * generated more than one candidate; `selectGains` counts the subset where a
+     * later candidate actually replaced the baseline draw — the ratio is the
+     * only honest answer to "is the extra spend buying anything".
+     */
+    selectRuns: number;
+    selectGains: number;
+    lastSelectCandidates: number;
+    lastSelectChosen: number;
+    lastSelectScore: number;
+    lastSelectGate: number;
+    /**
+     * Host feedback signal (1.12.0 P1-B), counts only. `feedbackSessions` is how
+     * many sessions were read; the positive/negative tallies are judgments the
+     * human filed on assistant messages, and `feedbackBiasApplied` is the
+     * temperature delta they produced on the last run.
+     */
+    feedbackSessions: number;
+    feedbackPositive: number;
+    feedbackNegative: number;
+    feedbackBiasApplied: number;
 }
 /**
  * The `promptOptimizer` service (class-form plugin): optimizes raw
@@ -204,6 +245,18 @@ export declare class PromptOptimizerService extends Service {
     private evalRuns;
     /** The run new evaluations are compared against (`null` until one is recorded). */
     private evalBaseline;
+    /**
+     * Host feedback ledgers per session (1.12.0 P1-B), newest write wins, capped
+     * at `FEEDBACK_SESSION_MAX`. Counts only — see `feedback.ts` for what is
+     * deliberately never copied.
+     */
+    private readonly feedbackLedgers;
+    /**
+     * The last best-of-N outcome (1.12.0 P1-A), for `/optimize --select`. Kept
+     * in memory only: it describes one run, and a stale selection report after a
+     * restart would be a report about a run nobody can inspect.
+     */
+    private lastSelection;
     /** Debounce timer for state persistence. */
     private persistTimer;
     /** Pending state captured at debounce time. */
@@ -388,8 +441,80 @@ export declare class PromptOptimizerService extends Service {
     }>;
     /** Optimize + score one case. Never throws: a failure becomes a scored 0 with a reason. */
     private evalOneCase;
-    /** Snapshot of the cumulative usage ledger (for run deltas). */
-    private usageSnapshot;
+    /**
+     * The deterministic gate for one candidate (1.12.0 P1-A), in the shape the
+     * selector consumes. Built on `checkDeterministic` — the SAME function the
+     * evaluation harness uses — so "what selection accepts" and "what the eval
+     * harness scores" cannot drift apart.
+     */
+    private candidateGateFor;
+    /**
+     * The judge usable for candidate selection: an explicit
+     * `evalJudgeProvider`/`evalJudgeModel` pair, else the optimizer's own route.
+     * Selection has its OWN switch (`selectJudge`) rather than reusing the
+     * evaluation harness's `evalJudge`: turning the harness's judge off is a
+     * statement about measuring, and silently turning ranking off with it would
+     * make `/optimize` pick a candidate without scoring any of them.
+     *
+     * Ranking with the model that produced the candidates carries a
+     * self-preference bias, which is why a distinct judge route is the
+     * documented recommendation rather than the default assumption.
+     */
+    private judgeRouteForSelection;
+    /**
+     * Score ONE candidate prompt against the same gates and judge the evaluation
+     * harness uses (1.12.0). Extracted from `evalOneCase` so selection and
+     * measurement share one implementation, and so the rules are stated once:
+     *
+     * - the deterministic gate is decided FIRST and is absolute — a broken
+     *   candidate (missing expected content, leaked canary) scores nothing;
+     * - a gate-passing candidate with NO judge route scores 1, exactly the
+     *   pre-1.12 contract for an offline run;
+     * - an incomplete judge answer yields `undefined`, never a partial mean;
+     * - the judge call is one `generateOnce` at temperature 0.
+     *
+     * The presence of `judgeRoute` is the only thing that decides whether a judge
+     * runs: the two callers resolve it from their OWN switch (`evalJudge` for the
+     * harness, `selectJudge` for ranking), so neither feature can silently
+     * disable the other's measurement.
+     */
+    private scoreCandidate;
+    /**
+     * The host's per-message feedback service, if this deployment has one. Duck
+     * typed (no host package is a dependency) and resolved per call: a host that
+     * renames or drops the service loses this signal only.
+     */
+    private messageFeedbackService;
+    /** Whether this host can answer feedback reads at all (for status/commands). */
+    hasFeedbackService(): boolean;
+    /**
+     * Refresh one session's feedback ledger when it is stale, and return what is
+     * known. Best-effort by contract: a host that never answers, answers with a
+     * business rejection (no such session), or throws leaves the previous ledger
+     * (or nothing) in place — feedback must never break an optimization.
+     */
+    private syncFeedback;
+    /**
+     * Read the host feedback of up to `feedbackScanLimit` recent sessions (for
+     * `/optimize --feedback` and `--status`). Explicit sessions are refreshed by
+     * request; the rest come from the in-memory ledgers already read.
+     */
+    scanFeedback(explicit?: readonly string[]): Promise<FeedbackLedger[]>;
+    /** Every feedback ledger currently held (copies, for formatting/tests). */
+    getFeedbackLedgers(): FeedbackLedger[];
+    /**
+     * The last best-of-N outcome, formatted for `/optimize --select`. `undefined`
+     * when no selection ever ran in this process — a caller must be able to tell
+     * "selection is off" from "selection ran and here is what it did".
+     */
+    selectSummary(lang?: 'zh' | 'en'): string | undefined;
+    /** The last selection's raw scores, for tests and structured callers. */
+    getLastSelection(): SelectionSummary | undefined;
+    /** Format the feedback readback for the command layer. */
+    formatFeedbackSignals(lang?: 'zh' | 'en'): string;
+    /** Fold every ledger into one for the bias calculation. */
+    private aggregateFeedback;
+    /** Snapshot of the cumulative usage ledger (for run deltas). */ private usageSnapshot;
     /** Billed input/output tokens consumed since `before` (from the ledger). */
     private usageDelta;
     /** Snapshot of the run statistics (观测; copy so callers cannot mutate). */
@@ -441,6 +566,41 @@ export declare class PromptOptimizerService extends Service {
      * the original instruction is returned with an explanation.
      */
     optimize(rawInput: string, options?: OptimizeOptions): Promise<OptimizeResult>;
+    /**
+     * The feedback temperature bias for one session, read on demand and cached
+     * for `FEEDBACK_TTL_MS`. A caller without a session id (the client button
+     * path) gets no bias rather than an extrapolation from other sessions.
+     */
+    private biasForSession;
+    /**
+     * Best-of-N selection (1.12.0 P1-A): generate `selectCandidates` candidate
+     * prompts for ONE instruction and adopt the best.
+     *
+     * Cost model, stated because it is the whole trade: N candidates cost up to
+     * N times the generation calls (the configured `maxCalls` budget applies
+     * WITHIN a candidate, so the worst case is N× that), plus one judge call per
+     * gate-passing candidate. It is off by default (`selectCandidates: 1`) and
+     * the default N is deliberately 3 — enough for the draw to differ, small
+     * enough that a failure is affordable.
+     *
+     * Rules, in order:
+     * 1. Every candidate runs the SAME pipeline, at `base + i·0.35` temperature
+     *    (clamped to 2). Diversity comes from sampling — no structural variation
+     *    is fabricated, because a deliberately hobbled candidate would be a
+     *    straw man in the comparison.
+     * 2. The deterministic gate decides eligibility FIRST. A candidate that
+     *    leaks a canary or misses required content can never win, however well a
+     *    judge likes it.
+     * 3. `selectJudge: true` ranks survivors with the 1.11.0 judge rubric; off,
+     *    or with no judge route, the ranking is the structural heuristic at zero
+     *    extra calls.
+     * 4. Another candidate replaces candidate 0 only by `selectMinGain` or more.
+     *    A tie keeps the baseline, so enabling selection cannot make the common
+     *    case worse.
+     * 5. Only the winner is cached, and the run reports which candidate it chose
+     *    and why — a different candidate is a claim that needs a visible reason.
+     */
+    private selectBestCandidate;
     /**
      * Iterate on a previously optimized prompt with a new requirement. Runs the
      * same generation pipeline as `optimize` but frames the model call around

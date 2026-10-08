@@ -150,7 +150,11 @@ check('a reason-less block is dropped, never scored', reasonless.scores.length =
   `scored ${reasonless.scores.length} block(s) without a reason`)
 
 const scoreFirst = parseJudgeReport(`维度: ${applicableIds[0]}\n分数: 5\n理由: 事后补的理由。`, applicable)
-check('a score written before its reason is dropped', scoreFirst.scores.length === 0 && scoreFirst.rejected >= 1)
+// 1.12.0: `rejected` names the dropped ids and `rejectedCount` counts them —
+// the old single number conflated "invented dimension" with "discarded block".
+check('a score written before its reason is dropped',
+  scoreFirst.scores.length === 0 && scoreFirst.rejectedCount >= 1 && scoreFirst.rejected.includes(applicableIds[0]),
+  `rejected=${JSON.stringify(scoreFirst.rejected)} count=${scoreFirst.rejectedCount}`)
 
 const outOfRange = parseJudgeReport(`维度: ${applicableIds[0]}\n理由: 给分理由。\n分数: 9`, applicable)
 check('an out-of-range score is dropped', outOfRange.scores.length === 0)

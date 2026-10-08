@@ -124,7 +124,9 @@ export interface JudgeReport {
   /** Dimension ids the judge invented (not in the rubric) — diagnostic only. */
   fabricated: string[]
   /** Blocks dropped for a missing/late reason, an out-of-range score, or repetition. */
-  rejected: number
+  rejected: string[]
+  /** How many blocks `rejected` names. */
+  rejectedCount: number
   /** Weighted mean on the 1–5 scale; `undefined` when nothing parsed. */
   mean: number | undefined
   /** `(mean - 1) / 4`, clamped to 0–1; `undefined` when nothing parsed. */
@@ -294,13 +296,20 @@ export function parseJudgeReport(
   const scores: DimensionScore[] = []
   const fabricated: string[] = []
   const seen = new Set<string>()
-  let rejected = 0
 
   // A block starts at a dimension header and runs to the next one.
   const headerRe = /^[ \t]*(?:维度|Dimension)[ \t]*[:：][ \t]*(\S+)[ \t]*$/gim
   const headers: { id: string; start: number; end: number }[] = []
   for (const match of text.matchAll(headerRe)) {
     headers.push({ id: normalizeId(match[1] ?? ''), start: match.index ?? 0, end: (match.index ?? 0) + match[0].length })
+  }
+
+  // Every dropped block is named, so a report can say WHY a dimension is
+  // missing (unknown id vs. unparseable block vs. duplicate) instead of only
+  // that it is.
+  const rejected: string[] = []
+  const reject = (id: string): void => {
+    rejected.push(id.length > 0 ? id : '<empty>')
   }
 
   for (let index = 0; index < headers.length; index++) {
@@ -310,11 +319,11 @@ export function parseJudgeReport(
 
     if (!wantedSet.has(header.id)) {
       if (header.id.length > 0 && !fabricated.includes(header.id)) fabricated.push(header.id)
-      rejected++
+      reject(header.id)
       continue
     }
     if (seen.has(header.id)) {
-      rejected++
+      reject(header.id)
       continue
     }
 
@@ -322,28 +331,28 @@ export function parseJudgeReport(
     const reasonMatch = /^[ \t]*(?:理由|Reason)[ \t]*[:：][ \t]*(.*)$/im.exec(body)
     const scoreMatch = /^[ \t]*(?:分数|Score)[ \t]*[:：][ \t]*(\S+)[ \t]*$/im.exec(body)
     if (reasonMatch === null || scoreMatch === null) {
-      rejected++
+      reject(header.id)
       continue
     }
     if ((reasonMatch.index ?? 0) > (scoreMatch.index ?? 0)) {
-      rejected++
+      reject(header.id)
       continue
     }
     const reason = (reasonMatch[1] ?? '').trim()
     if (reason.length < 2) {
-      rejected++
+      reject(header.id)
       continue
     }
     // `Number.parseInt` would silently turn "3.5" into 3 and "4/5" into 4 —
     // accepting a score the model never gave. Require an integer literal.
     const raw = (scoreMatch[1] ?? '').trim()
     if (!/^\d+$/.test(raw)) {
-      rejected++
+      reject(header.id)
       continue
     }
     const score = Number.parseInt(raw, 10)
     if (!Number.isInteger(score) || score < JUDGE_MIN_SCORE || score > JUDGE_MAX_SCORE) {
-      rejected++
+      reject(header.id)
       continue
     }
     seen.add(header.id)
@@ -359,6 +368,7 @@ export function parseJudgeReport(
     missing,
     fabricated,
     rejected,
+    rejectedCount: rejected.length,
     mean: aggregate.mean,
     normalized: aggregate.normalized,
     complete: missing.length === 0 && scores.length > 0,

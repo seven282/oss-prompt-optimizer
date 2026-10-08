@@ -359,6 +359,33 @@ export interface Config {
     evalSet?: EvalCaseConfig[];
     /** Weight/enable overrides for the built-in judge rubric. */
     evalRubric?: EvalRubricOverride[];
+    /**
+     * Best-of-N selection (1.12.0 P1-A). `1` (the default) generates exactly one
+     * candidate — the historical behaviour, no extra cost. `> 1` generates that
+     * many candidates for ONE instruction (each one pipeline run at a slightly
+     * higher temperature) and keeps the best: the deterministic gate decides
+     * eligibility, the judge ranks the survivors, and another candidate is only
+     * adopted when it beats the first draw by `selectMinGain`. Cost and latency
+     * scale with this number; the winner alone enters the result cache.
+     */
+    selectCandidates: number;
+    /** Minimum gain over the first candidate required to adopt another one (0–1). */
+    selectMinGain: number;
+    /**
+     * Whether selection ranks candidates with the LLM judge (1.11.0 rubric).
+     * `false` keeps selection fully offline: gate-passing candidates are ranked
+     * by a structural heuristic instead, at zero extra model calls.
+     */
+    selectJudge: boolean;
+    /**
+     * Read the host's own per-message feedback (`messageFeedback.list`, 1.12.0
+     * P1-B) and use it as a sampling bias: a session whose messages were judged
+     * mostly negative gets more diversity, mostly positive gets less. Counts
+     * only — the free-text note is never copied, stored, or logged.
+     */
+    feedbackAdapt: boolean;
+    /** Sessions whose feedback is read for `/optimize --feedback`/`--status`. */
+    feedbackScanLimit: number;
 }
 /**
  * Loader schema: validates configuration and fills defaults at plugin load.

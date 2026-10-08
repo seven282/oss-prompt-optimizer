@@ -105,6 +105,41 @@ function cacheReadRate(stats: OptimizeStats): number {
 }
 
 /**
+ * Best-of-N selection lines (1.12.0 P1-A). Present only once a selection run
+ * happened (`lastSelectCandidates > 1`) or the feature is configured on — a
+ * host that never enabled it sees the status block it always had.
+ */
+function selectionLines(stats: OptimizeStats, lang: 'zh' | 'en'): string[] {
+  const configured = stats.lastSelectCandidates > 1
+  if (!configured) return []
+  const rate = stats.selectRuns > 0 ? Math.round((stats.selectGains / stats.selectRuns) * 100) : 0
+  const score = stats.lastSelectScore > 0 ? stats.lastSelectScore.toFixed(2) : 'n/a'
+  return [
+    lang === 'zh'
+      ? `  择优: 上次 ${stats.lastSelectChosen}/${stats.lastSelectCandidates} 候选（${score}，结构门 ${stats.lastSelectGate}）｜ 累计 ${stats.selectRuns} 次择优，其中 ${stats.selectGains} 次换用非首个候选（${rate}%）`
+      : `  Selection: last ${stats.lastSelectChosen}/${stats.lastSelectCandidates} candidates (${score}, gate ${stats.lastSelectGate}) ｜ ${stats.selectRuns} run(s), ${stats.selectGains} replaced the first draw (${rate}%)`,
+  ]
+}
+
+/**
+ * Host feedback lines (1.12.0 P1-B). Counts only; when nothing was ever read
+ * there is no line — an empty feature must not look like a measured zero.
+ */
+function feedbackLines(stats: OptimizeStats, lang: 'zh' | 'en'): string[] {
+  if (stats.feedbackSessions === 0 && stats.feedbackPositive === 0 && stats.feedbackNegative === 0) return []
+  const total = stats.feedbackPositive + stats.feedbackNegative
+  const rate = total > 0 ? Math.round((stats.feedbackNegative / total) * 100) : 0
+  const bias = stats.feedbackBiasApplied === 0
+    ? (lang === 'zh' ? '无偏置' : 'no bias')
+    : `${stats.feedbackBiasApplied > 0 ? '+' : ''}${stats.feedbackBiasApplied}`
+  return [
+    lang === 'zh'
+      ? `  宿主反馈: 👍 ${stats.feedbackPositive} / 👎 ${stats.feedbackNegative}（${stats.feedbackSessions} 个会话${total > 0 ? `，负面 ${rate}%` : ''}）｜ 温度偏置 ${bias}`
+      : `  Host feedback: 👍 ${stats.feedbackPositive} / 👎 ${stats.feedbackNegative} (${stats.feedbackSessions} session(s)${total > 0 ? `, ${rate}% negative` : ''}) ｜ temperature bias ${bias}`,
+  ]
+}
+
+/**
  * The evaluation-harness line (1.11.0): the latest aggregate, its baseline and
  * the verdict. Absent summary → no line at all, so a host that never measured
  * sees the status block it always had.
@@ -199,6 +234,8 @@ export function formatStatus(snapshot: StatusSnapshot, lang: 'zh' | 'en' = 'zh')
     lines.push(`  本地直出 ${stats.local}（精修 ${stats.refined}）｜ 平均耗时 ${fmtMs(stats.avgCallMs, lang)}（最长 ${fmtMs(stats.maxDurationMs, lang)}）`)
     lines.push(`  平均调用 ${stats.callCount > 0 ? (stats.callCount / Math.max(1, stats.runs)).toFixed(1) : 0} 次/次优化 ｜ 上次输出 ${stats.lastOutputTokens} tok`)
     lines.push(...usageLines(stats, lang))
+    lines.push(...selectionLines(stats, lang))
+    lines.push(...feedbackLines(stats, lang))
     lines.push(...evalLines(snapshot.evalSummary, lang))
     lines.push('')
     lines.push('🧠 偏好模型（最近 ' + prefs.total + ' 次）：')
@@ -238,6 +275,8 @@ export function formatStatus(snapshot: StatusSnapshot, lang: 'zh' | 'en' = 'zh')
     lines.push(`  Local ${stats.local} (refined ${stats.refined}) ｜ avg ${fmtMs(stats.avgCallMs, lang)} (max ${fmtMs(stats.maxDurationMs, lang)})`)
     lines.push(`  Avg calls ${stats.callCount > 0 ? (stats.callCount / Math.max(1, stats.runs)).toFixed(1) : 0}/run ｜ last out ${stats.lastOutputTokens} tok`)
     lines.push(...usageLines(stats, lang))
+    lines.push(...selectionLines(stats, lang))
+    lines.push(...feedbackLines(stats, lang))
     lines.push(...evalLines(snapshot.evalSummary, lang))
     lines.push('')
     lines.push('🧠 Preference model (last ' + prefs.total + ' runs):')

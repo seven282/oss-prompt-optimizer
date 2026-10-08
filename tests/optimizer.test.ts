@@ -85,6 +85,13 @@ const DEFAULT_CONFIG: Config = {
   evalJudge: false,
   evalMineSessions: false,
   evalMineLimit: 5,
+  // Best-of-N selection + host feedback signals (1.12.0): both off by default
+  // in tests — selection would multiply the scripted stream fixtures.
+  selectCandidates: 1,
+  selectMinGain: 0.05,
+  selectJudge: true,
+  feedbackAdapt: true,
+  feedbackScanLimit: 8,
 }
 
 /** Build a text-only chunk stream (delta-only, tolerated by BlockAssembler). */
@@ -129,6 +136,9 @@ interface CtxStub {
   sectionCalls: unknown[]
   commandCalls: unknown[]
   selection?: { provider: string; model: string; reasoningEffort?: string }
+  /** Host feedback stub (1.12.0): sessions asked for, and what to answer. */
+  feedbackCalls: string[]
+  feedbackResult?: unknown
 }
 
 function makeCtx(
@@ -140,10 +150,25 @@ function makeCtx(
   const registerCalls: unknown[] = []
   const sectionCalls: unknown[] = []
   const commandCalls: unknown[] = []
-  const state: CtxStub = { ctx: undefined, streamCalls, emitCalls, registerCalls, sectionCalls, commandCalls }
+  const feedbackCalls: string[] = []
+  const state: CtxStub = { ctx: undefined, streamCalls, emitCalls, registerCalls, sectionCalls, commandCalls, feedbackCalls }
   const ctx = {
     reflect: { provide: () => {} },
-    get: (key: string) => (key === 'agentDefaultModel' ? { currentSelection: () => state.selection } : undefined),
+    get: (key: string) => {
+      if (key === 'agentDefaultModel') return { currentSelection: () => state.selection }
+      // Duck-typed host feedback service (1.12.0 P1-B): only present when a
+      // test supplies a result, so the "no such service" path stays the default.
+      if (key === 'messageFeedback' && state.feedbackResult !== undefined) {
+        return {
+          list: async (request: { sessionId: string }) => {
+            feedbackCalls.push(request.sessionId)
+            if (typeof state.feedbackResult === 'function') return (state.feedbackResult as (r: { sessionId: string }) => unknown)(request)
+            return state.feedbackResult
+          },
+        }
+      }
+      return undefined
+    },
     emit: (name: string, payload: unknown) => {
       if (options?.throwingEmit) throw new Error('listener boom')
       emitCalls.push({ name, payload })
@@ -1524,6 +1549,302 @@ describe('PromptOptimizerService.runEval (1.11.0)', () => {
     const { run } = await service.runEval({ signal: controller.signal })
     expect(run.results).toHaveLength(0)
     expect(run.aggregate).toBeUndefined()
+  })
+})
+
+describe('PromptOptimizerService best-of-N selection (1.12.0 P1-A)', () => {
+  /** A judge answer that gives every applicable dimension the same score. */
+  const judgeAnswer = (score: number): string => [
+    `维度: specificity\n理由: 任务具体。\n分数: ${score}`,
+    `维度: context\n理由: 受众明确。\n分数: ${score}`,
+    `维度: output-contract\n理由: 输出形式明确。\n分数: ${score}`,
+    `维度: fidelity\n理由: 目标保留。\n分数: ${score}`,
+    `维度: economy\n理由: 无冗余。\n分数: ${score}`,
+  ].join('\n\n')
+
+  /** A structurally valid candidate tagged with a marker for assertions. */
+  const candidatePrompt = (tag: string): string => `## Role
+资深工程师 ${tag}，擅长把模糊需求拆成可执行的交付项，先确认边界再动手。
+
+## Task
+完成用户要求的任务 ${tag}：先列出交付物与验收标准，再给出可直接执行的步骤。
+
+## Context
+面向研发团队 ${tag}，技术栈 Python 3.12，需要在两天内交付可用结果。
+
+## Format
+分节输出 ${tag}：结论先行，每节三到五条要点，总长不超过 400 字。`
+
+  /**
+   * A fake model keyed by the sampling TEMPERATURE, not by call order: the
+   * candidate ladder sets the candidate's own temperature, and a retry inside
+   * one candidate only pushes it by `retryTemperatureStep`. `temperatures`
+   * therefore maps each candidate to an exact temperature the fake can
+   * recognize (tests pass `options.selectTemperatures` so the mapping is
+   * explicit rather than derived).
+   */
+  const fakeModel = (
+    temperatures: readonly number[],
+    candidateFor: (index: number, callIndex: number) => string,
+    scoreFor: (candidate: string) => number,
+  ): ((options: GenerateOptions) => AsyncIterable<StreamChunk>) => {
+    const callsPerTemperature = new Map<number, number>()
+    return (options) => {
+      if ((options.system ?? '').includes('你是提示词质量评审')) {
+        // The judge's user message carries the prompt being judged; identify
+        // the candidate by which marker it contains.
+        const user = (options.messages[0] as { content?: { text?: string }[] } | undefined)?.content
+          ?.map((block) => block.text ?? '').join('') ?? ''
+        return textStream(judgeAnswer(scoreFor(user)))
+      }
+      const temperature = options.temperature ?? 0
+      const callIndex = callsPerTemperature.get(temperature) ?? 0
+      callsPerTemperature.set(temperature, callIndex + 1)
+      return textStream(candidateFor(temperatures.indexOf(temperature), callIndex))
+    }
+  }
+
+  /**
+   * The temperatures the selection tests use — the pipeline's own ladder
+   * (`temperature + index·SELECT_TEMPERATURE_SPREAD`) spelled out. A retry
+   * inside one candidate (`+retryTemperatureStep`) therefore lands outside the
+   * array and resolves to no candidate at all, exactly as a real retry would.
+   */
+  const TEMPS = [0.2, 0.55, 0.9] as const
+
+  it('generates one candidate by default (no selection, no extra calls)', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    const service = makeService(state)
+    const result = await service.optimize('帮我写一份 PRD', { selectTemperatures: TEMPS })
+    expect(result.selection).toBeUndefined()
+    expect(state.streamCalls).toHaveLength(1)
+    expect(service.getStats().lastSelectCandidates).toBe(0)
+  })
+
+  it('drops a candidate that broke the structural contract and judges only the survivors', async () => {
+    // Candidates 0 and 1 never produce anything valid (two calls each: the
+    // attempt plus its retry), so they are not candidates at all; candidate 2
+    // survives and wins by default as the only one left.
+    const state = makeCtx(fakeModel(
+      TEMPS,
+      (index) => (index < 2 ? '太短' : candidatePrompt(`c${index + 1}`)),
+      () => 4,
+    ))
+    const service = makeService(state, { ...DEFAULT_CONFIG, selectCandidates: 3, outputStyle: 'sections' })
+    const result = await service.optimize('帮我写一份 PRD', { selectTemperatures: TEMPS })
+    expect(result.optimized).toBe(true)
+    expect(result.prompt).toContain(' c3')
+    // The selection summary addresses the surviving candidates only, so the
+    // first survivor is the baseline of the ranking.
+    expect(result.selection?.chosenIndex).toBe(0)
+    expect(result.selection?.reason).toBe('baseline')
+    expect(result.selection?.scores).toHaveLength(1)
+    const optimizerCalls = state.streamCalls.filter((call) => !(call.system ?? '').includes('你是提示词质量评审'))
+    const judgeCalls = state.streamCalls.filter((call) => (call.system ?? '').includes('你是提示词质量评审'))
+    expect(optimizerCalls).toHaveLength(5)
+    expect(judgeCalls).toHaveLength(1)
+    const stats = service.getStats()
+    expect(stats.selectRuns).toBe(1)
+    expect(stats.selectGains).toBe(0)
+    expect(stats.lastSelectCandidates).toBe(3)
+    expect(stats.lastSelectChosen).toBe(1)
+    expect(stats.lastSelectGate).toBe(1)
+  })
+
+  it('adopts a later candidate that beats the baseline draw by minGain', async () => {
+    const state = makeCtx(fakeModel(
+      TEMPS,
+      (index) => candidatePrompt(`c${index + 1}`),
+      (user) => (user.includes(' c1') ? 3 : 5),
+    ))
+    const service = makeService(state, { ...DEFAULT_CONFIG, selectCandidates: 2, outputStyle: 'sections' })
+    const result = await service.optimize('帮我写一份 PRD', { selectTemperatures: TEMPS })
+    expect(result.prompt).toContain(' c2')
+    expect(result.selection?.chosenIndex).toBe(1)
+    expect(result.selection?.reason).toBe('gain')
+    expect(result.selection?.score).toBeCloseTo(1, 5)
+    expect(result.selection?.eligible).toBe(2)
+    expect(service.getStats().selectGains).toBe(1)
+  })
+
+  it('keeps the baseline draw when no candidate beats it by minGain', async () => {
+    const state = makeCtx(fakeModel(
+      TEMPS,
+      (index) => candidatePrompt(`c${index + 1}`),
+      () => 4,
+    ))
+    const service = makeService(state, { ...DEFAULT_CONFIG, selectCandidates: 3, outputStyle: 'sections' })
+    const result = await service.optimize('帮我写一份 PRD', { selectTemperatures: TEMPS })
+    expect(result.prompt).toContain(' c1')
+    expect(result.selection?.chosenIndex).toBe(0)
+    expect(result.selection?.reason).toBe('baseline')
+    expect(service.getStats().selectGains).toBe(0)
+  })
+
+  it('ranks structurally at zero extra calls when selectJudge is off', async () => {
+    const state = makeCtx(fakeModel(TEMPS, (index) => candidatePrompt(`c${index + 1}`), () => 5))
+    const service = makeService(state, { ...DEFAULT_CONFIG, selectCandidates: 3, selectJudge: false, outputStyle: 'sections' })
+    const result = await service.optimize('帮我写一份 PRD', { selectTemperatures: TEMPS })
+    // 3 optimizer calls, no judge calls (the structural score is the rank).
+    expect(state.streamCalls).toHaveLength(3)
+    expect(state.streamCalls.every((call) => !(call.system ?? '').includes('你是提示词质量评审'))).toBe(true)
+    expect(result.selection?.scores.every((score) => score.score !== undefined)).toBe(true)
+    // Equal-length candidates tie, so the baseline keeps the result.
+    expect(result.selection?.chosenIndex).toBe(0)
+  })
+
+  it('falls back to the single pipeline when every candidate fails', async () => {
+    const state = makeCtx(() => textStream('太短'))
+    const service = makeService(state, { ...DEFAULT_CONFIG, selectCandidates: 2, outputStyle: 'sections' })
+    const result = await service.optimize('帮我写一份 PRD', { selectTemperatures: TEMPS })
+    // `runPipeline` exhausted its retries for every candidate; the caller still
+    // gets the historical degradation instead of a thrown error, and no
+    // selection is reported for a run that never had a candidate to choose.
+    expect(result.optimized).toBe(false)
+    expect(result.errorCode).toBeDefined()
+    expect(result.selection).toBeUndefined()
+    expect(service.getStats().selectRuns).toBe(0)
+  })
+
+  it('reports no selection when no draw could clear the gate', async () => {
+    // The selector's boundary: a draw the gate rejects is not returned as an
+    // optimized result, so an impossible section minimum leaves nothing to
+    // rank. The caller gets the pipeline's own degradation and NO selection
+    // summary — reporting a ranking that never happened would be a fabricated
+    // decision, which is exactly what this feature must never do.
+    const state = makeCtx(fakeModel(TEMPS, (index) => candidatePrompt(`c${index + 1}`), () => 5))
+    const service = makeService(state, { ...DEFAULT_CONFIG, selectCandidates: 2, outputStyle: 'sections', minSectionChars: 10000 })
+    const result = await service.optimize('帮我写一份 PRD', { selectTemperatures: TEMPS })
+    expect(result.optimized).toBe(false)
+    expect(result.selection).toBeUndefined()
+    expect(service.getStats().selectRuns).toBe(0)
+  })
+
+  it('caches only the winner', async () => {
+    const state = makeCtx(fakeModel(
+      TEMPS,
+      (index) => candidatePrompt(`c${index + 1}`),
+      (user) => (user.includes(' c1') ? 2 : 5),
+    ))
+    const service = makeService(state, { ...DEFAULT_CONFIG, selectCandidates: 2, outputStyle: 'sections' })
+    const first = await service.optimize('帮我写一份 PRD', { selectTemperatures: TEMPS })
+    expect(first.prompt).toContain(' c2')
+    const callsAfterFirst = state.streamCalls.length
+    const second = await service.optimize('帮我写一份 PRD')
+    // Exact cache hit: the winner was cached, so no further model calls.
+    expect(state.streamCalls).toHaveLength(callsAfterFirst)
+    expect(second.prompt).toContain(' c2')
+    // A cache hit does not report a stale selection as if it had just run.
+    expect(service.getLastSelection()).toBeUndefined()
+  })
+
+  it('reports the selection to /optimize --select subscribers through the result', async () => {
+    const state = makeCtx(fakeModel(
+      TEMPS,
+      (index) => candidatePrompt(`c${index + 1}`),
+      (user) => (user.includes(' c1') ? 2 : 5),
+    ))
+    const service = makeService(state, { ...DEFAULT_CONFIG, selectCandidates: 2, outputStyle: 'sections' })
+    await service.optimize('帮我写一份 PRD', { selectTemperatures: TEMPS })
+    expect(service.selectSummary('zh')).toContain('候选 2/2')
+    const emitted = state.emitCalls.at(-1)?.payload as { result?: { selection?: unknown } }
+    expect(emitted.result?.selection).toBeDefined()
+  })
+})
+
+describe('PromptOptimizerService host feedback signals (1.12.0 P1-B)', () => {
+  it('applies no bias and reads nothing when the host has no service', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    const service = makeService(state)
+    await service.optimize('帮我写一份 PRD', { sessionId: 's1' })
+    expect(state.feedbackCalls).toHaveLength(0)
+    expect(state.streamCalls[0]?.temperature).toBe(0.2)
+    expect(service.getStats().feedbackBiasApplied).toBe(0)
+  })
+
+  it('reads the session feedback and raises the temperature when negatives dominate', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    state.feedbackResult = {
+      ok: true,
+      value: {
+        items: [
+          { rating: 'negative', category: 'correctness', note: 'SECRET NOTE' },
+          { rating: 'negative' },
+          { rating: 'negative' },
+          { rating: 'positive' },
+        ],
+      },
+    }
+    const service = makeService(state)
+    await service.optimize('帮我写一份 PRD', { sessionId: 'session-1' })
+    expect(state.feedbackCalls).toEqual(['session-1'])
+    expect(state.streamCalls[0]?.temperature).toBeCloseTo(0.3, 5)
+    const stats = service.getStats()
+    expect(stats.feedbackSessions).toBe(1)
+    expect(stats.feedbackPositive).toBe(1)
+    expect(stats.feedbackNegative).toBe(3)
+    expect(stats.feedbackBiasApplied).toBe(0.1)
+    // Privacy: the note text is not retained anywhere this service can report.
+    expect(JSON.stringify(service.getFeedbackLedgers())).not.toContain('SECRET NOTE')
+    expect(service.formatFeedbackSignals('zh')).not.toContain('SECRET NOTE')
+  })
+
+  it('lowers the temperature when negatives are rare', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    state.feedbackResult = {
+      ok: true,
+      value: { items: [{ rating: 'negative' }, { rating: 'positive' }, { rating: 'positive' }, { rating: 'positive' }, { rating: 'positive' }] },
+    }
+    const service = makeService(state)
+    await service.optimize('帮我写一份 PRD', { sessionId: 's1' })
+    expect(state.streamCalls[0]?.temperature).toBeCloseTo(0.1, 5)
+    expect(service.getStats().feedbackBiasApplied).toBe(-0.1)
+  })
+
+  it('ignores feedback when the feature is disabled or the session is unknown', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    state.feedbackResult = { ok: true, value: { items: [{ rating: 'negative' }, { rating: 'negative' }, { rating: 'negative' }] } }
+    const service = makeService(state, { ...DEFAULT_CONFIG, feedbackAdapt: false })
+    await service.optimize('帮我写一份 PRD', { sessionId: 's1' })
+    expect(state.streamCalls[0]?.temperature).toBe(0.2)
+
+    const state2 = makeCtx([textStream(FOUR_SECTIONS)])
+    state2.feedbackResult = { ok: true, value: { items: [{ rating: 'negative' }] } }
+    const service2 = makeService(state2)
+    await service2.optimize('帮我写一份 PRD')
+    expect(state2.feedbackCalls).toHaveLength(0)
+    expect(state2.streamCalls[0]?.temperature).toBe(0.2)
+  })
+
+  it('survives a host that throws or answers with a business rejection', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    state.feedbackResult = () => { throw new Error('host boom') }
+    const service = makeService(state)
+    const result = await service.optimize('帮我写一份 PRD', { sessionId: 's1' })
+    expect(result.optimized).toBe(true)
+    expect(state.streamCalls[0]?.temperature).toBe(0.2)
+
+    const rejecting = makeCtx([textStream(FOUR_SECTIONS)])
+    rejecting.feedbackResult = { ok: false, error: { code: 'session-not-found' } }
+    const service2 = makeService(rejecting)
+    expect((await service2.optimize('帮我写一份 PRD', { sessionId: 'gone' })).optimized).toBe(true)
+    expect(service2.getFeedbackLedgers()).toHaveLength(0)
+  })
+
+  it('rate-limits repeated reads within the TTL', async () => {
+    const state = makeCtx(() => textStream(FOUR_SECTIONS))
+    state.feedbackResult = { ok: true, value: { items: [] } }
+    const service = makeService(state)
+    await service.optimize('帮我写一份 PRD', { sessionId: 's1' })
+    await service.optimize('帮我写另一份 PRD', { sessionId: 's1' })
+    expect(state.feedbackCalls).toEqual(['s1'])
+  })
+
+  it('reports that the host has no feedback service instead of an empty list', () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    const service = makeService(state)
+    expect(service.hasFeedbackService()).toBe(false)
+    expect(service.formatFeedbackSignals('zh')).toContain('宿主未提供 messageFeedback')
   })
 })
 

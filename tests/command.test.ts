@@ -73,6 +73,12 @@ const DEFAULT_CONFIG: Config = {
   evalJudge: false,
   evalMineSessions: false,
   evalMineLimit: 5,
+  // Best-of-N selection + host feedback signals (1.12.0): off/minimal by default.
+  selectCandidates: 1,
+  selectMinGain: 0.05,
+  selectJudge: true,
+  feedbackAdapt: true,
+  feedbackScanLimit: 8,
 }
 
 function textStream(text: string): AsyncIterable<StreamChunk> {
@@ -309,13 +315,37 @@ describe('/optimize --stats flag', () => {
 
   it('reports the last run output tokens as a machine token', async () => {
     const { commands } = makeService(() => textStream(FOUR_SECTIONS))
-    // Before any run the counters are zero.
-    expect(await optimize(commands).handler(invocation('--stats'))).toMatchObject({ kind: 'success', text: 'OPTIMIZE_STATS:TOKENS:0|INPUT:0|CALLS:0|LASTMSCALL:0|LOCAL:0|REFINED:0|REALIN:0|REALOUT:0|REALCALLS:0|CACHER:0|CACHEW:0|USAGECALLS:0' })
+    // Before any run the counters are zero. The trailing SELECT*/FEEDBACK*
+    // groups are 1.12.0 (best-of-N + host signals) and are appended, never
+    // interleaved, so a client parsing the leading fields keeps working.
+    expect(await optimize(commands).handler(invocation('--stats'))).toMatchObject({
+      kind: 'success',
+      text: 'OPTIMIZE_STATS:TOKENS:0|INPUT:0|CALLS:0|LASTMSCALL:0|LOCAL:0|REFINED:0|REALIN:0|REALOUT:0|REALCALLS:0|CACHER:0|CACHEW:0|USAGECALLS:0'
+        + '|SELRUNS:0|SELGAINS:0|SELCAND:0|SELCHOSEN:0|SELSCORE:0|SELGATE:0'
+        + '|FBSESSIONS:0|FBPOS:0|FBNEG:0|FBBIAS:0',
+    })
     await optimize(commands).handler(invocation('帮我写周报'))
     const result = await optimize(commands).handler(invocation('--stats'))
     expect(result).toMatchObject({ kind: 'success' })
     const text = (result as { text: string }).text
     expect(text).toMatch(/OPTIMIZE_STATS:TOKENS:\d+\|INPUT:\d+\|CALLS:1\|LASTMSCALL:\d+\|LOCAL:\d+\|REFINED:\d+/)
+    expect(text).toContain('|SELRUNS:0|')
+    expect(text).toContain('|FBSESSIONS:0|')
+  })
+
+  it('reports the best-of-N configuration when selection is off (--select)', async () => {
+    const { commands } = makeService(() => textStream(FOUR_SECTIONS))
+    const result = await optimize(commands).handler(invocation('--select')) as { kind: string; text: string }
+    expect(result.kind).toBe('success')
+    expect(result.text).toContain('selectCandidates=1')
+  })
+
+  it('reports no host feedback service or an empty ledger (--feedback)', async () => {
+    const { commands } = makeService(() => textStream(FOUR_SECTIONS))
+    const result = await optimize(commands).handler(invocation('--feedback')) as { kind: string; text: string }
+    expect(result.kind).toBe('success')
+    expect(result.text).toContain('宿主未提供 messageFeedback')
+    expect(result.text).toContain('FEEDBACK:SESSIONS:0|POSITIVE:0|NEGATIVE:0|BIAS:0')
   })
 })
 

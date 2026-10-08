@@ -7,9 +7,10 @@ DeepSeek Harness 插件 `oss-prompt-optimizer`：把原始指令优化为专业�
 ```sh
 pnpm install --store-dir .pnpm-store --cache-dir .pnpm-cache   # 沙箱内安装（publish 前勿用 --frozen-lockfile 装本地）
 pnpm run typecheck    # tsc --noEmit
-pnpm test             # vitest run（27 个测试文件 / 655 用例，mock llm，无需真实密钥）
+pnpm test             # vitest run（31 个测试文件 / 809 用例，mock llm，无需真实密钥）
 pnpm run build        # tsc -p tsconfig.build.json + node scripts/copy-client.mjs（client.js → lib/client.js）
-pnpm preflight        # 门禁 P1–P8（P8 校验提交产物新鲜度）
+pnpm preflight        # 门禁 P1–P10（P8 校验提交产物新鲜度，P10 校验评测判官/金标集进了发布产物）
+pnpm eval:grader      # 单独跑 P10：构建产物上的判官与金标集自检（73 项）
 pnpm e3               # 一次性 Profile 验收：安装 → 启动 → 卸载（Windows 上须在沙箱外跑）
 ```
 
@@ -32,8 +33,12 @@ pnpm e3               # 一次性 Profile 验收：安装 → 启动 → 卸载�
 - `src/situation.ts` — 情境画像（角色/任务/目标三份）、子类检测、目标对齐（`goalAlignment`/`goalAnchors`）与漂移（`goalDrift`）；会话级目标沿用为内存 registry（TTL 30 分钟），重启即清空是**有意设计**——勿引入文件/Redis 持久化。
 - `src/local.ts` — 本地模板路径：`localTemplateGate` 门控 + `buildLocalTemplate` 纯函数渲染（零 token），供 `optimizer.ts` 与 `/template <场景> <指令>` 预填共用。
 - `src/context.ts` — 对话上下文采集；`src/cache.ts` — LRU+TTL 结果缓存；`src/errors.ts` — 稳定错误码；`src/events.ts` — 生命周期事件名（`prompt-optimizer/optimize:start|success|failure`）。
-- `src/optimizer.ts` — 服务本体 `PromptOptimizerService`：只做编排（状态、校验/截断、重试管线、事件、路由）。失败返回原文+错误说明不 throw；运行时覆盖 `get/setMetaPromptLanguage`、`get/setAutoOptimizeAll`。
-- `src/tool.ts` — `prompt_optimize` 工具；`src/hook.ts` — `agent/pre-step` 自动优化钩子；`src/command.ts` — 六个命令：`/optimize`、`/dream`（优化+需求感应附录）、`/auto-optimize`、`/optimizer-language`、`/optimize-stats`、`/template`。
+- `src/judge.ts`（1.11.0）— 加权 rubric 判官：`DEFAULT_RUBRIC`（specificity/context/output-contract/fidelity/economy 恒用，safety 按需）、`buildJudgeSystem`/`buildJudgeUser`、`parseJudgeReport`（先理由后分数、整数分、不完整即不采信）、`aggregateJudge`。`resolveRubric` 遇未知维度 id **加载即抛错**。
+- `src/eval.ts`（1.11.0）— 评测harness：`GOLDEN_SET`（14 例 / 8 core，含注入探针与模糊指令）、`checkDeterministic`、`buildRun`/`compareToBaseline`/`formatEvalRun`、`mineSessionInstructions`。**只存长度与分数，指令原文永不入库**。
+- `src/select.ts`（1.12.0 P1-A）— best-of-N 择优的**纯排序层**：`selectCandidatePure`（先看结构门资格、再看分数，未超过 `minGain` 一律保基线）、`scoreCandidates`（门控先行、判官并发、失败候选不判）、`candidateTemperature`（候选 i = base + i·0.35）、`structuralScore`（无判官时的零成本兜底分）、`formatSelection`/`selectionToken`。判官经回调注入，本文件无宿主依赖。
+- `src/feedback.ts`（1.12.0 P1-B）— 宿主 `messageFeedback.list` 的**只读计数层**：`normalizeItem`/`feedbackItems`/`mergeItems`（计数为「替换」而非累加）、`isStale`（60s TTL）、`feedbackBias`（负面占比 ≥50% → 温度 +0.1，≤20% → −0.1，样本 <3 不生效）、`formatFeedback`。**备注原文永不复制**——只记 rating、category、是否含备注。
+- `src/optimizer.ts` — 服务本体 `PromptOptimizerService`：只做编排（状态、校验/截断、重试管线、事件、路由）。失败返回原文+错误说明不 throw；运行时覆盖 `get/setMetaPromptLanguage`、`get/setAutoOptimizeAll`。`scoreCandidate` 是评测与择优**共用**的评分口径（门控绝对优先、判官不完整即不计分），`judgeRoute` 是否为 `undefined` 是「跑不跑判官」的唯一开关（评测看 `evalJudge`，择优看 `selectJudge`——两者互不牵连）。
+- `src/tool.ts` — `prompt_optimize` 工具；`src/hook.ts` — `agent/pre-step` 自动优化钩子；`src/command.ts` — 三个命令：`/optimize`（含 `--stats`/`--status`/`--select`/`--feedback` 等旗标）、`/optimize-eval`（`run`/`baseline`/`show`/`list`/`rubric`/`cases`）、`/template`。
 - `client/client.js` — **手写 ModuleLoader 客户端（无打包器）**，build 时复制到 `lib/client.js`；`package.json` 的 `dsh.client` 声明它。按钮经 `slots.inject('conversation.input.left')` 注册 ✨（优化/取消/撤销一体）；语言自动检测后不再有中/EN 按钮。
   ⚠️ **规则 R2**：`exports.inject` 只放真正不可缺的服务（当前只有 `remote`），**其余一律 `ctx.get('<name>')` 并判空**。
   `ctx.<name>` 直读一个不在 inject 里的服务会**抛错**且 `apply()` 不捕获 ⇒ 整个客户端半边不注册（✨ 按钮与设置页一起消失）。1.8.2 就是这样在真机上全废的。
@@ -47,6 +52,7 @@ pnpm e3               # 一次性 Profile 验收：安装 → 启动 → 卸载�
 - **输出形态默认 `plain`**：无标题纯文本、最省 token，`examples` 不注入。`sections` 四段保留为优化时的内部参考框架；`examples` 对 sections 直接注入、对 RTG 折叠为三要素后注入；`skipIfAlreadyOptimized` 同时识别四段与 RTG 形态（含中文标题变体）；`plain` 输出用 `hasSubstantialContent` 校验且禁止出现段落标题。
 - **角色文档语言**：`metaPromptLanguage` 默认 `'auto'`——按指令语言自动检测（`detectLanguage`），`'中文'`/`'英文'` 固定。运行时 `/optimizer-language auto|中文|英文|status` 会话级覆盖，重启回落配置值。检测结果单次调用内贯穿（selfRefine 与重试诊断文案同语言），与 `outputLanguage` 独立。
 - **命令命名**：短命令（`/optimize` 等）遵循生态惯例；改名需同步 `client.js` 调用、README、钩子前缀默认值（`/optimize `），一次原子变更。
+- **择优（`selectCandidates > 1`，1.12.0）与本地模板路径互斥**：本地路径（`localTemplate: on|hybrid`）在 LLM 管线之前就 return 了，因此不会产生候选、也不会择优。要吃到择优收益必须让指令走完整 LLM 管线（即 `localTemplate: 'off'`，当前默认）。择优的候选温度阶梯是 `base + i·0.35`（上限 2），只有**胜者**进缓存；`evalJudge` 与 `selectJudge` 是两颗独立开关，改一个不要顺手改另一个。
 - 所有注册（工具/systemPrompt 段落/钩子/命令）均为 effect 作用域，卸载自动清理。
 - 文档语言：README.md 中文 + README.en.md 英文（头部互链语言切换，功能/配置变更须两处同步）；CHANGELOG 中文，代码注释中文为主。
 

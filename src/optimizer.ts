@@ -68,7 +68,6 @@ import {
   buildRun,
   checkDeterministic,
   compareToBaseline,
-  deterministicPasses,
   fromConfig,
   mineSessionInstructions,
   selectCases,
@@ -79,6 +78,31 @@ import {
   type EvalRun,
   type SessionSearchLike,
 } from './eval.js'
+import {
+  candidateTemperature,
+  formatSelection,
+  selectCandidatePure,
+  scoreCandidates,
+  structuralScore,
+  type Candidate,
+  type CandidateGate,
+  type CandidateJudge,
+  type CandidateScore,
+  type SelectionSummary,
+} from './select.js'
+import {
+  applyBias,
+  feedbackBias,
+  feedbackToken,
+  feedbackItems,
+  formatFeedback,
+  isStale,
+  ledgerTotal,
+  mergeItems,
+  FEEDBACK_SESSION_MAX,
+  type FeedbackLedger,
+  type MessageFeedbackLike,
+} from './feedback.js'
 import { computePreferences, formatPreferences, type PreferenceModel } from './preference.js'
 import { computeAdaptation, formatAdaptationHints, DEFAULT_ADAPT_CONFIG, resolveParams, type AdaptationHints, type UserOverrides } from './adapt.js'
 
@@ -243,6 +267,15 @@ export interface OptimizeOptions {
    * applies.
    */
   localTemplate?: 'on' | 'off' | 'hybrid'
+  /**
+   * Explicit per-candidate sampling temperatures for one best-of-N run
+   * (1.12.0 P1-A), used INSTEAD of the derived
+   * `base + index·SELECT_TEMPERATURE_SPREAD` ladder. Providing them does not
+   * change any rule — the gate, the judge and the `minGain` requirement all
+   * still apply — it only lets a caller (a test, or a deployment with its own
+   * diversity policy) control where the candidates are sampled from.
+   */
+  selectTemperatures?: readonly number[]
 }
 
 /** The service result: the optimized prompt, or a clear fallback. */
@@ -268,6 +301,14 @@ export interface OptimizeResult {
    * `localTemplate: 'hybrid'` when goal-anchor alignment was low).
    */
   refined?: boolean
+  /**
+   * Best-of-N selection outcome (1.12.0 P1-A). Present only when a run
+   * generated more than one candidate; absent means the historical
+   * single-candidate path, which is not the same thing as "selection ran and
+   * candidate 1 won". Carries counts and scores — never judge reasoning, which
+   * would quote the prompt.
+   */
+  selection?: SelectionSummary
 }
 
 /**
@@ -314,6 +355,8 @@ function usageCount(value: number | undefined): number {
 type UsageLedger = Pick<
   OptimizeStats,
   'usageCalls' | 'inputTokens' | 'outputTokens' | 'cacheReadTokens' | 'cacheWriteTokens' | 'reasoningTokens' | 'lastRunUsage'
+    | 'selectRuns' | 'selectGains' | 'lastSelectCandidates' | 'lastSelectChosen' | 'lastSelectScore' | 'lastSelectGate'
+    | 'feedbackSessions' | 'feedbackPositive' | 'feedbackNegative' | 'feedbackBiasApplied'
 >
 
 function normalizeLoadedUsage(stats: UsageLedger): void {
@@ -323,6 +366,23 @@ function normalizeLoadedUsage(stats: UsageLedger): void {
   stats.cacheReadTokens = usageCount(stats.cacheReadTokens)
   stats.cacheWriteTokens = usageCount(stats.cacheWriteTokens)
   stats.reasoningTokens = usageCount(stats.reasoningTokens)
+  stats.selectRuns = usageCount(stats.selectRuns)
+  stats.selectGains = usageCount(stats.selectGains)
+  stats.lastSelectCandidates = usageCount(stats.lastSelectCandidates)
+  stats.lastSelectChosen = usageCount(stats.lastSelectChosen)
+  stats.lastSelectGate = usageCount(stats.lastSelectGate)
+  // Scores are fractions: `usageCount`'s `> 0` floor happens to be right for
+  // them too (a negative or non-finite score is corruption), but a legitimate
+  // 0 must survive, so the score is repaired rather than required positive.
+  stats.lastSelectScore = typeof stats.lastSelectScore === 'number' && Number.isFinite(stats.lastSelectScore) && stats.lastSelectScore >= 0
+    ? stats.lastSelectScore
+    : 0
+  stats.feedbackSessions = usageCount(stats.feedbackSessions)
+  stats.feedbackPositive = usageCount(stats.feedbackPositive)
+  stats.feedbackNegative = usageCount(stats.feedbackNegative)
+  stats.feedbackBiasApplied = typeof stats.feedbackBiasApplied === 'number' && Number.isFinite(stats.feedbackBiasApplied)
+    ? stats.feedbackBiasApplied
+    : 0
   const last: Partial<RunUsage> | null | undefined = stats.lastRunUsage
   stats.lastRunUsage = last !== null && typeof last === 'object'
     ? {
@@ -376,6 +436,28 @@ export interface OptimizeStats {
    * reported 2 calls' worth of tokens.
    */
   lastRunUsage: RunUsage | null
+  /**
+   * Best-of-N selection counters (1.12.0 P1-A). `selectRuns` counts runs that
+   * generated more than one candidate; `selectGains` counts the subset where a
+   * later candidate actually replaced the baseline draw — the ratio is the
+   * only honest answer to "is the extra spend buying anything".
+   */
+  selectRuns: number
+  selectGains: number
+  lastSelectCandidates: number
+  lastSelectChosen: number
+  lastSelectScore: number
+  lastSelectGate: number
+  /**
+   * Host feedback signal (1.12.0 P1-B), counts only. `feedbackSessions` is how
+   * many sessions were read; the positive/negative tallies are judgments the
+   * human filed on assistant messages, and `feedbackBiasApplied` is the
+   * temperature delta they produced on the last run.
+   */
+  feedbackSessions: number
+  feedbackPositive: number
+  feedbackNegative: number
+  feedbackBiasApplied: number
 }
 
 /**
@@ -467,6 +549,21 @@ export class PromptOptimizerService extends Service {
     cacheWriteTokens: 0,
     reasoningTokens: 0,
     lastRunUsage: null as RunUsage | null,
+    /** Best-of-N selection (1.12.0): runs that generated >1 candidate. */
+    selectRuns: 0,
+    /** Of those, runs where a later candidate actually beat the baseline draw. */
+    selectGains: 0,
+    /** Last selection: candidate count and the adopted index (1-based for display). */
+    lastSelectCandidates: 0,
+    lastSelectChosen: 0,
+    /** Last selection score and gate count. */
+    lastSelectScore: 0,
+    lastSelectGate: 0,
+    /** Host feedback signals (1.12.0 P1-B): sessions read, tokens never. */
+    feedbackSessions: 0,
+    feedbackPositive: 0,
+    feedbackNegative: 0,
+    feedbackBiasApplied: 0,
   }
   /** Model-call count of the current run (reset by runPipeline). */
   private runCallCount = 0
@@ -480,6 +577,18 @@ export class PromptOptimizerService extends Service {
   private evalRuns: EvalRun[] = []
   /** The run new evaluations are compared against (`null` until one is recorded). */
   private evalBaseline: EvalRun | null = null
+  /**
+   * Host feedback ledgers per session (1.12.0 P1-B), newest write wins, capped
+   * at `FEEDBACK_SESSION_MAX`. Counts only — see `feedback.ts` for what is
+   * deliberately never copied.
+   */
+  private readonly feedbackLedgers = new Map<string, FeedbackLedger>()
+  /**
+   * The last best-of-N outcome (1.12.0 P1-A), for `/optimize --select`. Kept
+   * in memory only: it describes one run, and a stale selection report after a
+   * restart would be a report about a run nobody can inspect.
+   */
+  private lastSelection: SelectionSummary | undefined
   /** Debounce timer for state persistence. */
   private persistTimer: ReturnType<typeof setTimeout> | undefined
   /** Pending state captured at debounce time. */
@@ -1065,7 +1174,11 @@ export class PromptOptimizerService extends Service {
     signal?: AbortSignal
   } = {}): Promise<{ run: EvalRun; comparison: EvalComparison }> {
     const route = this.resolveRoute()
-    const judgeRoute = this.resolveJudgeRoute(route)
+    // The harness's OWN switch. `resolveJudgeRoute` still runs (so a
+    // half-configured pair fails loudly), but a disabled judge means no route is
+    // threaded into the per-case scorer.
+    const configuredJudgeRoute = this.resolveJudgeRoute(route)
+    const judgeRoute = this.config.evalJudge ? configuredJudgeRoute : undefined
     let cases = this.evalCasePool({ all: options.all, maxCases: options.maxCases })
     const mine = options.mine ?? this.config.evalMineSessions
     if (mine) {
@@ -1091,7 +1204,7 @@ export class PromptOptimizerService extends Service {
     const run = withUsage(
       buildRun(results, cases, {
         ...(options.label !== undefined ? { label: options.label } : {}),
-        judgeModel: `${judgeRoute.provider}/${judgeRoute.model}`,
+        ...(judgeRoute !== undefined ? { judgeModel: `${judgeRoute.provider}/${judgeRoute.model}` } : {}),
         optimizerModel: `${route.provider}/${route.model}`,
         mined: mine,
       }),
@@ -1113,14 +1226,12 @@ export class PromptOptimizerService extends Service {
   private async evalOneCase(
     item: EvalCase,
     route: ResolvedRoute,
-    judgeRoute: ResolvedRoute,
+    judgeRoute: ResolvedRoute | undefined,
     signal: AbortSignal | undefined,
-  ): Promise<CaseResult> {
-    const base: { id: string; instructionChars: number } = { id: item.id, instructionChars: item.instruction.length }
+  ): Promise<CaseResult> {    const base: { id: string; instructionChars: number } = { id: item.id, instructionChars: item.instruction.length }
     // The judge's role document follows the case's own language, exactly like
     // the optimizer's does, so a Chinese case is judged by a Chinese rubric
     // rather than being silently evaluated in the wrong language.
-    const lang = this.resolveMetaLanguage(item.instruction)
     let candidate: string
     try {
       const result = await this.optimize(item.instruction, {
@@ -1150,16 +1261,97 @@ export class PromptOptimizerService extends Service {
     }
 
     const deterministic = checkDeterministic(item, candidate, this.config.outputStyle, this.config.minSectionChars)
-    // A broken prompt is not "0.8 quality": a failed deterministic gate scores
-    // 0 outright, so a leaked canary or a missing section cannot be averaged
-    // away by a generous judge.
-    if (!deterministicPasses(deterministic)) {
-      return { ...base, deterministic, score: 0, error: 'deterministic-failed' }
+    // Scoring goes through the SAME `scoreCandidate` the best-of-N selector
+    // uses (1.12.0), so the gate and judge rules exist once: a broken prompt is
+    // not "0.8 quality" (it scores 0), an incomplete judge answer is not a
+    // partial mean (it scores `undefined`), and the offline mode is 1 for a
+    // gate-passing candidate.
+    const scored = await this.scoreCandidate(item, candidate, route, judgeRoute, signal)
+    return {
+      ...base,
+      deterministic,
+      ...(scored.judge !== undefined ? { judge: scored.judge } : {}),
+      score: scored.gate.passed ? scored.score : 0,
+      ...(scored.error !== undefined ? { error: scored.error } : {}),
     }
-    if (!this.config.evalJudge) {
-      return { ...base, deterministic, score: 1 }
-    }
+  }
 
+  /**
+   * The deterministic gate for one candidate (1.12.0 P1-A), in the shape the
+   * selector consumes. Built on `checkDeterministic` — the SAME function the
+   * evaluation harness uses — so "what selection accepts" and "what the eval
+   * harness scores" cannot drift apart.
+   */
+  private candidateGateFor(item: Pick<EvalCase, 'mustInclude' | 'mustNotInclude'>): (candidate: Candidate) => CandidateGate {
+    return (candidate) => {
+      const result = checkDeterministic(item, candidate.prompt, this.config.outputStyle, this.config.minSectionChars)
+      return {
+        passed: result.structural && result.expectations,
+        valid: result.structural,
+        missingRequired: result.missingRequired,
+        leaked: result.leaked,
+      }
+    }
+  }
+
+  /**
+   * The judge usable for candidate selection: an explicit
+   * `evalJudgeProvider`/`evalJudgeModel` pair, else the optimizer's own route.
+   * Selection has its OWN switch (`selectJudge`) rather than reusing the
+   * evaluation harness's `evalJudge`: turning the harness's judge off is a
+   * statement about measuring, and silently turning ranking off with it would
+   * make `/optimize` pick a candidate without scoring any of them.
+   *
+   * Ranking with the model that produced the candidates carries a
+   * self-preference bias, which is why a distinct judge route is the
+   * documented recommendation rather than the default assumption.
+   */
+  private judgeRouteForSelection(fallback: ResolvedRoute): ResolvedRoute | undefined {
+    if (!this.config.selectJudge) return undefined
+    try {
+      return this.resolveJudgeRoute(fallback)
+    } catch {
+      // A half-configured judge pair must not fail a user's optimization: the
+      // run degrades to structural selection, which is still an improvement
+      // over taking the first draw blindly.
+      return undefined
+    }
+  }
+
+  /**
+   * Score ONE candidate prompt against the same gates and judge the evaluation
+   * harness uses (1.12.0). Extracted from `evalOneCase` so selection and
+   * measurement share one implementation, and so the rules are stated once:
+   *
+   * - the deterministic gate is decided FIRST and is absolute — a broken
+   *   candidate (missing expected content, leaked canary) scores nothing;
+   * - a gate-passing candidate with NO judge route scores 1, exactly the
+   *   pre-1.12 contract for an offline run;
+   * - an incomplete judge answer yields `undefined`, never a partial mean;
+   * - the judge call is one `generateOnce` at temperature 0.
+   *
+   * The presence of `judgeRoute` is the only thing that decides whether a judge
+   * runs: the two callers resolve it from their OWN switch (`evalJudge` for the
+   * harness, `selectJudge` for ranking), so neither feature can silently
+   * disable the other's measurement.
+   */
+  private async scoreCandidate(
+    item: Pick<EvalCase, 'instruction' | 'dimensions' | 'mustInclude' | 'mustNotInclude'>,
+    candidate: string,
+    route: ResolvedRoute,
+    judgeRoute: ResolvedRoute | undefined,
+    signal?: AbortSignal,
+  ): Promise<{ gate: CandidateGate; judge?: JudgeReport; score?: number; error?: string }> {
+    const gate = this.candidateGateFor(item)({ source: 'candidate', prompt: candidate })
+    if (!gate.passed) {
+      return { gate, error: 'deterministic-failed' }
+    }
+    if (judgeRoute === undefined) {
+      // Offline/structural mode: the deterministic gate itself is the verdict —
+      // a passing candidate scores 1 rather than a made-up fraction.
+      return { gate, score: 1 }
+    }
+    const lang = this.resolveMetaLanguage(item.instruction)
     const dimensions = applicableDimensions(this.evalRubric, item.dimensions ?? [])
     try {
       const answer = await this.generateOnce(
@@ -1174,22 +1366,136 @@ export class PromptOptimizerService extends Service {
         buildJudgeUser(item.instruction, candidate, lang),
       )
       const judge = parseJudgeReport(answer, dimensions)
-      if (!judge.complete) {
-        return { ...base, deterministic, judge, score: undefined, error: 'judge-incomplete' }
-      }
-      return { ...base, deterministic, judge, score: judge.normalized }
+      if (!judge.complete) return { gate, judge, error: 'judge-incomplete' }
+      return { gate, judge, ...(judge.normalized !== undefined ? { score: judge.normalized } : {}) }
     } catch (error) {
-      return {
-        ...base,
-        deterministic,
-        score: undefined,
-        error: error instanceof OptimizeError ? error.code : 'judge-error',
-      }
+      return { gate, error: error instanceof OptimizeError ? error.code : 'judge-error' }
     }
   }
 
-  /** Snapshot of the cumulative usage ledger (for run deltas). */
-  private usageSnapshot(): { usageCalls: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number } {
+  /**
+   * The host's per-message feedback service, if this deployment has one. Duck
+   * typed (no host package is a dependency) and resolved per call: a host that
+   * renames or drops the service loses this signal only.
+   */
+  private messageFeedbackService(): MessageFeedbackLike | undefined {
+    const service = this.ctx.get('messageFeedback') as MessageFeedbackLike | undefined
+    if (service === undefined || typeof service.list !== 'function') return undefined
+    return service
+  }
+
+  /** Whether this host can answer feedback reads at all (for status/commands). */
+  hasFeedbackService(): boolean {
+    return this.messageFeedbackService() !== undefined
+  }
+
+  /**
+   * Refresh one session's feedback ledger when it is stale, and return what is
+   * known. Best-effort by contract: a host that never answers, answers with a
+   * business rejection (no such session), or throws leaves the previous ledger
+   * (or nothing) in place — feedback must never break an optimization.
+   */
+  private async syncFeedback(sessionId: string, force = false): Promise<FeedbackLedger | undefined> {
+    const existing = this.feedbackLedgers.get(sessionId)
+    if (!force && !isStale(existing)) return existing
+    const service = this.messageFeedbackService()
+    if (service === undefined) return existing
+    try {
+      const result = await service.list({ sessionId })
+      const items = feedbackItems(result)
+      if (items === undefined) return existing
+      const ledger = mergeItems(sessionId, items)
+      this.feedbackLedgers.set(sessionId, ledger)
+      // Bounded memory: evict the oldest read when the cap is reached. Map
+      // preserves insertion order, so the first key is the oldest.
+      while (this.feedbackLedgers.size > FEEDBACK_SESSION_MAX) {
+        const oldest = this.feedbackLedgers.keys().next().value
+        if (oldest === undefined) break
+        this.feedbackLedgers.delete(oldest)
+      }
+      this.stats.feedbackSessions = 0
+      this.stats.feedbackPositive = 0
+      this.stats.feedbackNegative = 0
+      for (const item of this.feedbackLedgers.values()) {
+        this.stats.feedbackPositive += item.positive
+        this.stats.feedbackNegative += item.negative
+        // A session that was read but carries no judgment is not a signal:
+        // counting it would report "8 sessions of feedback" for an empty host.
+        if (ledgerTotal(item) > 0 || Object.keys(item.categories).length > 0) this.stats.feedbackSessions++
+      }
+      return ledger
+    } catch {
+      return existing
+    }
+  }
+
+  /**
+   * Read the host feedback of up to `feedbackScanLimit` recent sessions (for
+   * `/optimize --feedback` and `--status`). Explicit sessions are refreshed by
+   * request; the rest come from the in-memory ledgers already read.
+   */
+  async scanFeedback(explicit: readonly string[] = []): Promise<FeedbackLedger[]> {
+    const ids = [...explicit]
+    for (const id of this.feedbackLedgers.keys()) {
+      if (ids.length >= this.config.feedbackScanLimit) break
+      if (!ids.includes(id)) ids.push(id)
+    }
+    for (const id of ids.slice(0, this.config.feedbackScanLimit)) {
+      await this.syncFeedback(id, explicit.includes(id))
+    }
+    return [...this.feedbackLedgers.values()].filter((ledger) => ids.includes(ledger.sessionId))
+  }
+
+  /** Every feedback ledger currently held (copies, for formatting/tests). */
+  getFeedbackLedgers(): FeedbackLedger[] {
+    return [...this.feedbackLedgers.values()].map((ledger) => ({ ...ledger, categories: { ...ledger.categories } }))
+  }
+
+  /**
+   * The last best-of-N outcome, formatted for `/optimize --select`. `undefined`
+   * when no selection ever ran in this process — a caller must be able to tell
+   * "selection is off" from "selection ran and here is what it did".
+   */
+  selectSummary(lang: 'zh' | 'en' = 'zh'): string | undefined {
+    const summary = this.lastSelection
+    if (summary === undefined) return undefined
+    return formatSelection(summary, lang)
+  }
+
+  /** The last selection's raw scores, for tests and structured callers. */
+  getLastSelection(): SelectionSummary | undefined {
+    return this.lastSelection === undefined ? undefined : { ...this.lastSelection, scores: this.lastSelection.scores.map((score) => ({ ...score })) }
+  }
+
+  /** Format the feedback readback for the command layer. */
+  formatFeedbackSignals(lang: 'zh' | 'en' = 'zh'): string {
+    const ledgers = this.getFeedbackLedgers()
+    const bias = feedbackBias(this.aggregateFeedback(ledgers), this.config.feedbackAdapt).delta
+    return `${formatFeedback(ledgers, lang, this.hasFeedbackService())}\n${feedbackToken(ledgers, bias)}`
+  }
+
+  /** Fold every ledger into one for the bias calculation. */
+  private aggregateFeedback(ledgers: readonly FeedbackLedger[]): FeedbackLedger {
+    const total: FeedbackLedger = {
+      sessionId: '*',
+      positive: 0,
+      negative: 0,
+      withNote: 0,
+      categories: {},
+      fetchedAt: 0,
+    }
+    for (const ledger of ledgers) {
+      total.positive += ledger.positive
+      total.negative += ledger.negative
+      total.withNote += ledger.withNote
+      for (const [key, count] of Object.entries(ledger.categories)) {
+        total.categories[key] = (total.categories[key] ?? 0) + count
+      }
+    }
+    return total
+  }
+
+  /** Snapshot of the cumulative usage ledger (for run deltas). */  private usageSnapshot(): { usageCalls: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number } {
     return {
       usageCalls: this.stats.usageCalls,
       inputTokens: this.stats.inputTokens,
@@ -1375,6 +1681,10 @@ export class PromptOptimizerService extends Service {
    * the original instruction is returned with an explanation.
    */
   async optimize(rawInput: string, options: OptimizeOptions = {}): Promise<OptimizeResult> {
+    // A new run invalidates the previous selection report immediately: a cache
+    // hit or a local render does no selection, and leaving the old summary in
+    // place would attribute one run's decision to another.
+    this.lastSelection = undefined
     try {
       assertInput(rawInput)
     } catch {
@@ -1522,26 +1832,174 @@ export class PromptOptimizerService extends Service {
         })
       }
     }
-    const result = await this.runPipeline(
-      (outputLanguage, diagnosis) =>
-        this.withSenseNeeds(
-          buildOptimizeSystem(this.promptContext(metaLanguage, options.context, compactTier), input, outputLanguage, diagnosis, profile),
-          senseNeeds,
+    const buildSystem = (outputLanguage: string, diagnosis?: string): string =>
+      this.withSenseNeeds(
+        buildOptimizeSystem(this.promptContext(metaLanguage, options.context, compactTier), input, outputLanguage, diagnosis, profile),
+        senseNeeds,
+        metaLanguage,
+      )
+    // Host feedback bias (1.12.0 P1-B): judgments the human filed on this
+    // session's messages shift the sampling temperature slightly. Applied
+    // BEFORE selection so candidate 0 (the baseline the winner must beat) is
+    // the draw the bias intends — otherwise a comparison would be run between
+    // an unbiased baseline and biased challengers.
+    const signalBias = await this.biasForSession(options.sessionId)
+    const biasedTemperature = applyBias(effective.temperature, signalBias)
+    const selection = this.config.selectCandidates > 1
+      ? await this.selectBestCandidate(
+          input,
+          rawInput,
+          buildSystem,
+          options,
           metaLanguage,
-        ),
+          compactTier,
+          effective.profile,
+          biasedTemperature,
+          preResolvedRoute,
+          cacheKey,
+        )
+      : undefined
+    const result = selection?.result ?? await this.runPipeline(
+      buildSystem,
       rawInput,
       options,
       metaLanguage,
       profile,
       preResolvedRoute,
       compactTier,
-      { temperature: effective.temperature, profile: effective.profile },
+      { temperature: biasedTemperature, profile: effective.profile },
     )
-    if (result.optimized && cacheKey !== undefined) {
+    // The explicit selection path caches its own winner (the per-candidate
+    // runs must not each write the shared entry); the single-candidate path
+    // caches here as it always has.
+    if (selection === undefined && result.optimized && cacheKey !== undefined) {
       this.cache.set(cacheKey, { result: cloneOptimizeResult(result), input, context: options.context })
     }
     this.emitCompleted('optimize', rawInput, result, Date.now() - startedAt)
     return result
+  }
+
+  /**
+   * The feedback temperature bias for one session, read on demand and cached
+   * for `FEEDBACK_TTL_MS`. A caller without a session id (the client button
+   * path) gets no bias rather than an extrapolation from other sessions.
+   */
+  private async biasForSession(sessionId: string | undefined): Promise<number> {
+    if (!this.config.feedbackAdapt || sessionId === undefined || sessionId.length === 0) return 0
+    const ledger = await this.syncFeedback(sessionId)
+    const { delta } = feedbackBias(ledger, this.config.feedbackAdapt)
+    this.stats.feedbackBiasApplied = delta
+    return delta
+  }
+
+  /**
+   * Best-of-N selection (1.12.0 P1-A): generate `selectCandidates` candidate
+   * prompts for ONE instruction and adopt the best.
+   *
+   * Cost model, stated because it is the whole trade: N candidates cost up to
+   * N times the generation calls (the configured `maxCalls` budget applies
+   * WITHIN a candidate, so the worst case is N× that), plus one judge call per
+   * gate-passing candidate. It is off by default (`selectCandidates: 1`) and
+   * the default N is deliberately 3 — enough for the draw to differ, small
+   * enough that a failure is affordable.
+   *
+   * Rules, in order:
+   * 1. Every candidate runs the SAME pipeline, at `base + i·0.35` temperature
+   *    (clamped to 2). Diversity comes from sampling — no structural variation
+   *    is fabricated, because a deliberately hobbled candidate would be a
+   *    straw man in the comparison.
+   * 2. The deterministic gate decides eligibility FIRST. A candidate that
+   *    leaks a canary or misses required content can never win, however well a
+   *    judge likes it.
+   * 3. `selectJudge: true` ranks survivors with the 1.11.0 judge rubric; off,
+   *    or with no judge route, the ranking is the structural heuristic at zero
+   *    extra calls.
+   * 4. Another candidate replaces candidate 0 only by `selectMinGain` or more.
+   *    A tie keeps the baseline, so enabling selection cannot make the common
+   *    case worse.
+   * 5. Only the winner is cached, and the run reports which candidate it chose
+   *    and why — a different candidate is a claim that needs a visible reason.
+   */
+  private async selectBestCandidate(
+    input: string,
+    rawInput: string,
+    buildSystem: (outputLanguage: string, diagnosis?: string) => string,
+    options: OptimizeOptions,
+    metaLanguage: MetaLanguage,
+    compactTier: boolean,
+    profile: 'balanced' | 'fast',
+    baseTemperature: number,
+    preResolvedRoute: ResolvedRoute | undefined,
+    cacheKey: string | undefined,
+  ): Promise<{ result: OptimizeResult; summary: SelectionSummary } | undefined> {
+    const route = preResolvedRoute ?? this.resolveRoute()
+    const judgeRoute = this.config.selectJudge ? this.judgeRouteForSelection(route) : undefined
+    const count = Math.min(this.config.selectCandidates, 5)
+    const temperatures = options.selectTemperatures ?? Array.from({ length: count }, (_, index) =>
+      candidateTemperature(baseTemperature, index))
+    const outputs = await Promise.all(Array.from({ length: count }, (_, index) =>
+      this.runPipeline(
+        buildSystem,
+        rawInput,
+        // Cache reads are bypassed inside the candidates (`enrich`) and the
+        // write is deferred to the winner, so an intermediate candidate cannot
+        // become a cache entry that a later run with fewer candidates would
+        // return as if it had been chosen.
+        { ...options, enrich: true },
+        metaLanguage,
+        undefined,
+        route,
+        compactTier,
+        { temperature: temperatures[index] ?? candidateTemperature(baseTemperature, index), profile },
+      ).catch((error: unknown) => {
+        // Cancellation is the caller's decision, not a candidate failure: one
+        // aborted candidate must abort the whole selection, or the plugin would
+        // silently rank a set the user already cancelled.
+        if (options.signal?.aborted === true) throw error
+        return undefined
+      })))
+    const usable = outputs
+      .map((result, index) => ({ result, index }))
+      .filter((entry): entry is { result: OptimizeResult; index: number } => entry.result !== undefined && entry.result.optimized)
+    if (usable.length === 0) return undefined
+    // The selection indices must address THIS list: candidates that failed the
+    // pipeline are dropped, so a fixed offset between the two would pick the
+    // wrong prompt (or the instruction itself) whenever an early candidate
+    // failed.
+    const candidates: Candidate[] = usable.map((entry) => ({ source: 'llm', prompt: entry.result.prompt }))
+    const scores = await scoreCandidates(candidates, this.candidateGateFor({}), {
+      minGain: this.config.selectMinGain,
+      ...(judgeRoute !== undefined
+        ? { judge: async (candidate): Promise<CandidateJudge | undefined> => {
+            const scored = await this.scoreCandidate({ instruction: input, dimensions: [] }, candidate.prompt, route, judgeRoute, options.signal)
+            if (scored.judge === undefined) return undefined
+            return {
+              ...(scored.judge.mean !== undefined ? { mean: scored.judge.mean } : {}),
+              ...(scored.judge.normalized !== undefined ? { normalized: scored.judge.normalized } : {}),
+              complete: scored.judge.complete,
+              missing: [...scored.judge.missing],
+              rejected: [...scored.judge.rejected],
+              fabricated: [...scored.judge.fabricated],
+            }
+          } }
+        // No judge (`selectJudge: false`, or no route): rank structurally at
+        // zero extra model calls rather than treating every candidate as equal.
+        : {})
+    })
+    const summary = selectCandidatePure(candidates, scores, { minGain: this.config.selectMinGain })
+    const result = (usable[summary.chosenIndex] ?? usable[0]!).result
+    this.stats.selectRuns++
+    if (summary.reason === 'gain') this.stats.selectGains++
+    this.stats.lastSelectCandidates = count
+    this.stats.lastSelectChosen = summary.chosenIndex + 1
+    this.stats.lastSelectScore = summary.score ?? 0
+    this.stats.lastSelectGate = summary.eligible
+    this.lastSelection = summary
+    const withSelection: OptimizeResult = { ...result, selection: summary }
+    if (withSelection.optimized && cacheKey !== undefined) {
+      this.cache.set(cacheKey, { result: cloneOptimizeResult(withSelection), input, context: options.context })
+    }
+    return { result: withSelection, summary }
   }
 
   /**

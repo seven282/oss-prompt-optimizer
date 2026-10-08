@@ -39,6 +39,13 @@ export { registerOptimizeCommand } from './command.js'
 export { createSettingsBridge } from './settings.js'
 export { formatStatus } from './status.js'
 export type { StatusSnapshot, StatusEvent } from './status.js'
+// 1.12.0: the best-of-N ranking rules and the host-feedback counters are pure
+// functions, exported so a deployment can reason about (or test) the exact
+// gates a candidate must clear without going through the service.
+export { selectCandidatePure, scoreCandidates, candidateTemperature, structuralScore, formatSelection, selectionToken } from './select.js'
+export type { Candidate, CandidateGate, CandidateJudge, CandidateScore, SelectionSummary } from './select.js'
+export { feedbackBias, feedbackItems, formatFeedback, mergeItems, normalizeItem } from './feedback.js'
+export type { FeedbackLedger, MessageFeedbackLike } from './feedback.js'
 export type { SettingsBridge } from './settings.js'
 export { DEFAULT_TEMPLATES, validateTemplateSet } from './templates.js'
 export type { TemplateSet } from './templates.js'

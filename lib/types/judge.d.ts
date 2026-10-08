@@ -75,7 +75,9 @@ export interface JudgeReport {
     /** Dimension ids the judge invented (not in the rubric) — diagnostic only. */
     fabricated: string[];
     /** Blocks dropped for a missing/late reason, an out-of-range score, or repetition. */
-    rejected: number;
+    rejected: string[];
+    /** How many blocks `rejected` names. */
+    rejectedCount: number;
     /** Weighted mean on the 1–5 scale; `undefined` when nothing parsed. */
     mean: number | undefined;
     /** `(mean - 1) / 4`, clamped to 0–1; `undefined` when nothing parsed. */

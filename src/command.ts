@@ -100,8 +100,8 @@ export function registerOptimizeCommand(ctx: Context, service: PromptOptimizerSe
   // Unified `/optimize` command with flag-based sub-commands.
   ctx.commands.register({
     name: 'optimize',
-    description: 'Optimize a raw instruction (--stats / --language / --auto / --insights / --set-*)',
-    input: { hint: '<指令> | --stats | --language auto|中文|英文 | --auto on|off|toggle | --insights | --set-profile balanced|fast' },
+    description: 'Optimize a raw instruction (--stats / --status / --select / --feedback / --language / --auto / --insights / --set-*)',
+    input: { hint: '<指令> | --stats | --status | --select | --feedback | --language auto|中文|英文 | --auto on|off|toggle | --insights | --set-profile balanced|fast' },
     handler: async (invocation): Promise<CommandResult> => {
       const raw = invocation.rawInput.trim()
 
@@ -116,10 +116,56 @@ export function registerOptimizeCommand(ctx: Context, service: PromptOptimizerSe
         const real = last === null
           ? 'REALIN:0|REALOUT:0|REALCALLS:0'
           : `REALIN:${last.inputTokens + last.cacheReadTokens + last.cacheWriteTokens}|REALOUT:${last.outputTokens}|REALCALLS:${last.calls}`
+        // 1.12.0: SELECT* reports the best-of-N outcome (`SELRUNS:0` when the
+        // feature never ran), FEEDBACK* the host signal counts.
+        const select = `SELRUNS:${stats.selectRuns}|SELGAINS:${stats.selectGains}|SELCAND:${stats.lastSelectCandidates}|SELCHOSEN:${stats.lastSelectChosen}|SELSCORE:${stats.lastSelectScore}|SELGATE:${stats.lastSelectGate}`
+        const feedback = `FBSESSIONS:${stats.feedbackSessions}|FBPOS:${stats.feedbackPositive}|FBNEG:${stats.feedbackNegative}|FBBIAS:${stats.feedbackBiasApplied}`
         return {
           kind: 'success',
-          text: `OPTIMIZE_STATS:TOKENS:${stats.lastOutputTokens}|INPUT:${stats.lastInputTokens}|CALLS:${stats.lastRunCalls}|LASTMSCALL:${stats.lastCallMs}|LOCAL:${stats.local}|REFINED:${stats.refined}|${real}|CACHER:${stats.cacheReadTokens}|CACHEW:${stats.cacheWriteTokens}|USAGECALLS:${stats.usageCalls}`,
+          text: `OPTIMIZE_STATS:TOKENS:${stats.lastOutputTokens}|INPUT:${stats.lastInputTokens}|CALLS:${stats.lastRunCalls}|LASTMSCALL:${stats.lastCallMs}|LOCAL:${stats.local}|REFINED:${stats.refined}|${real}|CACHER:${stats.cacheReadTokens}|CACHEW:${stats.cacheWriteTokens}|USAGECALLS:${stats.usageCalls}|${select}|${feedback}`,
         }
+      }
+
+      // --- Flag: --feedback (1.12.0 P1-B) ---
+      // Reads the host's own per-message judgments. Counts and category slugs
+      // only: the free-text note a human typed is never copied out of the host
+      // store, so this output can be pasted or logged safely.
+      if (raw === '--feedback' || raw.startsWith('--feedback ')) {
+        const lang = service.getMetaPromptLanguage() === 'en' ? 'en' : 'zh'
+        try {
+          await service.scanFeedback()
+        } catch {
+          // Reading signals is best-effort; render whatever is already known.
+        }
+        return { kind: 'success', text: service.formatFeedbackSignals(lang) }
+      }
+
+      // --- Flag: --select (1.12.0 P1-A) ---
+      // The best-of-N outcome of the last run, spelled out: which candidate was
+      // adopted, why, and what each one scored. The reasoning behind a choice
+      // has to be readable, or "we picked #2" is a claim without a reason.
+      if (raw === '--select' || raw.startsWith('--select ')) {
+        const lang = service.getMetaPromptLanguage() === 'en' ? 'en' : 'zh'
+        const stats = service.getStats()
+        if (stats.lastSelectCandidates <= 1) {
+          return {
+            kind: 'success',
+            text: lang === 'zh'
+              ? 'prompt-optimize: 未启用择优（selectCandidates=1）——单候选时为历史行为。设为 >1（如 3）后 /optimize 会生成多个候选并按判官分数择优。'
+              : 'prompt-optimize: selection off (selectCandidates=1) — single-candidate behaviour is unchanged. Set it >1 (e.g. 3) to generate several candidates and keep the best.',
+          }
+        }
+        const parts = [
+          lang === 'zh'
+            ? `prompt-optimize: 上次择优 ${stats.lastSelectChosen}/${stats.lastSelectCandidates}（分数 ${stats.lastSelectScore > 0 ? stats.lastSelectScore.toFixed(2) : 'n/a'}，结构门通过 ${stats.lastSelectGate}）`
+            : `prompt-optimize: last selection ${stats.lastSelectChosen}/${stats.lastSelectCandidates} (score ${stats.lastSelectScore > 0 ? stats.lastSelectScore.toFixed(2) : 'n/a'}, ${stats.lastSelectGate} passed the gate)`,
+          lang === 'zh'
+            ? `  累计 ${stats.selectRuns} 次择优，${stats.selectGains} 次换用非首个候选`
+            : `  ${stats.selectRuns} selection run(s), ${stats.selectGains} replaced the first draw`,
+        ]
+        const detail = service.selectSummary()
+        if (detail !== undefined) parts.push(detail)
+        return { kind: 'success', text: parts.join('\n') }
       }
 
       // --- Flag: --language ---

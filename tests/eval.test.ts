@@ -192,14 +192,14 @@ describe('buildRun / withUsage', () => {
         id: 'a',
         judge: {
           scores: [{ id: 'specificity', reason: 'r', score: 5 }, { id: 'economy', reason: 'r', score: 1 }],
-          missing: [], fabricated: [], rejected: 0, mean: 4, normalized: 0.75, complete: true,
+          missing: [], fabricated: [], rejected: [], rejectedCount: 0, mean: 4, normalized: 0.75, complete: true,
         },
       }),
       result({
         id: 'b',
         judge: {
           scores: [{ id: 'specificity', reason: 'r', score: 3 }],
-          missing: [], fabricated: [], rejected: 0, mean: 3, normalized: 0.5, complete: true,
+          missing: [], fabricated: [], rejected: [], rejectedCount: 0, mean: 3, normalized: 0.5, complete: true,
         },
       }),
     ], cases, {})
