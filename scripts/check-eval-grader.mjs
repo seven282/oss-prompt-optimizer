@@ -40,15 +40,21 @@ function fail(message) {
 
 const evalPath = join(root, 'lib', 'eval.js')
 const judgePath = join(root, 'lib', 'judge.js')
-for (const path of [evalPath, judgePath]) {
+const selectPath = join(root, 'lib', 'select.js')
+const feedbackPath = join(root, 'lib', 'feedback.js')
+for (const path of [evalPath, judgePath, selectPath, feedbackPath]) {
   if (!existsSync(path)) fail(`${path.replace(root, '.')} is missing — run \`pnpm run build\``)
 }
 
 let evalModule
 let judgeModule
+let selectModule
+let feedbackModule
 try {
   evalModule = await import(pathToFileURL(evalPath).href)
   judgeModule = await import(pathToFileURL(judgePath).href)
+  selectModule = await import(pathToFileURL(selectPath).href)
+  feedbackModule = await import(pathToFileURL(feedbackPath).href)
 } catch (error) {
   fail(`cannot import the built evaluation modules: ${error?.message ?? error}`)
 }
@@ -58,9 +64,20 @@ try {
 const requiredExports = {
   'lib/eval.js': ['GOLDEN_SET', 'checkDeterministic', 'calibratesAsExpected', 'deterministicPasses', 'compareToBaseline', 'selectCases', 'buildRun', 'cleanMinedSnippet', 'mineSessionInstructions'],
   'lib/judge.js': ['DEFAULT_RUBRIC', 'resolveRubric', 'applicableDimensions', 'buildJudgeSystem', 'buildJudgeUser', 'parseJudgeReport', 'aggregateJudge'],
+  // 1.12.0: the ranking rules and the feedback counters must ship too — the
+  // artifact a deployment installs is `lib/`, so a missing export would leave
+  // selection (and the feedback readback) dead on arrival.
+  'lib/select.js': ['selectCandidatePure', 'scoreCandidates', 'candidateTemperature', 'structuralScore', 'formatSelection', 'selectionToken'],
+  'lib/feedback.js': ['normalizeItem', 'feedbackItems', 'mergeItems', 'feedbackBias', 'formatFeedback', 'feedbackToken'],
+}
+const modulesByFile = {
+  'lib/eval.js': evalModule,
+  'lib/judge.js': judgeModule,
+  'lib/select.js': selectModule,
+  'lib/feedback.js': feedbackModule,
 }
 for (const [file, names] of Object.entries(requiredExports)) {
-  const module = file.endsWith('eval.js') ? evalModule : judgeModule
+  const module = modulesByFile[file]
   const missing = names.filter((name) => module[name] === undefined)
   if (missing.length > 0) fail(`${file} does not export ${missing.join(', ')}`)
 }
@@ -194,5 +211,70 @@ try {
 }
 check('an unknown rubric override id is rejected loudly', rejectedUnknown,
   'a typo would otherwise silently score the default weights')
+
+// --- 7. best-of-N ranking reverse controls (1.12.0) --------------------------
+//
+// The selector decides which prompt the user actually receives, so its rules
+// get the same treatment as the grader's: every control below asserts the
+// NEGATIVE case, and the first one is the rule the feature exists to enforce.
+
+const { selectCandidatePure, candidateTemperature } = selectModule
+const { normalizeItem, mergeItems, feedbackBias, formatFeedback } = feedbackModule
+
+const PASS_GATE = { passed: true, valid: true, missingRequired: [], leaked: [] }
+const FAIL_GATE = { passed: false, valid: false, missingRequired: ['周报'], leaked: [] }
+const candidate = (prompt) => ({ source: 'llm', prompt })
+const scored = (index, score, gate = PASS_GATE) => ({ index, source: 'llm', chars: 120, gate, score })
+const threeCandidates = [candidate('a'), candidate('b'), candidate('c')]
+
+const leaked = selectCandidatePure(threeCandidates, [scored(0, 0.5), scored(1, 0.99, FAIL_GATE), scored(2, 0.6)])
+check('a gate-failed candidate cannot win, however it scores', leaked.chosenIndex === 2,
+  `chose ${leaked.chosenIndex} (a candidate that failed the gate)`)
+
+const tie = selectCandidatePure(threeCandidates, [scored(0, 0.8), scored(1, 0.8), scored(2, 0.8)])
+check('a tie keeps the first candidate (selection cannot make things worse)', tie.chosenIndex === 0 && tie.reason === 'baseline')
+
+const margin = selectCandidatePure(threeCandidates, [scored(0, 0.9), scored(1, 0.91)])
+check('a marginal win does not replace the baseline', margin.chosenIndex === 0)
+
+const gain = selectCandidatePure(threeCandidates, [scored(0, 0.5), scored(1, 0.9)])
+check('a clear win does replace the baseline', gain.chosenIndex === 1 && gain.reason === 'gain')
+
+const unscored = selectCandidatePure([candidate('a')], [{ index: 0, source: 'llm', chars: 1, gate: PASS_GATE, error: 'judge-incomplete' }])
+check('an unscored candidate is reported as unscored, never guessed at 0',
+  unscored.score === undefined && unscored.chosenIndex === 0)
+
+check('the candidate ladder keeps the baseline temperature and spreads the rest',
+  candidateTemperature(0.2, 0) === 0.2 && candidateTemperature(0.2, 1) > 0.2 && candidateTemperature(1.9, 3) <= 2)
+
+// --- 8. feedback privacy reverse controls (1.12.0) ---------------------------
+//
+// A feedback note is free text a human typed about an answer. If it ever
+// reaches a ledger, a state file or a rendered line, the plugin is storing user
+// prose it never intended to keep — so this asserts the ABSENCE of the text
+// rather than trusting the code that is supposed to drop it.
+
+const SECRET_NOTE = 'SECRET-NOTE-TEXT-MUST-NEVER-SURVIVE'
+const normalized = normalizeItem({ rating: 'negative', category: 'correctness', note: SECRET_NOTE })
+check('a feedback item reduces to a rating, a category and a note FLAG',
+  normalized?.rating === 'negative' && normalized?.category === 'correctness' && normalized?.withNote === true)
+check('the note text never reaches the normalized item', JSON.stringify(normalized).includes(SECRET_NOTE) === false)
+
+const ledger = mergeItems('session-abcdefgh', [{ rating: 'negative', category: 'correctness', note: SECRET_NOTE }])
+check('the note text never reaches the ledger', JSON.stringify(ledger).includes(SECRET_NOTE) === false)
+check('the note text never reaches the rendered readback', formatFeedback([ledger], 'zh').includes(SECRET_NOTE) === false)
+check('the ledger counts the judgment and its category',
+  ledger.negative === 1 && ledger.withNote === 1 && ledger.categories.correctness === 1)
+
+const rescanned = mergeItems('session-abcdefgh', [{ rating: 'positive' }])
+check('re-reading a session REPLACES its counts instead of accumulating them',
+  rescanned.positive === 1 && rescanned.negative === 0)
+
+check('too small a sample produces no temperature bias (a single click is not a trend)',
+  feedbackBias({ sessionId: 's', positive: 0, negative: 2, withNote: 0, categories: {}, fetchedAt: 0 }).delta === 0)
+check('a negative-heavy session biases upward and says why',
+  feedbackBias({ sessionId: 's', positive: 1, negative: 4, withNote: 0, categories: {}, fetchedAt: 0 }).delta > 0)
+check('a positive-heavy session biases downward',
+  feedbackBias({ sessionId: 's', positive: 4, negative: 1, withNote: 0, categories: {}, fetchedAt: 0 }).delta < 0)
 
 console.log(`P10 eval grader: PASS — ${checks.length} check(s) held, golden set ${GOLDEN_SET.length} case(s) / ${core.length} core, ${withReferences.length} reference pair(s) calibrated`)

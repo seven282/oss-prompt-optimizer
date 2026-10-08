@@ -10,7 +10,7 @@ pnpm run typecheck    # tsc --noEmit
 pnpm test             # vitest run（31 个测试文件 / 809 用例，mock llm，无需真实密钥）
 pnpm run build        # tsc -p tsconfig.build.json + node scripts/copy-client.mjs（client.js → lib/client.js）
 pnpm preflight        # 门禁 P1–P10（P8 校验提交产物新鲜度，P10 校验评测判官/金标集进了发布产物）
-pnpm eval:grader      # 单独跑 P10：构建产物上的判官与金标集自检（73 项）
+pnpm eval:grader      # 单独跑 P10：构建产物上的判官 + 金标集 + 择优/反馈反向控制自检（88 项）
 pnpm e3               # 一次性 Profile 验收：安装 → 启动 → 卸载（Windows 上须在沙箱外跑）
 ```
 
