@@ -75,7 +75,7 @@
 
 | 字段 | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `localTemplate` | `'auto'` \| `'on'` \| `'off'` \| `'hybrid'` | `'auto'` | 本地模板路径：结构化子类场景（周报/邮件/数据分析/部署等）先用纯函数层渲染四段**参考模板（seed）**（零 token、~5ms），再由 LLM 优化。`auto`（默认）**seed 优化**——本地参考模板 + 目标画像喂给 LLM 感知目标优化，输出经目标对齐校验，输入侧实测 ~270–310 tokens（省 ~75%）；`on` 本地渲染即成品直接返回（0 token 模板形态）；`off` 完全关闭走完整管线；`hybrid` 目标锚点对齐直接返回（0 token）、未对齐走 seed 优化 |
+| `localTemplate` | `'on'` \| `'off'` \| `'hybrid'` | `'off'` | 本地模板路径：结构化子类场景（周报/邮件/数据分析/部署等）先用纯函数层渲染四段**本地成品**（零 token、~5ms）。`off`（默认）完全关闭、全走 LLM 管线（行为最可预期）；`on` 命中子类即本地渲染直出（0 token，最省最快）；`hybrid` 目标锚点对齐（`goalAnchorsScore` ≥ `hybridAlignThreshold`）时直出，未对齐走 LLM 精修（`refined: true`）。⚠️ 1.8.0 起 `'auto'` 已移除，写 `'auto'` 会导致**配置加载失败** |
 | `hybridAlignThreshold` | number 0–1 | `0.4` | `hybrid` 档目标锚点对齐阈值：`goalAnchorsScore`（目标/约束/受众/角色锚点加权）低于此值 → 本地成品走精修；≥ 此值直接返回。`0.4` = 仅对无任何目标锚点的裸指令精修；调高到 `0.8` 则几乎全部精修 |
 
 ## 流式控制

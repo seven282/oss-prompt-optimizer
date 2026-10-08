@@ -245,12 +245,14 @@ export interface Config {
    * Local zero-token template render (1.5.6, 方案 A): when the instruction
    * maps to a well-structured subcategory with extractable signals, answer
    * with a locally rendered four-section template — no LLM call, no tokens.
-   * `'auto'` (default) renders when the confidence gate passes and falls back
-   * to the LLM otherwise; `'on'` renders whenever a subcategory matches;
-   * `'off'` disables the local path entirely; `'hybrid'` (1.6.1) renders
-   * locally and then checks goal-anchor alignment — aligned results return at
-   * zero tokens, misaligned ones go through a cheap LLM refinement
+   * `'off'` (the default since 1.8.0 — every instruction goes through the full
+   * LLM pipeline, the most predictable behaviour) disables the local path;
+   * `'on'` renders locally whenever a subcategory matches; `'hybrid'` (1.6.1)
+   * renders locally and then checks goal-anchor alignment — aligned results
+   * return at zero tokens, misaligned ones go through a cheap LLM refinement
    * (`refined: true`, ~400-800 tokens vs ~1300-2300 for the full pipeline).
+   * The removed `'auto'` mode fails the schema (`unknown literal`), so a
+   * config that still carries it does not load — see docs/configuration.md.
    */
   localTemplate: 'on' | 'off' | 'hybrid'
   /**
