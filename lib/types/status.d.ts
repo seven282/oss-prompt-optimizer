@@ -38,6 +38,23 @@ export interface StatusSnapshot {
     autoAdapt: boolean;
     minAdaptEpisodes: number;
     settingsPanel: boolean;
+    /**
+     * Evaluation harness summary (1.11.0). Optional: a host that never ran
+     * `/optimize-eval` renders exactly as before, and a caller that builds a
+     * snapshot by hand does not have to fabricate one.
+     */
+    evalSummary?: {
+        /** Runs kept in the history. */
+        runs: number;
+        /** Latest aggregate (0–1), absent when the last run scored nothing. */
+        aggregate?: number;
+        /** Baseline aggregate (0–1), absent when none is recorded. */
+        baseline?: number;
+        /** Verdict of the latest comparison (`pass` | `regress` | …). */
+        verdict?: string;
+        /** Timestamp of the latest run. */
+        at: number;
+    };
 }
 /** Format the full status block. */
 export declare function formatStatus(snapshot: StatusSnapshot, lang?: 'zh' | 'en'): string;

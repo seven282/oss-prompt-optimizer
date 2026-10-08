@@ -1,6 +1,6 @@
 {
   "name": "oss-prompt-optimizer",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "description": "DeepSeek Harness plugin bundle: optimize raw instructions into professional Role / Task / Context / Format prompts through the harness llm service",
   "repository": {
     "type": "git",
@@ -56,7 +56,8 @@
     "test:watch": "vitest",
     "e3": "node scripts/e3-acceptance.mjs",
     "preflight": "node scripts/preflight.mjs",
-    "desktop:compat": "node scripts/check-desktop-compat.mjs"
+    "desktop:compat": "node scripts/check-desktop-compat.mjs",
+    "eval:grader": "node scripts/check-eval-grader.mjs"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",

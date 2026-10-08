@@ -67,6 +67,12 @@ const DEFAULT_CONFIG: Config = {
   autoAdapt: false,
   minAdaptEpisodes: 10,
   persistState: false,
+  evalThreshold: 0.6,
+  evalRegressionTolerance: 0.02,
+  evalMaxCases: 8,
+  evalJudge: false,
+  evalMineSessions: false,
+  evalMineLimit: 5,
 }
 
 function textStream(text: string): AsyncIterable<StreamChunk> {
@@ -106,12 +112,15 @@ const invocation = (rawInput: string) => ({
 })
 
 describe('registerOptimizeCommand', () => {
-  it('registers the /optimize and /template commands', () => {
+  it('registers the /optimize, /optimize-eval and /template commands', () => {
     const { commands } = makeService(() => textStream(FOUR_SECTIONS))
-    expect(commands.map((c) => c.name)).toEqual(['optimize', 'template'])
+    expect(commands.map((c) => c.name)).toEqual(['optimize', 'optimize-eval', 'template'])
     const optimize = commands.find((c) => c.name === 'optimize')!
     expect(optimize.description).toContain('Optimize')
     expect(optimize.input?.hint).toBeTruthy()
+    const evalCommand = commands.find((c) => c.name === 'optimize-eval')!
+    expect(evalCommand.description).toContain('golden set')
+    expect(evalCommand.input?.hint).toContain('baseline')
   })
 
   it('returns the optimized prompt on success', async () => {

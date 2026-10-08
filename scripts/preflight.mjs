@@ -65,6 +65,16 @@
  *       The desktop ships a different dsh release line than the CLI/web one, so
  *       a range that only spans one tuple silently withholds the plugin there.
  *       SKIP when no desktop install is present (CI), so the gate is portable.
+ *   P10 Evaluation-grader calibration — runs
+ *       `scripts/check-eval-grader.mjs` against the BUILT `lib/` artifacts and
+ *       fails when the golden set is malformed (duplicate ids, a case naming an
+ *       unknown rubric dimension, an injection probe without a canary), when a
+ *       shipped reference pair is graded in the wrong order, or when any of the
+ *       judge-parser / verdict-math reverse controls stops holding. The eval
+ *       harness is what the project now uses to judge every other change, so a
+ *       grader that accepts anything would report every edit as an improvement;
+ *       P4 only exercises `src/`, so this is also the packaging check that the
+ *       golden set and the judge actually ship inside the published bundle.
  *
  * Usage:  pnpm preflight  [--skip-tests] [--offline] [--dsh-home <path>]
  */
@@ -677,6 +687,46 @@ function checkDesktopCompatibility() {
 }
 
 // ---------------------------------------------------------------------------
+// P10 — evaluation-grader calibration
+// ---------------------------------------------------------------------------
+
+/**
+ * The evaluation harness is now what decides whether a change made the output
+ * better, so the grader is the component most worth testing: a scorer that
+ * accepts anything reports every edit as an improvement. This gate runs
+ * `scripts/check-eval-grader.mjs` against the BUILT `lib/` artifacts — P4 runs
+ * the suite against `src/`, which cannot catch a packaging mistake that drops
+ * the golden set or the judge from the published bundle — and it asserts the
+ * NEGATIVE cases (a reason-less score, a score written before its reason, a
+ * fabricated dimension, a within-noise drop) so a permissive grader fails here.
+ */
+function checkEvalGrader() {
+  const script = join(root, 'scripts', 'check-eval-grader.mjs')
+  if (!existsSync(script)) {
+    record('P10', 'eval grader calibration', FAIL, 'scripts/check-eval-grader.mjs is missing')
+    return
+  }
+  try {
+    const stdout = execFileSync(process.execPath, [script], { encoding: 'utf8' })
+    const text = stdout.trim()
+    const first = text.split(/\r?\n/)[0] ?? ''
+    const detail = text.replace(/^P10 eval grader:\s*(PASS|SKIP)\s*(—\s*)?/, '')
+    record('P10', 'eval grader calibration', first.includes('SKIP') ? SKIP : PASS, detail)
+  } catch (error) {
+    const details = [error?.stdout, error?.stderr]
+      .filter((part) => typeof part === 'string' && part.trim().length > 0)
+      .join('\n')
+      .trim()
+    record(
+      'P10',
+      'eval grader calibration',
+      FAIL,
+      details.replace(/^P10 eval grader:\s*FAIL\s*(—\s*)?/, '') || String(error?.message ?? error),
+    )
+  }
+}
+
+// ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 
@@ -692,6 +742,7 @@ checkStartupIndependence()
 checkClientInjectContract()
 checkCommittedRuntimeArtifacts(manifest)
 checkDesktopCompatibility()
+checkEvalGrader()
 
 let failed = 0
 for (const result of results) {

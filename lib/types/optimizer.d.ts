@@ -4,6 +4,8 @@ import { Config, type Config as ConfigType } from './config.js';
 import { type OptimizeErrorCode as OptimizeErrorCodeType } from './errors.js';
 import { type StatusSnapshot } from './status.js';
 import { type MetaLanguage } from './meta.js';
+import { type RubricDimension } from './judge.js';
+import { type EvalComparison, type EvalRun } from './eval.js';
 import { type AdaptationHints, type UserOverrides } from './adapt.js';
 export { MaxTokensError } from './llm.js';
 /** Stable capability-owned timeout reason code for optimization calls. */
@@ -196,6 +198,12 @@ export declare class PromptOptimizerService extends Service {
     private runUsage;
     /** P1（1.8.1）state persistence adapter (noop when persistState off). */
     private readonly persistence;
+    /** The resolved judge rubric (1.11.0); construction fails loudly on an unknown override id. */
+    private readonly evalRubric;
+    /** Evaluation runs, oldest first (capped at `PERSIST_EVAL_RUN_MAX`). */
+    private evalRuns;
+    /** The run new evaluations are compared against (`null` until one is recorded). */
+    private evalBaseline;
     /** Debounce timer for state persistence. */
     private persistTimer;
     /** Pending state captured at debounce time. */
@@ -321,6 +329,69 @@ export declare class PromptOptimizerService extends Service {
      * "reported nothing" distinguishable.
      */
     private recordUsage;
+    /**
+     * The judge rubric in effect (resolved at construction from
+     * `evalRubric` overrides). Exposed for `/optimize-eval rubric` and tests.
+     */
+    getEvalRubric(): readonly RubricDimension[];
+    /** The cases a run would use, in order (ids only — no instruction text). */
+    listEvalCases(options?: {
+        all?: boolean;
+        maxCases?: number;
+    }): {
+        id: string;
+        core: boolean;
+        injection: boolean;
+    }[];
+    /** Recent evaluation runs, newest first (copies). */
+    getEvalRuns(): EvalRun[];
+    /** The recorded baseline run, if any (copy). */
+    getEvalBaseline(): EvalRun | undefined;
+    /**
+     * Record the most recent run (or the one matching `label`) as the baseline.
+     * Explicit rather than automatic: a regression gate is only meaningful when
+     * the reference point is a run the user chose to stand behind.
+     */
+    setEvalBaseline(label?: string): EvalRun | undefined;
+    /** Last run + baseline + their comparison, for status rendering. */
+    getEvalSummary(): {
+        last: EvalRun | undefined;
+        baseline: EvalRun | undefined;
+        comparison: EvalComparison | undefined;
+    };
+    /**
+     * The case pool for a run: the built-in golden set, then the deployment's
+     * own cases. Ids are de-duplicated (a configured case may deliberately
+     * override a golden one by reusing its id).
+     */
+    private evalCasePool;
+    /** The judge route: an explicit `evalJudgeProvider`/`evalJudgeModel` pair, else the optimizer's. */
+    private resolveJudgeRoute;
+    /**
+     * Run one evaluation: optimize every case, score it, compare against the
+     * baseline and record the result.
+     *
+     * Cost is bounded by `evalMaxCases` (the `core` subset by default) and each
+     * case costs one optimization plus — when `evalJudge` is on — one judge
+     * call. The whole run's provider-reported usage is folded into the record
+     * from the usage ledger, so "what did measuring cost" has an answer.
+     */
+    runEval(options?: {
+        all?: boolean;
+        label?: string;
+        mine?: boolean;
+        maxCases?: number;
+        signal?: AbortSignal;
+    }): Promise<{
+        run: EvalRun;
+        comparison: EvalComparison;
+    }>;
+    /** Optimize + score one case. Never throws: a failure becomes a scored 0 with a reason. */
+    private evalOneCase;
+    /** Snapshot of the cumulative usage ledger (for run deltas). */
+    private usageSnapshot;
+    /** Billed input/output tokens consumed since `before` (from the ledger). */
+    private usageDelta;
     /** Snapshot of the run statistics (观测; copy so callers cannot mutate). */
     getStats(): OptimizeStats;
     /**

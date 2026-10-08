@@ -1,5 +1,64 @@
 # Changelog
 
+## [1.11.0] - 2026-09-22
+
+**度量闭环第二步：`/optimize-eval`——让插件能度量自己，而不是只断言形态。**
+
+在此之前，插件的"质量"判断全是结构门：四段齐、每段够厚、目标锚点保留。这些门
+可以**全部通过**，而输出依然是空泛、注水或悄悄虚构了事实的提示词；每次改模板、
+改启发式、换档位，能不能让输出更好，只能靠争论。
+
+### Added
+
+- **`src/judge.ts`——加权评分判官（纯函数层）**：内置 5 个必评维度
+  （`specificity` .25 / `output-contract` .25 / `context` .2 / `fidelity` .2 /
+  `economy` .1）+ 按需启用的 `safety` .15；判分 1–5、加权归一化到 0–1。
+  判官提示词要求**先写理由再给分**，解析器**严格执行**这一顺序：理由缺失/为空、
+  分数写在理由之前、分数非整数（`parseInt` 会把 `3.5` 悄悄截成 3——已改为要求整数
+  字面量）、越界、自创维度、重复维度一律**作废**；缺项记为 missing，绝不用默认分
+  填充（不完整即不采信该例分数）。rubric 覆盖 id 写错在**加载时**抛错。
+- **`src/eval.ts`——评测数据集与指标层（纯函数）**：内置金标集 **14 例**（8 例 core：
+  周报/脚本/修 bug/数据分析/部署/邮件/评估 + 注入探针，另含模糊指令、已优化指令、
+  英文、PPT、排查、长多约束）；确定性层复用**与优化管线同一份** `validateOutput`
+  （从 `optimizer.ts` 上移到 `validate.ts`，避免"我们接受的"和"我们度量的"漂移）
+  + 逐例 `mustInclude` / `mustNotInclude`（注入金丝雀）；确定性门失败直接记 **0 分**
+  ——坏掉的提示词不是"0.8 分质量"，不能被判官的高分平均掉。基线对比中
+  **回归优先于未达阈值**（先看方向）。会话历史挖掘（`sessionQuery` 全文检索）
+  为 best-effort：服务缺失/报错/形状不符一律降级为空，绝不因此让评测失败。
+- **服务层 `runEval()`**：跑管线 → 打分 → 与基线比较 → 持久化；记录本轮真实用量
+  （1.10.0 台账的增量）；缓存**读路径**被绕过（`enrich: true`），否则第二次评测
+  度量的是自己的缓存。新增 `getEvalRuns` / `getEvalBaseline` / `setEvalBaseline` /
+  `getEvalSummary` / `listEvalCases` / `getEvalRubric`。
+- **命令 `/optimize-eval`**：`run [标签] [--all] [--mine]` / `baseline [标签]` /
+  `show` / `list` / `rubric` / `cases`；末行输出机器可读 token
+  （`EVAL|SCORE:…|BASE:…|DELTA:…|VERDICT:…|CASES:…|GATE:…|LEAK:…`），**判回归时返回
+  错误结果**，便于脚本/CI 分支。
+- **配置**：`evalThreshold` / `evalRegressionTolerance` / `evalMaxCases` / `evalJudge` /
+  `evalJudgeProvider` / `evalJudgeModel` / `evalMineSessions` / `evalMineLimit` /
+  `evalSet` / `evalRubric`；`/optimize --status` 增加评测行（最近成绩、基线、判定、
+  历史次数）。
+- **preflight 新增 P10（`pnpm eval:grader`）**：在**构建产物 `lib/`** 上校验
+  ①金标集完整性（id 唯一、覆盖声明的任务类型、注入探针必须有金丝雀、core 子集
+  小于全集、用例引用的维度必须存在）②**评分器区分度**（每个内置参考对必须按
+  正确顺序判：good 通过、bad 不通过）③判官解析反向控制（无理由、先分后由、
+  越界、非整数、自创维度、不完整）④判定数学反向控制（容差内不算回归、首轮不判
+  pass、回归优先）⑤挖掘过滤反向控制。P4 只跑 `src/`，P10 同时是"金标集与判官
+  真的进了发布包"的打包检查。
+- **测试 +82（29 文件 / 751 用例）**：`tests/judge.test.ts`（26）、
+  `tests/eval.test.ts`（42）、`tests/optimizer.test.ts` 新增 14 条 `runEval`
+  集成用例（含隐私裁剪、注入泄漏记 0、判官不完整、基线回归、历史上限、
+  配置用例覆盖、挖掘不入库、状态展示、abort）。
+
+### Changed
+
+- `validateOutput` 从 `optimizer.ts` 私有函数上移到 `validate.ts` 并导出——评测
+  与管线共用同一份输出契约。
+- `generateOnce` 新增可选 `userText` 参数（判官需要自己的 user turn；路由、超时、
+  用量捕获、finish 错误翻译全部复用，判官与优化器不会在"怎么跟宿主说话"上分叉）。
+- `OptimizeStats` 之外的持久化结构新增 `evalRuns` / `evalBaseline`：**不升
+  `PERSIST_VERSION`**（附加字段 + `parseState` 独立校验，旧文件按空处理），
+  否则为了存评测历史要丢掉用户的 episode 与统计。
+
 ## [1.10.0] - 2026-09-22
 
 **度量闭环第一步：把「启发式估算」换成 provider 上报的真实用量台账。**

@@ -97,6 +97,20 @@ export declare function truncateInput(input: string, maxChars: number): string;
  */
 export declare function estimateTokens(text: string): number;
 /**
+ * Output validation shared by the main pipeline, the refinement round and the
+ * evaluation harness (1.11.0): `plain` forbids section headings
+ * (`hasPlainOutput`), `sections` requires all four headings optionally with a
+ * per-section content floor, `role-task-goal` requires the three labels.
+ *
+ * It lives here rather than in `optimizer.ts` because the evaluation harness
+ * must score against EXACTLY the contract the pipeline enforces — two copies
+ * would let "what we accept" and "what we measure" drift apart, which is the
+ * one failure an eval harness cannot afford. Keeping one implementation also
+ * guarantees both the first attempt and the refinement round apply the same
+ * rules (the refinement round used to skip the plain-style heading check).
+ */
+export declare function validateOutput(text: string, outputStyle: 'sections' | 'plain' | 'role-task-goal', minSectionChars: number): boolean;
+/**
  * Truncate `text` to the longest prefix whose estimated token count is within
  * `maxTokens` (binary search over the cut point), appending `marker` when cut.
  * Shared by the instruction guard (`truncateByTokens`) and the conversation

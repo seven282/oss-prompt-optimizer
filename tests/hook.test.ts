@@ -57,6 +57,12 @@ const BASE_CONFIG: Config = {
   autoAdapt: false,
   minAdaptEpisodes: 10,
   persistState: false,
+  evalThreshold: 0.6,
+  evalRegressionTolerance: 0.02,
+  evalMaxCases: 8,
+  evalJudge: false,
+  evalMineSessions: false,
+  evalMineLimit: 5,
 }
 
 const FOUR_SECTIONS = `## Role

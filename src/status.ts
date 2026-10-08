@@ -42,6 +42,23 @@ export interface StatusSnapshot {
   autoAdapt: boolean
   minAdaptEpisodes: number
   settingsPanel: boolean
+  /**
+   * Evaluation harness summary (1.11.0). Optional: a host that never ran
+   * `/optimize-eval` renders exactly as before, and a caller that builds a
+   * snapshot by hand does not have to fabricate one.
+   */
+  evalSummary?: {
+    /** Runs kept in the history. */
+    runs: number
+    /** Latest aggregate (0–1), absent when the last run scored nothing. */
+    aggregate?: number
+    /** Baseline aggregate (0–1), absent when none is recorded. */
+    baseline?: number
+    /** Verdict of the latest comparison (`pass` | `regress` | …). */
+    verdict?: string
+    /** Timestamp of the latest run. */
+    at: number
+  }
 }
 
 /** Map a resolution source token to a human label. */
@@ -85,6 +102,30 @@ function billedInput(stats: OptimizeStats): number {
 function cacheReadRate(stats: OptimizeStats): number {
   const billed = billedInput(stats)
   return billed > 0 ? stats.cacheReadTokens / billed : 0
+}
+
+/**
+ * The evaluation-harness line (1.11.0): the latest aggregate, its baseline and
+ * the verdict. Absent summary → no line at all, so a host that never measured
+ * sees the status block it always had.
+ */
+function evalLines(
+  summary: StatusSnapshot['evalSummary'],
+  lang: 'zh' | 'en',
+): string[] {
+  if (summary === undefined) return []
+  const score = summary.aggregate === undefined ? 'n/a' : summary.aggregate.toFixed(2)
+  const base = summary.baseline === undefined ? 'n/a' : summary.baseline.toFixed(2)
+  const verdictLabel: Record<string, string> = lang === 'zh'
+    ? { pass: '通过', regress: '回归', 'below-threshold': '未达阈值', 'no-baseline': '无基线', 'no-score': '无判分' }
+    : { pass: 'pass', regress: 'REGRESS', 'below-threshold': 'below threshold', 'no-baseline': 'no baseline', 'no-score': 'nothing scored' }
+  const verdict = summary.verdict === undefined ? 'n/a' : (verdictLabel[summary.verdict] ?? summary.verdict)
+  const when = new Date(summary.at).toLocaleString(lang === 'zh' ? 'zh-CN' : 'en-US', { hour12: false })
+  return [
+    lang === 'zh'
+      ? `  评测: 最近 ${score}（基线 ${base}，${verdict}）｜ 历史 ${summary.runs} 次 ｜ ${when}`
+      : `  Eval: latest ${score} (baseline ${base}, ${verdict}) ｜ ${summary.runs} run(s) ｜ ${when}`,
+  ]
 }
 
 /**
@@ -158,6 +199,7 @@ export function formatStatus(snapshot: StatusSnapshot, lang: 'zh' | 'en' = 'zh')
     lines.push(`  本地直出 ${stats.local}（精修 ${stats.refined}）｜ 平均耗时 ${fmtMs(stats.avgCallMs, lang)}（最长 ${fmtMs(stats.maxDurationMs, lang)}）`)
     lines.push(`  平均调用 ${stats.callCount > 0 ? (stats.callCount / Math.max(1, stats.runs)).toFixed(1) : 0} 次/次优化 ｜ 上次输出 ${stats.lastOutputTokens} tok`)
     lines.push(...usageLines(stats, lang))
+    lines.push(...evalLines(snapshot.evalSummary, lang))
     lines.push('')
     lines.push('🧠 偏好模型（最近 ' + prefs.total + ' 次）：')
     if (prefs.total > 0) {
@@ -196,6 +238,7 @@ export function formatStatus(snapshot: StatusSnapshot, lang: 'zh' | 'en' = 'zh')
     lines.push(`  Local ${stats.local} (refined ${stats.refined}) ｜ avg ${fmtMs(stats.avgCallMs, lang)} (max ${fmtMs(stats.maxDurationMs, lang)})`)
     lines.push(`  Avg calls ${stats.callCount > 0 ? (stats.callCount / Math.max(1, stats.runs)).toFixed(1) : 0}/run ｜ last out ${stats.lastOutputTokens} tok`)
     lines.push(...usageLines(stats, lang))
+    lines.push(...evalLines(snapshot.evalSummary, lang))
     lines.push('')
     lines.push('🧠 Preference model (last ' + prefs.total + ' runs):')
     if (prefs.total > 0) {

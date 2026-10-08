@@ -69,6 +69,8 @@ describe('serializeState / parseState', () => {
       stats: STATS,
       episodes: cropEpisodes([makeEpisode('secret instruction', { local: true })]),
       events: [{ ts: 1, method: 'optimize', ok: true, outputTokens: 300, durationMs: 900, local: true } as StatusEvent],
+      evalRuns: [],
+      evalBaseline: null,
     }
     const parsed = parseState(serializeState(data))
     expect(parsed).not.toBeNull()
@@ -88,6 +90,8 @@ describe('serializeState / parseState', () => {
       stats: STATS,
       episodes: [],
       events: [],
+      evalRuns: [],
+      evalBaseline: null,
     })
     expect(parseState(text)).toBeNull()
   })
@@ -146,6 +150,8 @@ describe('FilePersistence (real files)', () => {
       stats: STATS,
       episodes: cropEpisodes([makeEpisode('x')]),
       events: [],
+      evalRuns: [],
+      evalBaseline: null,
     }
     expect(p.save(data)).toBe(true)
     const loaded = p.loadSync()
@@ -169,6 +175,8 @@ describe('FilePersistence (real files)', () => {
       stats: STATS,
       episodes: [],
       events: [],
+      evalRuns: [],
+      evalBaseline: null,
     }
     expect(p.save(data)).toBe(true)
     expect(existsSync(`${path}.tmp`)).toBe(false)
@@ -182,7 +190,8 @@ describe('createPersistence', () => {
   it('yields the noop adapter when persistState is off', () => {
     const adapter = createPersistence(false, '/whatever')
     expect(adapter.loadSync()).toBeNull()
-    const noopData: PersistData = { version: PERSIST_VERSION, updatedAt: 0, stats: STATS, episodes: [], events: [] }
+    const evalFields = { evalRuns: [], evalBaseline: null }
+    const noopData: PersistData = { version: PERSIST_VERSION, updatedAt: 0, stats: STATS, episodes: [], events: [], ...evalFields }
     expect(adapter.save(noopData)).toBe(true)
   })
 
@@ -190,7 +199,7 @@ describe('createPersistence', () => {
     const path = join(dir, 'custom', 'state.json')
     const adapter = createPersistence(true, path)
     expect(adapter.loadSync()).toBeNull()
-    const data: PersistData = { version: PERSIST_VERSION, updatedAt: 0, stats: STATS, episodes: [], events: [] }
+    const data: PersistData = { version: PERSIST_VERSION, updatedAt: 0, stats: STATS, episodes: [], events: [], evalRuns: [], evalBaseline: null }
     expect(adapter.save(data)).toBe(true)
     expect(existsSync(path)).toBe(true)
   })

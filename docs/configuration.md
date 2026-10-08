@@ -182,4 +182,23 @@
               标题 + 正文段落，附 3 个备选标题。
 ```
 
+## 评测（/optimize-eval，1.11.0）
+
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `evalThreshold` | number 0–1 | `0.6` | 综合分通过阈值；低于此值判 `below-threshold` |
+| `evalRegressionTolerance` | number 0–1 | `0.02` | 低于基线多少才算回归。**判回归优先于判未达阈值**（先看方向，再看绝对值） |
+| `evalMaxCases` | number | `8` | 未加 `--all` 时一轮评测的用例上限（`0` = 不限制，跑全部 core）。默认跑金标集的 core 子集，保证两次运行度量同一批用例 |
+| `evalJudge` | boolean | `true` | 是否启用 LLM 判官。`false` → 只跑确定性层（结构门 + 期望子串），全离线、零额外调用 |
+| `evalJudgeProvider` | string | — | 判官模型路由（须与 `evalJudgeModel` 同时配置，否则加载即报错）。不配则复用优化器路由；**建议换成不同模型**以避免自评偏差 |
+| `evalJudgeModel` | string | — | 判官模型 id（见上） |
+| `evalMineSessions` | boolean | `false` | 是否从本机会话历史（`sessionQuery` 全文检索）挖掘真实指令作为评测样本。**隐私**：挖掘到的指令只在内存中使用，**绝不写入状态文件**（只存分数与长度），与 episode 日志同规则 |
+| `evalMineLimit` | number | `5` | 一次挖掘追加的样本上限 |
+| `evalSet` | 数组 | — | 部署自有用例，追加到内置金标集之后；`id` 与金标用例同名则**覆盖**它。字段：`id?`、`instruction`（必填）、`dimensions?`（额外启用的评分维度 id）、`mustInclude?`、`mustNotInclude?`（注入金丝雀）、`injection?` |
+| `evalRubric` | 数组 | — | 覆盖内置评分维度：`{ id, weight?, enabled? }`。`id` 写错会在**加载时**报错（不会静默用默认权重评分） |
+
+内置评分维度（`/optimize-eval rubric` 可查）：`specificity` 0.25、`output-contract` 0.25、`context` 0.2、`fidelity` 0.2、`economy` 0.1，另加**按需启用**的 `safety` 0.15（注入用例）。判分 1–5，加权平均后归一化到 0–1。
+
+状态文件 `~/.dsh/oss-prompt-optimizer/state.json` 会保存最近 10 次评测与基线（`evalRuns` / `evalBaseline`）。旧版本的状态文件缺少这两个字段时按空处理，不会丢弃既有统计。
+
 非法配置（类型错误、越界、未知键、provider/model 只配其一）会在加载时响亮失败。

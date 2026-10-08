@@ -25,6 +25,36 @@ export interface CustomTemplateSet {
   iterateEn?: string
 }
 
+/**
+ * One user-supplied evaluation case for the `/optimize-eval` harness
+ * (1.11.0). The built-in golden set covers the common task types; a deployment
+ * adds its own domain cases here.
+ */
+export interface EvalCaseConfig {
+  /** Stable id; auto-derived (`user-N`) when omitted. Echoed in reports. */
+  id?: string
+  /** The raw instruction to optimize and then judge. */
+  instruction: string
+  /** Extra rubric dimension ids this case enables (see the judge rubric). */
+  dimensions?: string[]
+  /** Substrings the optimized prompt MUST contain (deterministic check). */
+  mustInclude?: string[]
+  /** Substrings it must NOT contain — injection canaries for adversarial cases. */
+  mustNotInclude?: string[]
+  /** Marks the case as an injection probe (reported separately). */
+  injection?: boolean
+}
+
+/** Per-dimension override of the built-in judge rubric (1.11.0). */
+export interface EvalRubricOverride {
+  /** Dimension id (stable slug — see the built-in rubric). */
+  id: string
+  /** Replacement relative weight; omitted keeps the built-in weight. */
+  weight?: number
+  /** `false` drops the dimension from scoring entirely. */
+  enabled?: boolean
+}
+
 /** Complete, validated plugin configuration. */
 export interface Config {
   /** Sampling temperature for the optimization call. */
@@ -301,6 +331,43 @@ export interface Config {
   persistState: boolean
   /** Optional override for the state file path (default `~/.dsh/oss-prompt-optimizer/state.json`). */
   stateFile?: string
+  /**
+   * Evaluation harness (1.11.0, driven by `/optimize-eval`). The plugin can
+   * measure its own output instead of only asserting structural shape: the
+   * golden set + `evalSet` instructions are optimized and then scored by
+   * deterministic checks plus an LLM judge, giving a number that can be
+   * compared against the previous run.
+   */
+  /** Normalized (0..1) score a run must reach for the verdict to be `pass`. */
+  evalThreshold: number
+  /** How far a run may fall below the baseline before it counts as a regression. */
+  evalRegressionTolerance: number
+  /** Cases per `run` when `--all` is not passed; `0` = every case. */
+  evalMaxCases: number
+  /**
+   * Whether the LLM judge runs. `false` (with `evalJudge: false`) keeps the
+   * harness fully offline: structural + expectation checks only, zero extra
+   * model calls beyond the optimization itself.
+   */
+  evalJudge: boolean
+  /** Optional judge route; both must be set together (else the optimizer's route is reused). */
+  evalJudgeProvider?: string
+  /** Optional judge model id; must be set together with `evalJudgeProvider`. */
+  evalJudgeModel?: string
+  /**
+   * Mine candidate instructions from this host's own session history
+   * (`sessionQuery` full-text search) to extend the evaluation set
+   * (1.11.0, default `false`). **Privacy**: mined instructions are used
+   * in-memory for the run and are never written to the state file — only
+   * scores and lengths are persisted, mirroring the episode log's crop rule.
+   */
+  evalMineSessions: boolean
+  /** Maximum mined instructions appended to a mined run. */
+  evalMineLimit: number
+  /** Deployment-specific evaluation cases, appended to the built-in golden set. */
+  evalSet?: EvalCaseConfig[]
+  /** Weight/enable overrides for the built-in judge rubric. */
+  evalRubric?: EvalRubricOverride[]
 }
 
 /**
@@ -368,4 +435,25 @@ export const Config: z<Config> = z.object({
   minAdaptEpisodes: z.number().step(1).min(5).max(100).default(10),
   persistState: z.boolean().default(true),
   stateFile: z.string().required(false),
+  evalThreshold: z.number().min(0).max(1).default(0.6),
+  evalRegressionTolerance: z.number().min(0).max(1).default(0.02),
+  evalMaxCases: z.number().step(1).min(0).max(200).default(8),
+  evalJudge: z.boolean().default(true),
+  evalJudgeProvider: z.string(),
+  evalJudgeModel: z.string(),
+  evalMineSessions: z.boolean().default(false),
+  evalMineLimit: z.number().step(1).min(0).max(50).default(5),
+  evalSet: z.array(z.object({
+    id: z.string(),
+    instruction: z.string().required(),
+    dimensions: z.array(z.string()),
+    mustInclude: z.array(z.string()),
+    mustNotInclude: z.array(z.string()),
+    injection: z.boolean(),
+  })),
+  evalRubric: z.array(z.object({
+    id: z.string().required(),
+    weight: z.number().min(0).max(1),
+    enabled: z.boolean(),
+  })),
 })

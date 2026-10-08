@@ -16,12 +16,23 @@
 import type { CroppedEpisode, Episode } from './episode.js';
 import type { StatusEvent } from './status.js';
 import type { OptimizeStats } from './optimizer.js';
+import type { EvalRun } from './eval.js';
 /** Schema version — bump when the on-disk shape changes (old files ignored). */
 export declare const PERSIST_VERSION = 1;
 /** Upper bound on persisted episodes. */
 export declare const PERSIST_EPISODE_MAX = 200;
 /** Upper bound on persisted recent events. */
 export declare const PERSIST_EVENT_MAX = 20;
+/**
+ * Upper bound on persisted evaluation runs (1.11.0).
+ *
+ * The field was ADDED to version 1 rather than bumping the version: an older
+ * file simply lacks it (defaulting to `[]`), and discarding a user's episodes
+ * and statistics to store eval history would be a bad trade. `parseState`
+ * validates the new field shape independently, so a file from a build without
+ * the evaluation harness loads exactly as before.
+ */
+export declare const PERSIST_EVAL_RUN_MAX = 10;
 /** Full persisted state document. */
 export interface PersistData {
     version: typeof PERSIST_VERSION;
@@ -29,6 +40,10 @@ export interface PersistData {
     stats: OptimizeStats;
     episodes: CroppedEpisode[];
     events: StatusEvent[];
+    /** Evaluation runs, oldest first (1.11.0). */
+    evalRuns: EvalRun[];
+    /** The recorded baseline run, or `null` (1.11.0). */
+    evalBaseline: EvalRun | null;
 }
 /** Serialize a state document to the on-disk JSON string. */
 export declare function serializeState(data: PersistData): string;
