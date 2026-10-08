@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
+import type { GenerateOptions, StreamChunk, TokenUsage } from '@deepseek-ai/dsh-llm'
 import { TimeoutReason } from '@deepseek-ai/dsh-timeout'
 import type { Config } from '../src/config.js'
 import { OptimizeError, OptimizeErrorCode } from '../src/errors.js'
@@ -97,6 +97,19 @@ function chunkStream(...chunks: string[]): AsyncIterable<StreamChunk> {
 /** Stream a prefix, then a long tail one character at a time (thin-delta tail). */
 function tailStream(prefix: string, tail: string): AsyncIterable<StreamChunk> {
   return chunkStream(prefix, ...tail.split(''))
+}
+
+/**
+ * Stream one text delta, a provider usage report, then a stop finish — the
+ * chunk order the harness contract specifies (usage arrives before the
+ * terminal finish).
+ */
+function usageStream(text: string, usage: TokenUsage): AsyncIterable<StreamChunk> {
+  return (async function* () {
+    yield { type: 'text-delta', index: 0, text }
+    yield { type: 'usage', usage }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  })()
 }
 
 interface CtxStub {
@@ -1218,6 +1231,86 @@ describe('PromptOptimizerService call budget & stats (roadmap #1/#2)', () => {
     const stats = service.getStats()
     expect(stats.failed).toBe(1)
     expect(stats.success).toBe(0)
+  })
+})
+
+describe('provider-reported usage ledger (1.10.0)', () => {
+  it('folds a reported usage chunk into the cumulative ledger and the run', async () => {
+    const state = makeCtx([usageStream(FOUR_SECTIONS, { inputTokens: 700, outputTokens: 240, cacheReadTokens: 500, cacheWriteTokens: 30, reasoningTokens: 40 })])
+    const service = makeService(state)
+    await service.optimize('x')
+    const stats = service.getStats()
+    expect(stats.usageCalls).toBe(1)
+    expect(stats.inputTokens).toBe(700)
+    expect(stats.outputTokens).toBe(240)
+    expect(stats.cacheReadTokens).toBe(500)
+    expect(stats.cacheWriteTokens).toBe(30)
+    expect(stats.reasoningTokens).toBe(40)
+    expect(stats.lastRunUsage).toEqual({
+      calls: 1, inputTokens: 700, outputTokens: 240, cacheReadTokens: 500, cacheWriteTokens: 30, reasoningTokens: 40,
+    })
+  })
+
+  it('leaves the ledger empty when the adapter reports no usage', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    const service = makeService(state)
+    await service.optimize('x')
+    const stats = service.getStats()
+    // The heuristic estimate still lands (1.4.6), but it is not promoted to
+    // the real ledger — that distinction is the whole point of `usageCalls`.
+    expect(stats.lastInputTokens).toBeGreaterThan(0)
+    expect(stats.usageCalls).toBe(0)
+    expect(stats.inputTokens).toBe(0)
+    expect(stats.outputTokens).toBe(0)
+    // The run DID make a call; it just reported nothing. `lastRunUsage.calls`
+    // stays 0 while `lastRunCalls` records the call — the two are not
+    // interchangeable, and the status line reads both.
+    expect(stats.lastRunCalls).toBe(1)
+    expect(stats.lastRunUsage?.calls).toBe(0)
+  })
+
+  it('accumulates across calls and reports per-run usage separately', async () => {
+    const state = makeCtx([
+      usageStream('缺段', { inputTokens: 100, outputTokens: 10 }),
+      usageStream(FOUR_SECTIONS, { inputTokens: 200, outputTokens: 300 }),
+    ])
+    const service = makeService(state)
+    await service.optimize('x') // first attempt fails validation, retry succeeds
+    const stats = service.getStats()
+    expect(stats.usageCalls).toBe(2)
+    expect(stats.inputTokens).toBe(300)
+    expect(stats.outputTokens).toBe(310)
+    expect(stats.lastRunUsage?.calls).toBe(2)
+    expect(stats.lastRunUsage?.inputTokens).toBe(300)
+    expect(stats.lastRunUsage?.outputTokens).toBe(310)
+  })
+
+  it('reports an empty run for a cache hit instead of the previous run’s usage', async () => {
+    const state = makeCtx([usageStream(FOUR_SECTIONS, { inputTokens: 400, outputTokens: 250 })])
+    const service = makeService(state)
+    await service.optimize('x')
+    await service.optimize('x') // cache hit: zero model calls
+    const stats = service.getStats()
+    expect(stats.cached).toBe(1)
+    expect(stats.lastRunUsage).toEqual({
+      calls: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0,
+    })
+    // Cumulative totals stay untouched by the cache hit.
+    expect(stats.usageCalls).toBe(1)
+    expect(stats.inputTokens).toBe(400)
+  })
+
+  it('ignores a malformed usage report instead of poisoning the ledger', async () => {
+    const state = makeCtx([
+      usageStream(FOUR_SECTIONS, { inputTokens: -5, outputTokens: Number.NaN, cacheReadTokens: 12 } as never),
+    ])
+    const service = makeService(state)
+    await service.optimize('x')
+    const stats = service.getStats()
+    expect(stats.usageCalls).toBe(1)
+    expect(stats.inputTokens).toBe(0)
+    expect(stats.outputTokens).toBe(0)
+    expect(stats.cacheReadTokens).toBe(12)
   })
 })
 

@@ -1,5 +1,43 @@
 # Changelog
 
+## [1.10.0] - 2026-09-22
+
+**度量闭环第一步：把「启发式估算」换成 provider 上报的真实用量台账。**
+
+此前插件的所有 token 数字（`lastInputTokens` / `lastOutputTokens`）都是本地启发式
+估算，与实测值混在一起无法区分；而宿主 `dsh-llm` 的 `StreamChunk` 一直带着
+`{ type: 'usage', usage: TokenUsage }`（含 `cacheReadTokens` / `cacheWriteTokens`），
+插件从未读取过。
+
+### Added
+
+- **真实用量台账**（`OptimizeStats` 新增 6 个累计字段 + `lastRunUsage`）：
+  `usageCalls` / `inputTokens` / `outputTokens` / `cacheReadTokens` /
+  `cacheWriteTokens` / `reasoningTokens`，并新增导出类型 `RunUsage`。
+  `generateOnce` 在流中捕获 `usage` 块、在 `finally` 中记账——**超时/取消/中断的
+  调用同样计入**（那正是最该看到的成本）。
+- **`/optimize --stats` 机器 token 扩展**：追加
+  `REALIN / REALOUT / REALCALLS / CACHER / CACHEW / USAGECALLS`；原有前缀字段
+  一字未动（`USAGECALLS:0` 即"未上报"），客户端 `OPTIMIZE_STATS:TOKENS:(\d+)`
+  解析不受影响。
+- **`/optimize --status` 真实用量行**：累计 input（缓存读/写/未缓存拆分）、output、
+  **缓存命中率**、上报调用数、推理 token（有才显示）、上次优化用量；provider 未上报时
+  明确打印"适配器未上报 usage——上面两个 token 数是启发式估算"。
+- 单测 +10（27 文件 / 669 用例）：用量入账、无上报不污染台账、跨调用累计与
+  单次运行分离、缓存命中报"0 次调用"、畸形 usage（负数/NaN）不污染台账、
+  状态渲染四种分支（含**反向控制**：有调用但未上报不得显示为"0 次模型调用"）。
+
+### Fixed
+
+- **`docs/configuration.md` 的 `localTemplate` 文档与实现不符**：文档写
+  `'auto' | 'on' | 'off' | 'hybrid'`、默认 `'auto'`，但 1.8.0 已移除 `'auto'`
+  且默认是 `'off'`——照文档配置会**直接导致配置加载失败**
+  （`$.localTemplate expected "on" | "off" | "hybrid" but got "auto"`）。
+  文档与 `src/config.ts` 的过期注释同步为实际值（含 `'auto'` 已移除的告警）。
+- **区分「0 次模型调用」与「有调用但未上报」**：`lastRunUsage.calls` 与
+  `lastRunCalls` 是两个不同问题，状态行同时读取两者，避免把"适配器不支持
+  上报"错误呈现为"这次优化零成本"。
+
 ## [1.9.0] - 2026-09-22
 
 - **桌面端适配（与 web 双端兼容）**：桌面 App 自带独立运行时

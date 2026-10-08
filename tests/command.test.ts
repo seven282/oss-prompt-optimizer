@@ -301,7 +301,7 @@ describe('/optimize --stats flag', () => {
   it('reports the last run output tokens as a machine token', async () => {
     const { commands } = makeService(() => textStream(FOUR_SECTIONS))
     // Before any run the counters are zero.
-    expect(await optimize(commands).handler(invocation('--stats'))).toMatchObject({ kind: 'success', text: 'OPTIMIZE_STATS:TOKENS:0|INPUT:0|CALLS:0|LASTMSCALL:0|LOCAL:0|REFINED:0' })
+    expect(await optimize(commands).handler(invocation('--stats'))).toMatchObject({ kind: 'success', text: 'OPTIMIZE_STATS:TOKENS:0|INPUT:0|CALLS:0|LASTMSCALL:0|LOCAL:0|REFINED:0|REALIN:0|REALOUT:0|REALCALLS:0|CACHER:0|CACHEW:0|USAGECALLS:0' })
     await optimize(commands).handler(invocation('帮我写周报'))
     const result = await optimize(commands).handler(invocation('--stats'))
     expect(result).toMatchObject({ kind: 'success' })

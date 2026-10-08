@@ -10,6 +10,10 @@ function makeSnapshot(overrides: Partial<StatusSnapshot> = {}): StatusSnapshot {
       totalDurationMs: 3000, maxDurationMs: 2000, lastOutputTokens: 800,
       lastCallMs: 900, avgCallMs: 900, maxCallMs: 1200, totalCallMs: 2700, callCount: 3,
       lastRunCalls: 2, lastInputTokens: 500,
+      usageCalls: 4,
+      inputTokens: 300, outputTokens: 1500, cacheReadTokens: 900,
+      cacheWriteTokens: 100, reasoningTokens: 0,
+      lastRunUsage: { calls: 2, inputTokens: 100, outputTokens: 700, cacheReadTokens: 200, cacheWriteTokens: 0, reasoningTokens: 0 },
     },
     prefs: {
       total: 2, taskTypeFreq: new Map([['writing', 2]]), subtypeFreq: new Map(),
@@ -51,6 +55,57 @@ describe('formatStatus (P1, 1.7.9)', () => {
     expect(text).toContain('本地直出 1')
     expect(text).toContain('最常用: writing')
     expect(text).toContain('本地模板使用率 50% / 接受率 100%')
+  })
+
+  it('renders the provider-reported usage ledger (1.10.0)', () => {
+    const text = formatStatus(makeSnapshot(), 'zh')
+    // billed input = uncached 300 + cache read 900 + cache write 100
+    expect(text).toContain('真实用量: 累计 input 1300（缓存读 900 / 写 100 / 未缓存 300）｜ output 1500')
+    // 900 / 1300
+    expect(text).toContain('缓存命中 69%')
+    expect(text).toContain('4 次调用上报')
+    // last run: input 100 + 200 cache read + 0 write, output 700, 2 of 2 calls
+    expect(text).toContain('上次优化: input 300 ｜ output 700（2/2 次调用上报）')
+    expect(formatStatus(makeSnapshot(), 'en')).toContain('Real usage: cumulative input 1300')
+  })
+
+  it('says the token counts are estimates when the adapter reported no usage', () => {
+    const stats = { ...makeSnapshot().stats, usageCalls: 0, lastRunUsage: null }
+    const text = formatStatus(makeSnapshot({ stats }), 'zh')
+    expect(text).toContain('真实用量: 适配器未上报 usage')
+    expect(text).not.toContain('缓存命中')
+    expect(formatStatus(makeSnapshot({ stats }), 'en')).toContain('adapter reported no usage')
+  })
+
+  it('reports a zero-call last run for a cache hit or local render', () => {
+    const stats = {
+      ...makeSnapshot().stats,
+      lastRunCalls: 0,
+      lastRunUsage: { calls: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 },
+    }
+    expect(formatStatus(makeSnapshot({ stats }), 'zh')).toContain('上次优化: 0 次模型调用')
+    expect(formatStatus(makeSnapshot({ stats }), 'en')).toContain('Last run: 0 model calls')
+  })
+
+  it('distinguishes "no model calls" from "calls that reported nothing"', () => {
+    const zero = { calls: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 }
+    const base = makeSnapshot().stats
+    // No calls at all → a cache hit or a local render.
+    const idle = formatStatus(makeSnapshot({ stats: { ...base, lastRunUsage: zero, lastRunCalls: 0 } }), 'zh')
+    expect(idle).toContain('上次优化: 0 次模型调用（缓存命中或本地直出）')
+    // Two real calls, adapter silent → must NOT claim the run was free.
+    const silent = formatStatus(makeSnapshot({ stats: { ...base, lastRunUsage: zero, lastRunCalls: 2 } }), 'zh')
+    expect(silent).toContain('上次优化: 2 次模型调用均未上报 usage')
+    expect(silent).not.toContain('0 次模型调用')
+    expect(formatStatus(makeSnapshot({ stats: { ...base, lastRunUsage: zero, lastRunCalls: 2 } }), 'en'))
+      .toContain('2 model calls, none reported usage')
+  })
+
+  it('shows reasoning tokens only when the provider reported them', () => {
+    const base = makeSnapshot().stats
+    const withReasoning = formatStatus(makeSnapshot({ stats: { ...base, reasoningTokens: 120 } }), 'zh')
+    expect(withReasoning).toContain('推理 120 tok')
+    expect(formatStatus(makeSnapshot({ stats: base }), 'zh')).not.toContain('推理')
   })
 
   it('lists recent events newest-first with ok/fail markers', () => {

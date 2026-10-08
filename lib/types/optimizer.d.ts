@@ -89,6 +89,23 @@ export interface OptimizeResult {
      */
     refined?: boolean;
 }
+/**
+ * Provider-reported token usage for ONE optimization run, summed over its
+ * model calls (1.10.0). Counts follow the harness `TokenUsage` contract and
+ * are DISJOINT: `inputTokens` is uncached input only, cached input arrives
+ * separately as `cacheReadTokens` / `cacheWriteTokens` (billed input = the sum
+ * of the three). `calls` counts the calls that actually reported usage, so a
+ * cache hit or a local zero-token render is `calls: 0` with every count 0 —
+ * that is the honest answer, not a missing measurement.
+ */
+export interface RunUsage {
+    calls: number;
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    cacheWriteTokens: number;
+    reasoningTokens: number;
+}
 /** Run-statistics snapshot (观测; see `getStats`). */
 export interface OptimizeStats {
     runs: number;
@@ -109,6 +126,26 @@ export interface OptimizeStats {
     callCount: number;
     lastRunCalls: number;
     lastInputTokens: number;
+    /**
+     * Provider-reported usage, cumulative over the plugin's lifetime (1.10.0).
+     * Before this the plugin only ever showed HEURISTIC estimates; `usageCalls`
+     * is what tells the two apart — when it is 0 the provider reported nothing
+     * and the `*Tokens` fields above are guesses, when it is > 0 these fields
+     * are the real numbers and the guesses are the fallback.
+     */
+    usageCalls: number;
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    cacheWriteTokens: number;
+    reasoningTokens: number;
+    /**
+     * Provider-reported usage of the most recent optimization run (`null` when
+     * no usage was reported for it). Rides along with `lastRunCalls`, so a run
+     * that made 2 calls and reported nothing is distinguishable from one that
+     * reported 2 calls' worth of tokens.
+     */
+    lastRunUsage: RunUsage | null;
 }
 /**
  * The `promptOptimizer` service (class-form plugin): optimizes raw
@@ -155,6 +192,8 @@ export declare class PromptOptimizerService extends Service {
     private readonly stats;
     /** Model-call count of the current run (reset by runPipeline). */
     private runCallCount;
+    /** Provider-reported usage of the current run (reset with `runCallCount`). */
+    private runUsage;
     /** P1（1.8.1）state persistence adapter (noop when persistState off). */
     private readonly persistence;
     /** Debounce timer for state persistence. */
@@ -269,6 +308,19 @@ export declare class PromptOptimizerService extends Service {
     private emitStart;
     /** Fire `optimize:success` or `optimize:failure` based on the outcome. */
     private emitCompleted;
+    /**
+     * Fold one provider-reported usage into both the cumulative ledger and the
+     * current run's accumulator (1.10.0).
+     *
+     * Called from `generateOnce`'s cleanup block rather than at a single return
+     * site, so a call that ends in a timeout, an abort or a truncation error
+     * still contributes whatever the provider reported before the stream died —
+     * a cancelled call is precisely the one whose cost you want to see. A call
+     * that reports nothing (adapter without usage support) adds nothing and does
+     * not increment `usageCalls`, which is what keeps "reported 0 tokens" and
+     * "reported nothing" distinguishable.
+     */
+    private recordUsage;
     /** Snapshot of the run statistics (观测; copy so callers cannot mutate). */
     getStats(): OptimizeStats;
     /**

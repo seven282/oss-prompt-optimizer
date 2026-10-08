@@ -107,9 +107,17 @@ export function registerOptimizeCommand(ctx: Context, service: PromptOptimizerSe
       // --- Flag: --stats ---
       if (raw === '--stats' || raw.startsWith('--stats ')) {
         const stats = service.getStats()
+        // 1.10.0: the trailing REAL*/USAGE* fields are provider-reported; the
+        // leading TOKENS/INPUT pair stays the heuristic estimate, because a
+        // caller that used the token before this version must keep working and
+        // `USAGECALLS:0` is what tells the two apart.
+        const last = stats.lastRunUsage
+        const real = last === null
+          ? 'REALIN:0|REALOUT:0|REALCALLS:0'
+          : `REALIN:${last.inputTokens + last.cacheReadTokens + last.cacheWriteTokens}|REALOUT:${last.outputTokens}|REALCALLS:${last.calls}`
         return {
           kind: 'success',
-          text: `OPTIMIZE_STATS:TOKENS:${stats.lastOutputTokens}|INPUT:${stats.lastInputTokens}|CALLS:${stats.lastRunCalls}|LASTMSCALL:${stats.lastCallMs}|LOCAL:${stats.local}|REFINED:${stats.refined}`,
+          text: `OPTIMIZE_STATS:TOKENS:${stats.lastOutputTokens}|INPUT:${stats.lastInputTokens}|CALLS:${stats.lastRunCalls}|LASTMSCALL:${stats.lastCallMs}|LOCAL:${stats.local}|REFINED:${stats.refined}|${real}|CACHER:${stats.cacheReadTokens}|CACHEW:${stats.cacheWriteTokens}|USAGECALLS:${stats.usageCalls}`,
         }
       }
 

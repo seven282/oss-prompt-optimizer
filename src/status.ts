@@ -12,7 +12,7 @@
  */
 
 import type { PreferenceModel } from './preference.js'
-import type { OptimizeStats } from './optimizer.js'
+import type { OptimizeStats, RunUsage } from './optimizer.js'
 
 /** One recorded optimization event (success or failure). */
 export interface StatusEvent {
@@ -73,6 +73,73 @@ function fmtMs(ms: number, lang: 'zh' | 'en'): string {
   return `${Math.round(ms)} ms`
 }
 
+/**
+ * Billed input tokens of one ledger: uncached input plus both cache sides
+ * (the harness contract counts them disjointly, see `TokenUsage`).
+ */
+function billedInput(stats: OptimizeStats): number {
+  return stats.inputTokens + stats.cacheReadTokens + stats.cacheWriteTokens
+}
+
+/** Cache-read share of the billed input (0 when nothing was billed). */
+function cacheReadRate(stats: OptimizeStats): number {
+  const billed = billedInput(stats)
+  return billed > 0 ? stats.cacheReadTokens / billed : 0
+}
+
+/**
+ * The provider-reported usage ledger (1.10.0), rendered as one or two lines.
+ *
+ * The point of these lines is to make the difference between a MEASUREMENT and
+ * an ESTIMATE visible: before this the stats block only ever showed heuristic
+ * token guesses, indistinguishable from real numbers. `usageCalls === 0` says
+ * so out loud instead of printing a plausible-looking zero.
+ */
+function usageLines(stats: OptimizeStats, lang: 'zh' | 'en'): string[] {
+  const last = stats.lastRunUsage
+  if (stats.usageCalls === 0) {
+    return [
+      lang === 'zh'
+        ? '  真实用量: 适配器未上报 usage——上面两个 token 数是启发式估算'
+        : '  Real usage: adapter reported no usage — the two token counts above are heuristic estimates',
+    ]
+  }
+  const billed = billedInput(stats)
+  const out: string[] = []
+  if (lang === 'zh') {
+    out.push(`  真实用量: 累计 input ${billed}（缓存读 ${stats.cacheReadTokens} / 写 ${stats.cacheWriteTokens} / 未缓存 ${stats.inputTokens}）｜ output ${stats.outputTokens}`)
+    out.push(`  缓存命中 ${Math.round(cacheReadRate(stats) * 100)}% ｜ ${stats.usageCalls} 次调用上报${stats.reasoningTokens > 0 ? ` ｜ 推理 ${stats.reasoningTokens} tok` : ''}`)
+    if (last !== null) out.push(`  ${lastRunLine(last, stats.lastRunCalls, lang)}`)
+  } else {
+    out.push(`  Real usage: cumulative input ${billed} (cache read ${stats.cacheReadTokens} / write ${stats.cacheWriteTokens} / uncached ${stats.inputTokens}) ｜ output ${stats.outputTokens}`)
+    out.push(`  Cache hit ${Math.round(cacheReadRate(stats) * 100)}% ｜ reported by ${stats.usageCalls} calls${stats.reasoningTokens > 0 ? ` ｜ reasoning ${stats.reasoningTokens} tok` : ''}`)
+    if (last !== null) out.push(`  ${lastRunLine(last, stats.lastRunCalls, lang)}`)
+  }
+  return out
+}
+
+/**
+ * One line for the last run. `lastRunUsage.calls` and `lastRunCalls` answer
+ * different questions — the former counts calls that REPORTED usage, the
+ * latter counts calls that were MADE — so a zero in the first field alone
+ * cannot be read as "this run cost nothing": an adapter without usage support
+ * produces the same zero after three real calls.
+ */
+function lastRunLine(last: RunUsage, modelCalls: number, lang: 'zh' | 'en'): string {
+  if (last.calls === 0 && modelCalls === 0) {
+    return lang === 'zh' ? '上次优化: 0 次模型调用（缓存命中或本地直出）' : 'Last run: 0 model calls (cache hit or local render)'
+  }
+  if (last.calls === 0) {
+    return lang === 'zh'
+      ? `上次优化: ${modelCalls} 次模型调用均未上报 usage`
+      : `Last run: ${modelCalls} model calls, none reported usage`
+  }
+  const billed = last.inputTokens + last.cacheReadTokens + last.cacheWriteTokens
+  return lang === 'zh'
+    ? `上次优化: input ${billed} ｜ output ${last.outputTokens}（${last.calls}/${modelCalls} 次调用上报）`
+    : `Last run: input ${billed} ｜ output ${last.outputTokens} (${last.calls}/${modelCalls} calls reported)`
+}
+
 /** Format the full status block. */
 export function formatStatus(snapshot: StatusSnapshot, lang: 'zh' | 'en' = 'zh'): string {
   const lines: string[] = []
@@ -90,6 +157,7 @@ export function formatStatus(snapshot: StatusSnapshot, lang: 'zh' | 'en' = 'zh')
     lines.push(`  总次数 ${stats.runs}（成功 ${stats.success} / 失败 ${stats.failed} / 缓存 ${stats.cached}）`)
     lines.push(`  本地直出 ${stats.local}（精修 ${stats.refined}）｜ 平均耗时 ${fmtMs(stats.avgCallMs, lang)}（最长 ${fmtMs(stats.maxDurationMs, lang)}）`)
     lines.push(`  平均调用 ${stats.callCount > 0 ? (stats.callCount / Math.max(1, stats.runs)).toFixed(1) : 0} 次/次优化 ｜ 上次输出 ${stats.lastOutputTokens} tok`)
+    lines.push(...usageLines(stats, lang))
     lines.push('')
     lines.push('🧠 偏好模型（最近 ' + prefs.total + ' 次）：')
     if (prefs.total > 0) {
@@ -127,6 +195,7 @@ export function formatStatus(snapshot: StatusSnapshot, lang: 'zh' | 'en' = 'zh')
     lines.push(`  Runs ${stats.runs} (ok ${stats.success} / fail ${stats.failed} / cached ${stats.cached})`)
     lines.push(`  Local ${stats.local} (refined ${stats.refined}) ｜ avg ${fmtMs(stats.avgCallMs, lang)} (max ${fmtMs(stats.maxDurationMs, lang)})`)
     lines.push(`  Avg calls ${stats.callCount > 0 ? (stats.callCount / Math.max(1, stats.runs)).toFixed(1) : 0}/run ｜ last out ${stats.lastOutputTokens} tok`)
+    lines.push(...usageLines(stats, lang))
     lines.push('')
     lines.push('🧠 Preference model (last ' + prefs.total + ' runs):')
     if (prefs.total > 0) {

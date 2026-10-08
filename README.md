@@ -36,6 +36,12 @@
   显式开启才生效）。
 - **结果缓存**：内存缓存校验成功的结果（LRU + TTL），相同请求**零模型调用**
   （`cacheEnabled` 默认开，重启即清空）。
+- **真实用量台账**（1.10.0）：读取宿主 `usage` 块（provider 上报的真实 token），
+  累计 `input / output / cacheRead / cacheWrite / reasoning` 并给出**缓存命中率**，
+  在 `/optimize --stats` 与 `/optimize --status` 中展示；同时记录**上一次优化**
+  与**上一次调用**的用量。provider 未上报时明确标注「启发式估算」，不再让估算值
+  与实测值混在一起。`/optimize --status` 还会区分「0 次模型调用（缓存命中/本地直出）」
+  与「有调用但未上报」。
 - **设置面板**（1.7.8，需宿主挂载 dsh-settings）：插件将全部配置项注册为
   `prompt-optimizer` 命名空间——在 DeepSeek Harness 的**设置 → 插件/插件设置**
   面板中即可查看全部参数（默认值/当前值）并调整，改动即时生效并持久化；

@@ -1,6 +1,6 @@
 import { Service, type Context } from '@deepseek-ai/cordis'
 // Type-only: erased at compile time, so a harness rename cannot break loading.
-import type { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import type { ReasoningEffortId, TokenUsage } from '@deepseek-ai/dsh-llm'
 // 1.8.2 (方案 D)：宿主域包一律不再静态 import。deepFreeze / deadline / timeoutOf
 // 由本包自建（compat/freeze.ts、compat/timing.ts），BlockAssembler 与
 // createUserMessage 经 compat/loader 同步探测后取值——任一缺失只降级一个功能，
@@ -226,6 +226,72 @@ export interface OptimizeResult {
   refined?: boolean
 }
 
+/**
+ * Provider-reported token usage for ONE optimization run, summed over its
+ * model calls (1.10.0). Counts follow the harness `TokenUsage` contract and
+ * are DISJOINT: `inputTokens` is uncached input only, cached input arrives
+ * separately as `cacheReadTokens` / `cacheWriteTokens` (billed input = the sum
+ * of the three). `calls` counts the calls that actually reported usage, so a
+ * cache hit or a local zero-token render is `calls: 0` with every count 0 —
+ * that is the honest answer, not a missing measurement.
+ */
+export interface RunUsage {
+  calls: number
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  reasoningTokens: number
+}
+
+/** A zeroed usage accumulator. */
+function emptyUsage(): RunUsage {
+  return { calls: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 }
+}
+
+/**
+ * Coerce one provider-reported count: missing, non-finite or negative values
+ * become 0, so a partially-populated `TokenUsage` cannot poison the ledger
+ * (an adapter may omit the optional cache/reasoning fields entirely).
+ */
+function usageCount(value: number | undefined): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0
+}
+
+/**
+ * Repair the usage ledger of a state file loaded from disk (1.10.0). A file
+ * written before this version simply lacks the fields (`Object.assign` leaves
+ * the defaults), but a corrupt one can carry a string where a count belongs —
+ * and `stats.inputTokens += …` on a string silently produces concatenation
+ * instead of arithmetic, which would then be reported as fact. Loading is
+ * documented as best-effort, so repair rather than throw.
+ */
+/** The usage-ledger fields of a stats snapshot (the part a state file can carry). */
+type UsageLedger = Pick<
+  OptimizeStats,
+  'usageCalls' | 'inputTokens' | 'outputTokens' | 'cacheReadTokens' | 'cacheWriteTokens' | 'reasoningTokens' | 'lastRunUsage'
+>
+
+function normalizeLoadedUsage(stats: UsageLedger): void {
+  stats.usageCalls = usageCount(stats.usageCalls)
+  stats.inputTokens = usageCount(stats.inputTokens)
+  stats.outputTokens = usageCount(stats.outputTokens)
+  stats.cacheReadTokens = usageCount(stats.cacheReadTokens)
+  stats.cacheWriteTokens = usageCount(stats.cacheWriteTokens)
+  stats.reasoningTokens = usageCount(stats.reasoningTokens)
+  const last: Partial<RunUsage> | null | undefined = stats.lastRunUsage
+  stats.lastRunUsage = last !== null && typeof last === 'object'
+    ? {
+        calls: usageCount(last.calls),
+        inputTokens: usageCount(last.inputTokens),
+        outputTokens: usageCount(last.outputTokens),
+        cacheReadTokens: usageCount(last.cacheReadTokens),
+        cacheWriteTokens: usageCount(last.cacheWriteTokens),
+        reasoningTokens: usageCount(last.reasoningTokens),
+      }
+    : null
+}
+
 /** Run-statistics snapshot (观测; see `getStats`). */
 export interface OptimizeStats {
   runs: number
@@ -246,6 +312,26 @@ export interface OptimizeStats {
   callCount: number
   lastRunCalls: number
   lastInputTokens: number
+  /**
+   * Provider-reported usage, cumulative over the plugin's lifetime (1.10.0).
+   * Before this the plugin only ever showed HEURISTIC estimates; `usageCalls`
+   * is what tells the two apart — when it is 0 the provider reported nothing
+   * and the `*Tokens` fields above are guesses, when it is > 0 these fields
+   * are the real numbers and the guesses are the fallback.
+   */
+  usageCalls: number
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  reasoningTokens: number
+  /**
+   * Provider-reported usage of the most recent optimization run (`null` when
+   * no usage was reported for it). Rides along with `lastRunCalls`, so a run
+   * that made 2 calls and reported nothing is distinguishable from one that
+   * reported 2 calls' worth of tokens.
+   */
+  lastRunUsage: RunUsage | null
 }
 
 /**
@@ -329,9 +415,19 @@ export class PromptOptimizerService extends Service {
     lastRunCalls: 0,
     /** Prompt-side tokens of the last model call (input side, 1.4.6). */
     lastInputTokens: 0,
+    /** Provider-reported usage ledger (1.10.0); see `recordUsage`. */
+    usageCalls: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    reasoningTokens: 0,
+    lastRunUsage: null as RunUsage | null,
   }
   /** Model-call count of the current run (reset by runPipeline). */
   private runCallCount = 0
+  /** Provider-reported usage of the current run (reset with `runCallCount`). */
+  private runUsage: RunUsage = emptyUsage()
   /** P1（1.8.1）state persistence adapter (noop when persistState off). */
   private readonly persistence: PersistAdapter
   /** Debounce timer for state persistence. */
@@ -366,6 +462,7 @@ export class PromptOptimizerService extends Service {
     const loaded = this.persistence.loadSync()
     if (loaded) {
       Object.assign(this.stats, loaded.stats)
+      normalizeLoadedUsage(this.stats)
       this.episodes.clear()
       for (const ep of loaded.episodes) {
         this.episodes.push({ input: '', ...ep } as Episode)
@@ -698,6 +795,7 @@ export class PromptOptimizerService extends Service {
   private emitCompleted(method: OptimizeMethod, input: string, result: OptimizeResult, durationMs: number): void {
     this.stats.runs++
     this.stats.lastRunCalls = this.runCallCount
+    this.stats.lastRunUsage = { ...this.runUsage }
     if (result.optimized) {
       this.stats.success++
       if (result.outputTokens !== undefined) this.stats.lastOutputTokens = result.outputTokens
@@ -761,10 +859,46 @@ export class PromptOptimizerService extends Service {
     this.schedulePersist()
   }
 
+  /**
+   * Fold one provider-reported usage into both the cumulative ledger and the
+   * current run's accumulator (1.10.0).
+   *
+   * Called from `generateOnce`'s cleanup block rather than at a single return
+   * site, so a call that ends in a timeout, an abort or a truncation error
+   * still contributes whatever the provider reported before the stream died —
+   * a cancelled call is precisely the one whose cost you want to see. A call
+   * that reports nothing (adapter without usage support) adds nothing and does
+   * not increment `usageCalls`, which is what keeps "reported 0 tokens" and
+   * "reported nothing" distinguishable.
+   */
+  private recordUsage(usage: TokenUsage | undefined): void {
+    if (usage === undefined) return
+    const input = usageCount(usage.inputTokens)
+    const output = usageCount(usage.outputTokens)
+    const cacheRead = usageCount(usage.cacheReadTokens)
+    const cacheWrite = usageCount(usage.cacheWriteTokens)
+    const reasoning = usageCount(usage.reasoningTokens)
+    this.stats.usageCalls++
+    this.stats.inputTokens += input
+    this.stats.outputTokens += output
+    this.stats.cacheReadTokens += cacheRead
+    this.stats.cacheWriteTokens += cacheWrite
+    this.stats.reasoningTokens += reasoning
+    this.runUsage.calls++
+    this.runUsage.inputTokens += input
+    this.runUsage.outputTokens += output
+    this.runUsage.cacheReadTokens += cacheRead
+    this.runUsage.cacheWriteTokens += cacheWrite
+    this.runUsage.reasoningTokens += reasoning
+  }
+
   /** Snapshot of the run statistics (观测; copy so callers cannot mutate). */
   getStats(): OptimizeStats {
     return {
       ...this.stats,
+      // Nested object: a shallow spread would hand the internal accumulator to
+      // every caller, and one of them writes into it.
+      lastRunUsage: this.stats.lastRunUsage === null ? null : { ...this.stats.lastRunUsage },
       avgCallMs: this.stats.callCount > 0 ? Math.round(this.stats.totalCallMs / this.stats.callCount) : 0,
     }
   }
@@ -1035,6 +1169,7 @@ export class PromptOptimizerService extends Service {
       if (hit !== undefined && !options.enrich) {
         this.stats.cached++
         this.runCallCount = 0 // a cache hit makes zero model calls
+        this.runUsage = emptyUsage()
         this.emitCompleted('optimize', rawInput, hit.result, 0)
         return cloneOptimizeResult(hit.result)
       }
@@ -1136,6 +1271,7 @@ export class PromptOptimizerService extends Service {
       if (hit !== undefined && !options.enrich) {
         this.stats.cached++
         this.runCallCount = 0 // a cache hit makes zero model calls
+        this.runUsage = emptyUsage()
         this.emitCompleted('iterate', lastOptimized, hit.result, 0)
         return cloneOptimizeResult(hit.result)
       }
@@ -1180,6 +1316,7 @@ export class PromptOptimizerService extends Service {
   ): Promise<OptimizeResult> {
     const resolvedRoute = route ?? this.resolveRoute()
     this.runCallCount = 0
+    this.runUsage = emptyUsage()
     const baseTemperature = options.temperature ?? effectiveParams?.temperature ?? this.config.temperature
     const fast = (effectiveParams?.profile ?? this.config.optimizationProfile) === 'fast'
     // 首调预算（latency P0-1）：当输出长度软约束开启且调用方未显式覆盖时，把首
@@ -1538,6 +1675,11 @@ export class PromptOptimizerService extends Service {
       }),
     ]
     const budget = deadline(signal, this.config.timeoutMs, PROMPT_OPTIMIZER_TIMEOUT_CODE)
+    // Provider-reported usage of THIS call (1.10.0). Captured from the `usage`
+    // chunk rather than read off the assembler afterwards, because the
+    // assembler is block-scoped to the `try` — and because a stream that dies
+    // mid-flight never reaches the read-after-success path.
+    let callUsage: TokenUsage | undefined
     try {
       const options = deepFreeze({
         provider: route.provider,
@@ -1572,6 +1714,10 @@ export class PromptOptimizerService extends Service {
         }
 
         assembler.push(chunk)
+        // Usage arrives before the terminal finish (harness contract), so the
+        // normal path has it before the loop ends; keeping it here also covers
+        // a call that throws after the usage chunk.
+        if (chunk.type === 'usage') callUsage = chunk.usage
         if (chunk.type === 'text-delta' && typeof chunk.text === 'string' && chunk.text.length > 0) streamed += chunk.text
         if (earlyStop) {
           if (tailLen < 0) {
@@ -1626,6 +1772,9 @@ export class PromptOptimizerService extends Service {
       this.stats.callCount++
       this.stats.totalCallMs += callMs
       if (callMs > this.stats.maxCallMs) this.stats.maxCallMs = callMs
+      // Provider-reported tokens (1.10.0): the real consumption beside the
+      // heuristic estimate recorded before the call.
+      this.recordUsage(callUsage)
     }
   }
 

@@ -27,6 +27,9 @@ const STATS: OptimizeStats = {
   local: 1, refined: 1, totalDurationMs: 4500, maxDurationMs: 2000,
   lastOutputTokens: 300, lastCallMs: 500, totalCallMs: 1400, maxCallMs: 600,
   callCount: 4, lastRunCalls: 2, lastInputTokens: 700,
+  usageCalls: 4, inputTokens: 900, outputTokens: 1200, cacheReadTokens: 300,
+  cacheWriteTokens: 0, reasoningTokens: 0,
+  lastRunUsage: { calls: 2, inputTokens: 500, outputTokens: 600, cacheReadTokens: 100, cacheWriteTokens: 0, reasoningTokens: 0 },
   avgCallMs: 350,
 }
 
