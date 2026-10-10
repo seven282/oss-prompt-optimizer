@@ -1,82 +1,18 @@
 #!/usr/bin/env node
 /**
- * E3 acceptance — install / start / uninstall the plugin in a **disposable**
- * profile, and prove each step from the outside.
+ * E3 acceptance — install / start / uninstall the plugin in a disposable profile
+ * and prove each step from the outside, plus three reverse controls.
  *
- * Why this exists: DSH STORE relisting asks for evidence that a fixed artifact
- * really installs, boots and uninstalls on a given DSH release, produced
- * *without* touching a real `~/.dsh`. The store runs its own L4/L5 checks; this
- * script is the locally reproducible counterpart, so the compatibility record we
- * declare in `dsh.compatibility.dshReleases` rests on something we ran
- * ourselves rather than on optimism.
+ * E3.1 temp DSH_HOME → E3.2 profile from the shipped `web` template → E3.3 stage
+ * to a space-free path → E3.4 install → E3.5 installed version → E3.6 entry id in
+ * `--dump-config` → E3.7 `dsh web` answers 200 + serves the client module → E3.8
+ * uninstall → E3.9 nothing survives. RC1 a clean profile must NOT show the id,
+ * RC2 a bogus token must NOT earn 200, RC3 a bad version must fail as E3.4.
  *
- * Everything happens under a throwaway `DSH_HOME` in the OS temp dir. The real
- * profile is never read or written, and the temp home is removed at the end
- * unless `--keep` is passed.
- *
- * Checked steps:
- *   E3.1  disposable DSH_HOME created from scratch
- *   E3.2  the profile composes from the shipped `web` template (no plugin yet)
- *   E3.3  the artifact is staged to a space-free path
- *   E3.4  `dsh plugin --profile e3 add <staged>` exits 0
- *   E3.5  the installed copy reports the version we asked for
- *   E3.6  `dsh --profile e3 --dump-config` carries the plugin's own entry id
- *   E3.7  `dsh web` boots, answers HTTP 200, and serves the plugin's own client
- *         module (proves the client half mounts, not just the host)
- *   E3.8  `dsh plugin --profile e3 remove` exits 0 and the directory is gone
- *   E3.9  nothing of *ours* survives the run — the installed package and the
- *         control profiles the run created are gone, confirmed by both per-path
- *         probes and a walk over the leftovers; an undeletable scratch dir is
- *         reported as a note, not a failure
- *
- * Reverse controls (a check that cannot fail proves nothing):
- *   RC1  a real web profile without the plugin must NOT show the entry id, so
- *        E3.6 is capable of failing
- *   RC2  a bogus token must NOT yield HTTP 200 + cookie, so E3.7's auth fence
- *        is real
- *   RC3  a version that does not exist must fail the same install path as E3.4
- *
- * Two environment facts this script encodes, both learned the hard way:
- *
- *   1. `dsh plugin add <path>` re-splits its argument on whitespace, so a path
- *      containing a space reaches pnpm as `owner/repo` and is resolved as a
- *      GitHub shorthand ("Failed to resolve git dependency
- *      prompt-optimizer/oss-….tgz"). Hence E3.3: stage into a space-free dir.
- *   2. A brand-new profile is bare — it has no web app to boot. Initialize from
- *      the shipped template (`--from-default-profile web`) before installing,
- *      which is also what a real user does.
- *
- * E3.9 attempts one Node delete and then judges the outcome by what is actually
- * left, never by whether the delete reported success. The temp home is ~600
- * files, and a delete can legitimately fail for reasons that say nothing about
- * the plugin, so a surviving scratch directory is reported as a note. Pass
- * `--keep` to skip removal entirely.
- *
- * A host-level bulk-delete guard was once believed to be behind those failures:
- * a `[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED]` refusal with no `code`,
- * `errno` or `path`. Controlled runs disproved it — with the guard's shim loaded
- * and its threshold at 50, a 1062-entry tree under the temp dir *and* the same
- * tree outside it both deleted cleanly, because the shim bypasses `os.tmpdir()`
- * and this home lives there. The guard is therefore not modelled here; the
- * delete is simply attempted and its real error, if any, is recorded.
- *
- * Usage:
- *   node scripts/e3-acceptance.mjs                          # packs the local build
- *   node scripts/e3-acceptance.mjs --source ./out.tgz
- *   node scripts/e3-acceptance.mjs --source github:seven282/oss-prompt-optimizer#<sha>
- *   node scripts/e3-acceptance.mjs --dsh-bin <path/to/dsh/lib/bin.js> --json e3.json
- *
- * `--dsh-bin` picks which DSH release acts as the host. Evidence is taken for
- * the **latest** release only: `dsh.compatibility.dshReleases` declares the
- * newest version, and older releases are served by older plugin versions, so
- * re-running them here would produce claims nobody reads.
- *
- * Windows note: run this **outside** the assistant sandbox. `dsh web` reaches
- * for `reg.exe` while probing the environment, the sandbox blocks it, and the
- * host then hangs producing no output at all.
- *
- * Exit: 0 = every step and every control behaved; 1 = a step failed; 2 = usage
- *       or environment error (no dsh found, no plugin manifest, packing failed).
+ * Usage: node scripts/e3-acceptance.mjs [--source <ref>] [--dsh-bin <path>]
+ *        [--json <path>] [--keep] → exit 0 ok / 1 failed / 2 env error; run it
+ * OUTSIDE the sandbox (`dsh web` probes `reg.exe` at startup).
+ * @see docs/compatibility.md §6
  */
 
 import { spawn } from 'node:child_process'

@@ -1,31 +1,17 @@
 /**
- * Optional DeepSeek Harness settings integration.
+ * Optional DeepSeek Harness settings integration — the host side only.
  *
- * **What this module is not (any more).** Up to 0.1.x it registered the plugin's
- * whole Config schema as a `ctx.settings` namespace (`settings.register(ns,
- * schema, { base })`) and re-adopted the resolved value before every run.
- * dsh **0.2.0 removed `SettingsForms.register`** — the service now exposes only
- * `configure/writable/documentPath/prepareDocument/describe/update/replace/
- * mutate` — so that bridge could never resolve a value: it returned `null` on a
- * current host while the client kept reading a service name (`settingsScope`)
- * that no longer exists. That is issue #3: a settings page that said "saved" and
- * wrote nothing.
- *
- * **How editing works now.** The plugin owns its page (a `settings.section` nav
- * entry, see `client/client.js`) and its eight live Config fields are declared
- * `volatile()`, so dsh-settings projects them into a form
- * (`volatileForm()` → `configForms` → `remote.settings.mutate`) and the loader
- * commits an edit **in place** without remounting the plugin (`live-config.ts`).
- *
- * **What is left for the host side.** One thing: tell dsh-settings not to
- * auto-generate a second page for this entry — the official convention for a
- * plugin that ships its own, and it stops two editors from owning one document.
- *
- * The handshake stays fully optional: a deployment without the settings service
- * logs nothing, shows no page, and keeps resolving config from
- * `cordis.patch.yml` alone.
+ * Up to 0.1.x this registered the whole Config schema as a `ctx.settings`
+ * namespace and re-adopted the resolved value before every run. dsh 0.2.0 dropped
+ * `SettingsForms.register`, so that bridge could never resolve a value while the
+ * client kept reading the gone name `settingsScope` — issue #3.
+ * Now the plugin owns its page (`settings.section`), its eight live fields are
+ * `volatile()`, and all that remains here is one call telling dsh-settings not to
+ * auto-generate a second page. Without the service nothing is logged, no page
+ * appears, and config resolves from `cordis.patch.yml` alone.
  *
  * @module settings
+ * @see docs/compatibility.md §5, §7
  */
 import type { Context } from '@deepseek-ai/cordis';
 /** Handle for the optional settings handshake, consumed by the service. */

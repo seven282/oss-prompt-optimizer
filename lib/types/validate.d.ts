@@ -60,7 +60,7 @@ export declare function hasMetaContent(text: string): boolean;
  * accepted by the validators, so downstream parsing works regardless of the
  * role-document language.
  */
-export declare const RTG_LABELS_ZH: readonly ["角色", "任务", "目标"];
+export declare const RTG_LABELS: readonly ["角色", "任务", "目标"];
 export declare const RTG_LABELS_EN: readonly ["Role", "Task", "Goal"];
 /** Whether all three Role/Task/Goal labels appear in `text` (zh or en set). */
 export declare function hasRoleTaskGoalLabels(text: string): boolean;

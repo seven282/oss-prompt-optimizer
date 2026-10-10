@@ -26,7 +26,7 @@ export interface StatusEvent {
 }
 
 /** Maximum buffered events (FIFO). */
-export const STATUS_EVENT_MAX = 20
+export const STATUS_MAX_EVENTS = 20
 
 /** Snapshot handed to the formatter. */
 export interface StatusSnapshot {

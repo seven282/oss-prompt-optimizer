@@ -25,19 +25,17 @@ import type { EvalRun } from './eval.js'
 /** Schema version — bump when the on-disk shape changes (old files ignored). */
 export const PERSIST_VERSION = 1
 /** Upper bound on persisted episodes. */
-export const PERSIST_EPISODE_MAX = 200
+export const PERSIST_MAX_EPISODES = 200
 /** Upper bound on persisted recent events. */
-export const PERSIST_EVENT_MAX = 20
+export const PERSIST_MAX_EVENTS = 20
 /**
  * Upper bound on persisted evaluation runs (1.11.0).
  *
- * The field was ADDED to version 1 rather than bumping the version: an older
- * file simply lacks it (defaulting to `[]`), and discarding a user's episodes
- * and statistics to store eval history would be a bad trade. `parseState`
- * validates the new field shape independently, so a file from a build without
- * the evaluation harness loads exactly as before.
+ * Added to version 1 instead of bumping it: an older file simply lacks the
+ * field, and discarding a user's episodes and statistics to store eval history
+ * would be a bad trade.
  */
-export const PERSIST_EVAL_RUN_MAX = 10
+export const PERSIST_MAX_EVAL_RUNS = 10
 
 /** Full persisted state document. */
 export interface PersistData {
@@ -88,7 +86,7 @@ export function parseState(text: string): PersistData | null {
 }
 
 /** Crop episodes: strip the instruction text (privacy), keep the newest N. */
-export function cropEpisodes(episodes: readonly Episode[], max = PERSIST_EPISODE_MAX): CroppedEpisode[] {
+export function cropEpisodes(episodes: readonly Episode[], max = PERSIST_MAX_EPISODES): CroppedEpisode[] {
   return episodes.slice(-max).map((ep) => {
     const { input: _input, ...rest } = ep
     return rest
@@ -96,7 +94,7 @@ export function cropEpisodes(episodes: readonly Episode[], max = PERSIST_EPISODE
 }
 
 /** Crop recent events to the newest N. */
-export function cropEvents(events: readonly StatusEvent[], max = PERSIST_EVENT_MAX): StatusEvent[] {
+export function cropEvents(events: readonly StatusEvent[], max = PERSIST_MAX_EVENTS): StatusEvent[] {
   return events.slice(-max)
 }
 

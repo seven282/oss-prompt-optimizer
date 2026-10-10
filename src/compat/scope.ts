@@ -1,18 +1,15 @@
 /**
  * Per-feature dependency scoping.
  *
- * Why this exists (1.8.2): declaring `static inject = ['llm','tools',
- * 'systemPrompt','commands','settings']` makes cordis refuse to load the plugin
- * at all unless *every* service is mounted. One renamed service therefore took
- * the entire plugin offline. cordis 4 exposes `ctx.inject(deps, callback)`,
- * which gates a single registration on a single dependency, so each feature now
- * fails alone.
- *
- * On hosts (and in unit tests) whose context has no `inject`, the callback runs
- * immediately — behaviour identical to before this module existed. That keeps
- * the mock contexts used across the test suite valid without change.
+ * A static `inject = [...every service...]` makes cordis refuse to load the
+ * plugin at all unless *every* one is mounted, so a single renamed service took
+ * the whole plugin offline (1.8.2). cordis 4's `ctx.inject(deps, callback)` gates
+ * one registration on one dependency, so each feature now fails alone.
+ * Without `inject` (hosts, unit tests) the callback runs immediately — identical
+ * to the behaviour before this module existed, so existing mocks stay valid.
  *
  * @module compat/scope
+ * @see docs/compatibility.md §2, §7
  */
 
 import type { Context } from '@deepseek-ai/cordis'

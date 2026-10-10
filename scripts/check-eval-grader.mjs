@@ -1,30 +1,16 @@
 /**
  * P10 — evaluation-grader calibration (1.11.0).
  *
- * The evaluation harness is the tool the rest of the project now uses to
- * decide whether a change made the output better. That makes the grader itself
- * the thing most worth testing: a scorer that accepts anything would report
- * every template edit as an improvement, and one that rejects anything would
- * report every edit as a regression. Neither failure would ever show up in a
- * unit test that only checks the happy path.
+ * The grader decides whether a change improved the output: a scorer that accepts
+ * anything calls every edit an improvement, one that rejects anything calls every
+ * edit a regression, and neither shows up in a happy-path unit test. Both checks
+ * read the BUILT `lib/`, which P4 (running `src/`) cannot cover.
+ * 1. Golden-set integrity: unique ids, claimed task types covered, an injection
+ *    probe carrying a canary, a core subset smaller than the set.
+ * 2. Grader discrimination: reference pairs graded in the right ORDER, plus
+ *    reverse controls proving the judge parser cannot manufacture a score.
  *
- * So this gate checks two things, both on the BUILT `lib/` artifacts (P4 runs
- * the suite against `src/`, which cannot catch a packaging mistake that drops
- * the golden set from the published bundle):
- *
- * 1. Golden-set integrity — ids unique, the claimed task types covered, an
- *    injection probe carrying a canary, a core subset smaller than the set.
- * 2. Grader discrimination — every shipped reference pair must be graded in
- *    the right ORDER (good passes the deterministic gate, bad fails it), plus
- *    reverse controls proving the judge parser cannot manufacture a score:
- *    it must drop a reason-less block, a score written before its reason, a
- *    non-integer/out-of-range score and a fabricated dimension, and it must
- *    reject rather than pass a run that regressed past the tolerance.
- *
- * Each control asserts the NEGATIVE case, so a parser that silently accepted
- * everything would fail here instead of quietly inflating every future score.
- *
- * Prints `P10 eval grader: PASS|FAIL — …` and exits non-zero on failure.
+ * Usage: node scripts/check-eval-grader.mjs → 0 PASS, 1 FAIL.
  */
 
 import { existsSync } from 'node:fs'

@@ -1,20 +1,16 @@
 /**
- * The optimizer meta-prompt. The raw instruction is substituted for the
- * `{{原始指令}}` placeholder at call time; the optional language rule replaces
- * `{{语言规则}}` (empty when `outputLanguage` is 'auto'); deployment extras and
- * few-shot examples replace `{{额外要求}}` / `{{示例}}` (empty when absent);
- * the detected task category replaces `{{任务类型}}` (empty when `'other'`);
- * the suggested output-length cap replaces `{{长度预算}}` (empty when disabled);
- * the situation profile replaces `{{情境画像}}` (empty when no usable signals);
- * the output structure paragraph and the pre-output self-check replace
- * `{{输出结构}}` / `{{自查}}` and depend on `outputStyle`; optional
- * conversation context replaces `{{上下文信息}}` (empty when `contextAware`
- * is off). The instruction-is-data rule is the injection guardrail.
- *
- * The role document exists in two languages: `META_PROMPT` (zh) and
+ * The optimizer meta-prompt, in two languages: `META_PROMPT` (zh) and
  * `META_PROMPT_EN` (en), selected by `buildOptimizePrompt`'s `metaLanguage`
- * argument (mirroring GitHub Docs' per-language content trees). Both keep the
- * same `{{...}}` placeholder tokens so the substitution chain is shared.
+ * argument. Both keep the same `{{...}}` tokens, so the substitution chain is
+ * shared.
+ *
+ * Substitutions: `{{原始指令}}` is the raw instruction; `{{语言规则}}`,
+ * `{{额外要求}}`, `{{示例}}`, `{{任务类型}}`, `{{长度预算}}`, `{{情境画像}}`
+ * and `{{上下文信息}}` are optional and empty when their condition is off;
+ * `{{输出结构}}` and `{{自查}}` depend on `outputStyle`. The
+ * instruction-is-data rule is the injection guardrail.
+ *
+ * @module meta
  */
 
 /** The language of the role document (the optimizer's system prompt). */

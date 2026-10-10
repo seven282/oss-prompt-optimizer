@@ -1,21 +1,17 @@
 /**
  * Template data layer for the optimizer meta-prompts.
  *
- * The four role-document skeletons live here instead of being private
- * constants: a deployment can replace them via the `metaPromptTemplate`
- * config (partial sets fall back to the built-ins per language), while the
- * tuning blocks (`{{输出结构}}` / `{{自查}}` / `{{语言规则}}` / `{{额外要求}}`
- * / `{{示例}}` / `{{诊断反馈}}` / `{{上下文信息}}` / `{{任务类型}}` /
- * `{{长度预算}}` / `{{情境画像}}`) stay code — they encode the output format
- * rules that the post-validation in `validate.ts` is coupled to.
- * `{{上下文信息}}` / `{{任务类型}}` / `{{长度预算}}` / `{{情境画像}}` are
- * optional blocks (injected only under their conditions), like the
- * language/extra/example blocks.
+ * The four role-document skeletons live here rather than as private constants so
+ * a deployment can replace them via the `metaPromptTemplate` config (partial sets
+ * fall back to the built-ins per language). The tuning blocks — `{{输出结构}}`,
+ * `{{自查}}`, `{{语言规则}}`, `{{额外要求}}`, `{{示例}}`, `{{诊断反馈}}`,
+ * `{{上下文信息}}`, `{{任务类型}}`, `{{长度预算}}`, `{{情境画像}}` — stay code:
+ * they encode output-format rules that `validate.ts` post-validation is coupled to.
+ * Every custom template is validated at service construction: it must keep its
+ * data placeholder(s), the structure/self-check blocks and the instruction-is-data
+ * guardrail line; a violation fails the plugin load loudly.
  *
- * Every custom template is validated at service construction: it must keep
- * its data placeholder(s), the structure/self-check blocks, and the
- * instruction-is-data guardrail line. A violation fails the plugin load
- * loudly (same spirit as unknown-config-key rejection).
+ * @module templates
  */
 /**
  * The optimizer meta-prompt. The raw instruction is substituted for the

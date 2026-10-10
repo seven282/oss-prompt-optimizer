@@ -1,29 +1,15 @@
 /**
  * The evaluation harness (1.11.0).
  *
- * The plugin could always assert SHAPE — four headings, thick enough sections,
- * goal anchors retained — but never MEASURE quality: nothing told you whether
- * a template edit, a new heuristic, or a different profile made the output
- * better or worse. Every such decision was an argument. This module turns it
- * into a number that can be compared across runs.
- *
- * Three layers, cheapest first (the split the industry ships as
- * "zero-shot/simple" vs "data-driven/advanced" optimization):
- *
- * 1. `checkDeterministic` — free, offline, and never wrong about what it
- *    checks: the structural gate the pipeline itself enforces (imported from
- *    `validate.ts`, deliberately NOT re-implemented) plus per-case substring
- *    expectations, which is what makes an injection canary checkable.
- * 2. `judge.ts` — a weighted rubric scored by a model, one extra call per
- *    case, opt-out via `evalJudge: false`.
- * 3. Mining this host's own session history for real instructions
- *    (`mineSessionInstructions`) — the dataset a deployment already has, and
- *    the one thing a hosted optimizer cannot see.
- *
- * Privacy: this module is pure and holds no state. Instruction text lives only
- * in memory for the duration of a run; `CaseResult` records LENGTHS and scores,
- * never the text, mirroring the episode log's crop rule, so persisting a run
- * cannot leak what the user typed.
+ * The plugin could always assert SHAPE but never MEASURE quality, so every "did
+ * this edit help?" was an argument. This module turns it into a number comparable
+ * across runs, in three layers, cheapest first: `checkDeterministic` (free and
+ * offline — the structural gate imported from `validate.ts`, plus per-case
+ * substring expectations, which is what makes an injection canary checkable),
+ * `judge.ts` (a weighted rubric scored by a model, opt out with `evalJudge:
+ * false`), and `mineSessionInstructions` (the host's own session history).
+ * Privacy: pure and stateless — instruction text lives in memory for the run
+ * only, and `CaseResult` records LENGTHS and scores, never the text.
  *
  * @module eval
  */

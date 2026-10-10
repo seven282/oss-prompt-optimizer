@@ -20,7 +20,7 @@ import { adoptLiveConfig, followVolatileUpdates, plainConfig } from './live-conf
 import { OptimizeError, OptimizeErrorCode, INCOMPLETE_SECTIONS_MESSAGE, metaContentMessage, plainHeadingsMessage, thinOutputMessage, thinSectionsMessage, type OptimizeErrorCode as OptimizeErrorCodeType } from './errors.js'
 import { MaxTokensErrorWithPartial } from './llm.js'
 import { PROMPT_OPTIMIZER_EVENTS, type GenAiSignal, type OptimizeMethod } from './events.js'
-import { STATUS_EVENT_MAX, type StatusEvent, type StatusSnapshot } from './status.js'
+import { STATUS_MAX_EVENTS, type StatusEvent, type StatusSnapshot } from './status.js'
 import { detectLanguage, detectTaskType, isCompactInstruction, type MetaLanguage } from './meta.js'
 import {
   assertInput,
@@ -54,7 +54,7 @@ import { bigramJaccard, createOptimizeCache, fnv1a, type OptimizeCache } from '.
 import { buildLocalTemplate, buildRefinePrompt, goalAnchorsScore, localTemplateGate, type LocalTemplateMode } from './local.js'
 import { toRoleTaskGoal } from './validate.js'
 import { EpisodeLog, truncateEpisodeInput, type Episode } from './episode.js'
-import { PERSIST_EVAL_RUN_MAX, PERSIST_VERSION, createPersistence, cropEpisodes, cropEvents, type PersistAdapter, type PersistData } from './persistence.js'
+import { PERSIST_MAX_EVAL_RUNS, PERSIST_VERSION, createPersistence, cropEpisodes, cropEvents, type PersistAdapter, type PersistData } from './persistence.js'
 import {
   buildJudgeSystem,
   buildJudgeUser,
@@ -100,7 +100,7 @@ import {
   isStale,
   ledgerTotal,
   mergeItems,
-  FEEDBACK_SESSION_MAX,
+  FEEDBACK_MAX_SESSIONS,
   type FeedbackLedger,
   type MessageFeedbackLike,
 } from './feedback.js'
@@ -640,13 +640,13 @@ export class PromptOptimizerService extends Service {
   private readonly persistence: PersistAdapter
   /** The resolved judge rubric (1.11.0); construction fails loudly on an unknown override id. */
   private readonly evalRubric: RubricDimension[]
-  /** Evaluation runs, oldest first (capped at `PERSIST_EVAL_RUN_MAX`). */
+  /** Evaluation runs, oldest first (capped at `PERSIST_MAX_EVAL_RUNS`). */
   private evalRuns: EvalRun[] = []
   /** The run new evaluations are compared against (`null` until one is recorded). */
   private evalBaseline: EvalRun | null = null
   /**
    * Host feedback ledgers per session (1.12.0 P1-B), newest write wins, capped
-   * at `FEEDBACK_SESSION_MAX`. Counts only — see `feedback.ts` for what is
+   * at `FEEDBACK_MAX_SESSIONS`. Counts only — see `feedback.ts` for what is
    * deliberately never copied.
    */
   private readonly feedbackLedgers = new Map<string, FeedbackLedger>()
@@ -703,7 +703,7 @@ export class PromptOptimizerService extends Service {
     if (loaded) {
       Object.assign(this.stats, loaded.stats)
       normalizeLoadedUsage(this.stats)
-      this.evalRuns = loaded.evalRuns.slice(-PERSIST_EVAL_RUN_MAX)
+      this.evalRuns = loaded.evalRuns.slice(-PERSIST_MAX_EVAL_RUNS)
       this.evalBaseline = loaded.evalBaseline
       this.episodes.clear()
       for (const ep of loaded.episodes) {
@@ -795,7 +795,7 @@ export class PromptOptimizerService extends Service {
       stats: this.getStats(),
       episodes: cropEpisodes(this.episodes.all()),
       events: cropEvents(this.recentEvents),
-      evalRuns: this.evalRuns.slice(-PERSIST_EVAL_RUN_MAX),
+      evalRuns: this.evalRuns.slice(-PERSIST_MAX_EVAL_RUNS),
       evalBaseline: this.evalBaseline,
     }
   }
@@ -1107,7 +1107,7 @@ export class PromptOptimizerService extends Service {
       })
     }
     // Episode logging for auto-iteration (behavior collection).
-    // P1（1.7.9）最近事件缓冲：成功/失败各记一条（最多 STATUS_EVENT_MAX）。
+    // P1（1.7.9）最近事件缓冲：成功/失败各记一条（最多 STATUS_MAX_EVENTS）。
     this.recentEvents.push({
       ts: Date.now(),
       method,
@@ -1117,7 +1117,7 @@ export class PromptOptimizerService extends Service {
       durationMs,
       local: result.local === true,
     })
-    if (this.recentEvents.length > STATUS_EVENT_MAX) {
+    if (this.recentEvents.length > STATUS_MAX_EVENTS) {
       this.recentEvents.shift()
     }
     if (method === 'optimize' && result.optimized) {
@@ -1339,7 +1339,7 @@ export class PromptOptimizerService extends Service {
       this.usageDelta(usageBefore),
     )
     this.evalRuns.push(run)
-    if (this.evalRuns.length > PERSIST_EVAL_RUN_MAX) this.evalRuns.splice(0, this.evalRuns.length - PERSIST_EVAL_RUN_MAX)
+    if (this.evalRuns.length > PERSIST_MAX_EVAL_RUNS) this.evalRuns.splice(0, this.evalRuns.length - PERSIST_MAX_EVAL_RUNS)
     this.schedulePersist()
     const comparison = compareToBaseline(
       run.aggregate,
@@ -1536,7 +1536,7 @@ export class PromptOptimizerService extends Service {
       this.feedbackLedgers.set(sessionId, ledger)
       // Bounded memory: evict the oldest read when the cap is reached. Map
       // preserves insertion order, so the first key is the oldest.
-      while (this.feedbackLedgers.size > FEEDBACK_SESSION_MAX) {
+      while (this.feedbackLedgers.size > FEEDBACK_MAX_SESSIONS) {
         const oldest = this.feedbackLedgers.keys().next().value
         if (oldest === undefined) break
         this.feedbackLedgers.delete(oldest)

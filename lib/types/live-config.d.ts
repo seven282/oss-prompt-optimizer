@@ -2,24 +2,15 @@
  * Live configuration: the handshake behind a settings-panel edit that does not
  * restart the plugin.
  *
- * dsh's loader hands a plugin its config object, but every field the Config
- * schema declares `volatile()` arrives as a **reference** rather than a value
- * (cosmokit's `Volatile`: `{ get() }`). A profile edit that touches only those
- * fields is committed *in place* — `updateVolatile(ref, next)` rewrites the
- * reference's contents instead of re-instantiating the plugin — and the loader
- * then emits `loader/volatile-update` on the plugin's own fiber
- * (`cordis-plugin-loader`: `equalExceptVolatile` → `_commitVolatile` → emit).
- *
- * A plugin that reads `this.config.x` therefore has to do two things:
- *
- * 1. keep its own **plain-value** copy of the config (that is what this module
- *    produces), because a reference is truthy and would silently pass every
- *    `if (this.config.someFlag)` test;
- * 2. refresh that copy when `loader/volatile-update` fires.
- *
- * Both steps are pure data work, so they live here rather than inside the
- * service: no harness import, no I/O, independently unit-testable.
- *
+ * The loader hands a plugin its config object, but every field the schema declares
+ * `volatile()` arrives as a **reference**, not a value (cosmokit's `Volatile`:
+ * `{ get() }`). An edit touching only those fields is committed *in place* —
+ * `updateVolatile(ref, next)` rewrites the reference's contents instead of
+ * re-instantiating the plugin — and the loader then emits `loader/volatile-update`
+ * on the plugin's own fiber.
+ * A plugin reading `this.config.x` therefore needs a **plain-value** copy (a
+ * reference is truthy and passes every `if (this.config.someFlag)` test) plus a
+ * refresh when `loader/volatile-update` fires — pure data work, so it lives here.
  * @module live-config
  */
 /** The loader event emitted after volatile references were committed in place. */

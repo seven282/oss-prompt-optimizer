@@ -1,5 +1,13 @@
 # Changelog
 
+本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与
+[语义化版本](https://semver.org/lang/zh-CN/)。格式约定：
+
+- 版本倒序排列，顶部为最新；每个版本**只使用** `Added` / `Changed` / `Deprecated` / `Removed` /
+  `Fixed` / `Security` 六类 `###` 标题，其余说明作子条目（不要新增 `Notes` / `Tooling` / `Tests` 这类标题）。
+- 版本号遵循十进制进位：末尾 +1，满 10 向前进位（`1.3.9` + 1 = `1.4.0`），**不会出现尾位 ≥ 10**。
+- 已发布的历史条目**不再改写**；本条约定适用于新条目。
+
 ## [1.13.1] - 2026-10-10
 
 **修复一：更新/重装后客户端设置页与导航标签不跟随语言（冻结在英文）。**

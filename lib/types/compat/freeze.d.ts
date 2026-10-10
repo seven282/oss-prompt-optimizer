@@ -1,22 +1,17 @@
 /**
  * Local recursive deep-freeze.
  *
- * Why this exists (1.8.2): the plugin used to import `deepFreeze` from
- * `@deepseek-ai/dsh-llm`, which only re-exported it. When the harness moved the
- * helper to `@deepseek-ai/dsh-util-values`, the static import failed to resolve
- * and — because Node ESM resolves static imports before evaluating the module —
- * the whole `dsh web` process refused to start. Depending on a host package for
- * a five-line utility is not worth that blast radius, so the function lives
- * here and the plugin owns its own implementation.
+ * The plugin used to import `deepFreeze` from `@deepseek-ai/dsh-llm`, which only
+ * re-exported it; when the harness moved the helper to `dsh-util-values` the
+ * static import failed and the whole `dsh web` process refused to start (1.8.1) —
+ * a five-line utility is not worth that blast radius, so it lives here.
  *
- * Semantics are intentionally identical to the harness helper it replaces:
- * own enumerable string keys are traversed, children are frozen after their
- * parent, cycles are tolerated, and `AbortSignal` instances are skipped — an
- * `AbortSignal` carries live internal state and freezing it would break
- * cancellation.
- *
- * The traversal is iterative rather than recursive so that a deeply nested
- * config object cannot blow the call stack.
+ * Semantics match the helper it replaces: own enumerable string keys are
+ * traversed, children are frozen after their parent, cycles are tolerated, and
+ * `AbortSignal` is skipped — freezing one would break cancellation. The traversal
+ * is iterative, so a deeply nested config cannot blow the call stack.
+ * @module compat/freeze
+ * @see docs/compatibility.md §2, §7
  */
 /**
  * Recursively freeze `value` and every plain object/array reachable from it.

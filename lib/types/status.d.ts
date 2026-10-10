@@ -23,7 +23,7 @@ export interface StatusEvent {
     local?: boolean;
 }
 /** Maximum buffered events (FIFO). */
-export declare const STATUS_EVENT_MAX = 20;
+export declare const STATUS_MAX_EVENTS = 20;
 /** Snapshot handed to the formatter. */
 export interface StatusSnapshot {
     effective: {

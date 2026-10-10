@@ -1,65 +1,18 @@
 #!/usr/bin/env node
 /**
- * E4 settings-in-a-real-browser acceptance — the last layer of the settings
- * surface, closed end to end in the browser a user actually touches.
+ * E4 acceptance — the settings surface in a real browser, end to end (gate P11).
  *
- * Why this exists: `settings-e2e` drives the real `SettingsForms` in-process,
- * which proves the *service* contract — `describe()` lists our entry, `update()`
- * lands in the profile patch, `loader/volatile-update` reaches the plugin's own
- * ctx. What it cannot prove is the chain the user sees:
+ * E4.1 disposable DSH_HOME/profile → E4.2 install → E4.3 `dsh web` prints a
+ * tokenized URL → E4.4 Chromium lands on the app (token→cookie) → E4.5 client
+ * bundle fetched (no 404 white screen) → E4.6 our section renders every declared
+ * field → E4.7 an edit writes to the profile patch and reads back → teardown;
+ * RC1 a bogus token must NOT land, RC2 the value must not already be on disk.
+ * Crosses four boundaries no fake host shares: auth handshake, served plugin
+ * manifest, real `configForms`, React mounting our `settings.section` slot.
  *
- *   a real Chromium, on a real `dsh web` origin, after the token→cookie
- *   handshake, renders our settings section with every declared field, and
- *   editing one writes through to the profile patch on disk.
- *
- * That chain crosses four boundaries nothing local shares:
- *   1. the auth handshake (the browser must end up holding the cookie)
- *   2. the client plugin manifest (is `<pkg>/client.js` actually shipped?)
- *   3. `apply()` running against the REAL `configForms` service (not a fake)
- *   4. the React settings page mounting our `settings.section` slot
- *
- * This is the gate issue #3 needed and did not have: the 1.13.1 breakage
- * ("save says OK, nothing is stored") was invisible to every fake host, because
- * a fake host never goes through the handshake, the served bundle or the slot
- * renderer. Everything happens under a throwaway `DSH_HOME` in the OS temp dir;
- * the real profile is never read or written, and the temp home is removed at the
- * end unless `--keep` / `--home` is passed.
- *
- * Checked steps:
- *   E4.1  disposable DSH_HOME + profile from the shipped `web` template
- *   E4.2  the plugin installs into it (`dsh plugin add`)
- *   E4.3  `dsh web` boots and prints its tokenized URL
- *   E4.4  Chromium lands on the app (token→cookie handshake succeeded)
- *   E4.5  the client plugin bundle is fetched by the browser (no 404 white screen)
- *   E4.6  our settings section renders — every declared live field in the DOM
- *   E4.7  editing one field writes to the profile patch on disk, and reads back
- *   E4.8  tear-down removes everything we created
- *
- * Reverse controls (a check that cannot fail proves nothing):
- *   RC1  a bogus token must NOT land on the app, so E4.4 means something
- *   RC2  the value we are about to write is not already on disk, so E4.7's
- *        "changed" is a real transition and not an echo of what we typed
- *
- * Two environment facts this script encodes, both learned the hard way:
- *   - `dsh web` probes `reg.exe` at startup. Inside the assistant sandbox that
- *     probe is blocked and `dsh web` still degrades into a successful boot, so
- *     run this script OUTSIDE the sandbox and trust the exit code, not stderr.
- *   - a fresh profile boots into a CHAIN of blocking onboarding modals ("preview
- *     notice" → "add an API key"). While any of them is up, every other click
- *     times out against it, which looks exactly like a wrong selector. Dismiss
- *     them in a loop before touching the settings button.
- *
- * Browser: this drives the Chromium you already have (`--channel chrome|msedge`)
- * with `playwright-core`. It never downloads a browser, and it is deliberately
- * NOT a dependency of this package — point it at an install with `--pw-root` or
- * `PO_PLAYWRIGHT_CORE` if Node cannot resolve it from here.
- *
- * Usage (from the repo root; `pnpm preflight --browser-e2e` runs it as gate P11):
- *   pnpm e4                        # full run
- *   pnpm e4 --recon                # dump the DOM + screenshots, stop before the write
- *   pnpm e4 --keep --home <dir>    # reuse a home and keep it afterwards
- *   pnpm e4 --json e4.json         # machine-readable evidence
- *   pnpm e4 --channel msedge       # drive Edge instead of Chrome
+ * Usage: pnpm e4 [--recon] [--keep --home <dir>] [--json <path>] [--channel msedge]
+ * Outside the sandbox; drives installed Chrome/Edge via `playwright-core`.
+ * @see docs/compatibility.md §6, §7
  */
 import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'

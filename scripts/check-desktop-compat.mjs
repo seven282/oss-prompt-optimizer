@@ -3,23 +3,16 @@
  * P9 — desktop/web dual compatibility check.
  *
  * The desktop app ships its own harness runtime inside an Electron `app.asar`
- * (`dsh/`), e.g. `@deepseek-ai/dsh-desktop-runtime@0.2.0-rc.2`. That runtime is
- * a *different* dsh release line from the CLI/web one this plugin also serves,
- * so "compatible with dsh" is really "compatible with both release tuples" —
- * and the manifest must enumerate each tuple with `||` (a caret on a 0.x
- * prerelease never spans to the next minor).
+ * (`@deepseek-ai/dsh-desktop-runtime`), a different release line from the CLI/web
+ * one this plugin also serves — so the manifest must enumerate BOTH tuples with
+ * `||` (a caret never spans 0.x prereleases).
+ * Fails when the installed runtime's tuple is not covered by
+ * `dsh.compatibility.dsh`, has no exact `dshReleases` verdict, or is missing any
+ * package named in `dsh.client.inject` (a dead id silently kept the client half
+ * from registering before).
  *
- * This gate reads the installed desktop runtime and fails when:
- *   1. the runtime version's tuple is not covered by a clause of
- *      `dsh.compatibility.dsh`, or has no exact `dshReleases` verdict;
- *   2. any `dsh.client.inject` package is absent from that runtime (a dead id
- *      is what silently prevented the client half from registering before).
- *
- * It reports SKIP when no desktop install is present (CI, other machines), so it
- * is safe to wire into `pnpm preflight` everywhere.
- *
- * Usage:  node scripts/check-desktop-compat.mjs [--asar <path>]
- * Exit:   0 PASS/SKIP, 1 FAIL
+ * Usage: node scripts/check-desktop-compat.mjs [--asar <path>] → 0 PASS/SKIP, 1 FAIL;
+ * SKIPs when no desktop install is present (CI), so it is safe in `pnpm preflight`.
  */
 import fs from 'node:fs'
 import path from 'node:path'

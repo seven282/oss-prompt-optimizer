@@ -277,13 +277,13 @@ export declare class PromptOptimizerService extends Service {
     private readonly persistence;
     /** The resolved judge rubric (1.11.0); construction fails loudly on an unknown override id. */
     private readonly evalRubric;
-    /** Evaluation runs, oldest first (capped at `PERSIST_EVAL_RUN_MAX`). */
+    /** Evaluation runs, oldest first (capped at `PERSIST_MAX_EVAL_RUNS`). */
     private evalRuns;
     /** The run new evaluations are compared against (`null` until one is recorded). */
     private evalBaseline;
     /**
      * Host feedback ledgers per session (1.12.0 P1-B), newest write wins, capped
-     * at `FEEDBACK_SESSION_MAX`. Counts only — see `feedback.ts` for what is
+     * at `FEEDBACK_MAX_SESSIONS`. Counts only — see `feedback.ts` for what is
      * deliberately never copied.
      */
     private readonly feedbackLedgers;

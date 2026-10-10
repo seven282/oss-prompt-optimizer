@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { STATUS_EVENT_MAX, formatStatus, type StatusSnapshot } from '../src/status.js'
+import { STATUS_MAX_EVENTS, formatStatus, type StatusSnapshot } from '../src/status.js'
 
 /** Minimal realistic snapshot. */
 function makeSnapshot(overrides: Partial<StatusSnapshot> = {}): StatusSnapshot {
@@ -157,7 +157,7 @@ describe('formatStatus (P1, 1.7.9)', () => {
   })
 
   it('exports a sane event buffer cap', () => {
-    expect(STATUS_EVENT_MAX).toBe(20)
+    expect(STATUS_MAX_EVENTS).toBe(20)
   })
 
   it('renders the best-of-N and host-feedback lines (1.12.0)', () => {

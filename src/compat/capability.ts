@@ -1,24 +1,17 @@
 /**
  * Runtime capability probing.
  *
- * The plugin deliberately does **not** gate on the harness version number:
- * a version bump does not mean a contract changed, and a patch release can
- * move an export (the 1.8.1 `deepFreeze` incident was exactly that). What
- * matters is whether the functions the plugin actually calls are *present and
- * of the expected kind*, so that is what gets probed.
+ * The plugin deliberately does **not** gate on the harness version number — a
+ * bump does not imply a contract change and a patch release can move an export
+ * (the 1.8.1 `deepFreeze` incident was exactly that). It probes whether the
+ * functions it actually calls are present and of the expected kind instead.
  *
- * Every probe goes through {@link resolveExport}, which can only return `null`
- * — never throw — so this module is safe to call during plugin construction on
- * any host.
- *
- * Types are still imported from the host packages, but always with a top-level
- * `import type …`, never the inline `import { type X }` form: under
- * `verbatimModuleSyntax` the inline form is preserved as `import {} from '…'`,
- * which is still a *runtime* import and would fetch the host module during
- * instantiation — reintroducing the exact uncatchable failure this layer exists
- * to remove. `scripts/preflight.mjs` P1 fails the build if that ever regresses.
- *
+ * Host types are always imported with a top-level `import type …`: under
+ * `verbatimModuleSyntax` the inline `import { type X }` form survives as
+ * `import {} from '…'`, which still fetches the host module at instantiation.
+ * P1 fails the build if that regresses.
  * @module compat/capability
+ * @see docs/compatibility.md §2
  */
 
 import type { createUserMessage, ContentBlock, FinishReason, StreamChunk } from '@deepseek-ai/dsh-llm'

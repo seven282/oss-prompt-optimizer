@@ -2,25 +2,16 @@
 /**
  * Startup-independence probe — the dynamic half of invariant I1.
  *
- * I1: no internal defect in this plugin may prevent `dsh web` from starting.
+ * I1: no internal defect in this plugin may prevent `dsh web` from starting. P1
+ * proves the static half (nothing host-side is imported at runtime); this probe
+ * seals BOTH module systems and then imports the built entry point:
+ *   - an ESM `resolve` hook rejecting every `@deepseek-ai/dsh*` specifier — the
+ *     path a static `import` takes, whose failure is uncatchable (1.8.1);
+ *   - a `Module._load` CJS interceptor — the path `compat/loader.ts` routes host
+ *     access through, which must fail softly and be seen as a `null` capability.
  *
- * `scripts/preflight.mjs` P1 proves the *static* half (no host package is
- * imported at runtime, so a renamed or removed export cannot break module
- * instantiation). This probe proves the behaviour end-to-end: it seals
- * **both** module systems —
- *
- *   - an ESM `resolve` hook, which rejects every `@deepseek-ai/dsh*` specifier
- *     (this is the path a static `import` would take, and its failure is
- *     uncatchable, so it is the one that took `dsh web` down in 1.8.1); and
- *   - a `Module._load` CJS interceptor, which is the path `src/compat/loader.ts`
- *     deliberately routes host access through, and which must therefore *fail
- *     softly* and be observed as a `null` capability.
- *
- * — then imports the built entry point and asserts it still instantiates. A
- * host that has upgraded past this plugin must cost features, never startup.
- *
- * Usage:  node scripts/startup-probe.mjs
- * Exit:   0 = entry loaded and degraded cleanly; 1 = startup was blocked.
+ * Usage: node scripts/startup-probe.mjs → 0 loaded and degraded; 1 blocked.
+ * @see docs/compatibility.md §2, §7
  */
 
 import Module, { createRequire } from 'node:module'

@@ -207,7 +207,7 @@ export function hasMetaContent(text: string): boolean {
  * accepted by the validators, so downstream parsing works regardless of the
  * role-document language.
  */
-export const RTG_LABELS_ZH = ['角色', '任务', '目标'] as const
+export const RTG_LABELS = ['角色', '任务', '目标'] as const
 export const RTG_LABELS_EN = ['Role', 'Task', 'Goal'] as const
 
 const RTG_LABEL_RE = (label: string): RegExp =>
@@ -215,7 +215,7 @@ const RTG_LABEL_RE = (label: string): RegExp =>
 
 /** Whether all three Role/Task/Goal labels appear in `text` (zh or en set). */
 export function hasRoleTaskGoalLabels(text: string): boolean {
-  const zh = RTG_LABELS_ZH.every((label) => RTG_LABEL_RE(label).test(text))
+  const zh = RTG_LABELS.every((label) => RTG_LABEL_RE(label).test(text))
   const en = RTG_LABELS_EN.every((label) => RTG_LABEL_RE(label).test(text))
   return zh || en
 }
@@ -231,10 +231,10 @@ export function hasRoleTaskGoalLabels(text: string): boolean {
 export function hasValidRoleTaskGoal(text: string, minChars: number): boolean {
   if (!hasRoleTaskGoalLabels(text)) return false
   if (minChars <= 0) return true
-  const zh = RTG_LABELS_ZH.every((label) => RTG_LABEL_RE(label).test(text))
-  const labels = zh ? RTG_LABELS_ZH : RTG_LABELS_EN
+  const zh = RTG_LABELS.every((label) => RTG_LABEL_RE(label).test(text))
+  const labels = zh ? RTG_LABELS : RTG_LABELS_EN
   const nextLabelRe = new RegExp(
-    `^(?:${[...RTG_LABELS_ZH, ...RTG_LABELS_EN].join('|')})[:：]`,
+    `^(?:${[...RTG_LABELS, ...RTG_LABELS_EN].join('|')})[:：]`,
     'm',
   )
   return labels.every((label) => {

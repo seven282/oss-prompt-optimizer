@@ -1,71 +1,17 @@
 #!/usr/bin/env node
 /**
  * Client-half inject probe — the dynamic half of rules R2 / R2b, run against the
- * *built* artifact.
+ * built bundle (gate P7 delegates here).
  *
- * R2  — the client half may only read a service as `ctx.<name>` when that name
- *       is in its declared `inject`. Optional services go through
- *       `ctx.get('<name>')`.
- * R2b — a service whose name contains a dot is a *separate service*, and must
- *       never be reached by reading a property off its parent.
+ * Static scan for service reads that are not injected, a real `apply(ctx)` on a
+ * faithful host (`remote` and `remote.commands` as genuine `Service` instances),
+ * and namespace roots derived from the local dsh install. Each part carries a
+ * negative control, so a probe that always reports OK is impossible. Client half
+ * only; host-side reads go through `compat/scope.ts` and stay with P1/P6.
  *
- * Why this probe exists — twice over, because the same class of bug shipped
- * twice:
- *
- *   1.8.2 cut `inject` down to `['remote']` and rewrote the optional reads to
- *   `ctx.get()`, but `client/client.js` line 226 kept `ctx.locale`. cordis
- *   resolves `ctx.<name>` through a Proxy whose `get` trap throws
- *   `cannot get property "locale" without inject` when the name is not in the
- *   fiber's inject store, and `apply()` does not catch it — so the whole client
- *   half failed to apply on every real machine: no ✨ button, no settings page,
- *   `failed to apply loader entry …` in the console.
- *
- *   1.8.3 fixed that and then read the *nested* service `remote.commands` as
- *   `ctx.get('remote').commands` on line 252. The value of `ctx.get('remote')`
- *   is a cordis `Service`, and when a service with the dotted name
- *   `remote.commands` is registered — dsh-api-gateway mounts every remote
- *   namespace that way, `remoteServiceKey(ns) === 'remote.' + ns` — the
- *   traceable proxy behind the service *rewrites* the read of `.commands` into
- *   a read of `ctx['remote.commands']` (cordis `createTraceable`, the
- *   `tracker.associate` branch), which is gated again. Same throw, same outage.
- *
- * Nothing in the test suite or in preflight P1–P6 noticed either time, because
- * the hand-written browser bundle was never *executed* by any automated step.
- *
- * This probe does three things:
- *
- *   1. **Static** — scan for service reads that are neither injected nor a
- *      cordis core member, covering `ctx.<name>`, `ctx['<name>']`,
- *      `ctx.get('<name>').<child>` and the alias form
- *      (`var s = ctx.get('<name>')` … `s.<child>`). The core set is *probed*
- *      against a real `Context` with nothing provided, never hard-coded: a
- *      frozen list would rot as cordis evolves, and a probe that answered
- *      "core" too readily would let every violation through.
- *   2. **Dynamic** — run the actual `apply(ctx)` against a real cordis context
- *      that models the host faithfully: `remote` and `remote.commands` are real
- *      `Service` instances, `slots` and `locale` are plain provides. A throw out
- *      of `apply` is exactly the 1.8.2/1.8.3 failure, reproduced here instead of
- *      on a user's machine.
- *   3. **Derivation** — re-derive the namespace roots from the local dsh
- *      installation and fail when they disagree with the roots this probe
- *      assumes, so `NAMESPACE_ROOTS` cannot silently rot when dsh grows a second
- *      namespaced service. Reported as `[SKIP]` (not a pass) when no dsh install
- *      is present, which is the case in CI.
- *
- * Every half carries a negative control, so a probe that always says OK is not
- * possible: the scanner is fed the 1.8.2 line *and* the 1.8.3 line and must flag
- * both, the static scan is fed a legitimate `slots.inject()` read and must not
- * flag it, and the dynamic harness is fed both mutations and must observe the
- * `without inject` throw each time.
- *
- * Scope, stated honestly: this checks the client half only. The host half reads
- * its services through `compat/scope.ts`'s `scopedInject()` callbacks, which a
- * line-level scan cannot reason about — it would flag every legitimate scoped
- * read. Host-side coverage stays with P1 (dependency surface) and P6 (startup
- * independence).
- *
- * Usage:  node scripts/client-probe.mjs
- * Exit:   0 = artifact satisfies R2/R2b; 1 = it does not, or a control missed.
+ * Usage: node scripts/client-probe.mjs
+ * Exit:  0 = artifact satisfies R2/R2b; 1 = it does not, or a control missed.
+ * @see docs/compatibility.md §3, §4, §7
  */
 
 import { Context, Service } from '@deepseek-ai/cordis'

@@ -1,93 +1,16 @@
 #!/usr/bin/env node
 /**
- * Preflight gate for oss-prompt-optimizer.
+ * Preflight gate for oss-prompt-optimizer — P1–P12.
  *
- * Turns the two invariants that keep this plugin from ever blocking `dsh web`
- * into commands anyone can run:
+ * Every step turns one invariant that keeps this plugin from blocking `dsh web`
+ * into a command anyone can run, and every "should be empty" assertion ships a
+ * control proving it can be non-empty.
  *
- *   P1  Dependency-surface audit — `lib/**` may only statically import the
- *       framework (`@deepseek-ai/cordis`), packages this plugin installs itself
- *       (`dependencies`), and relative/node: paths. Any other bare import would
- *       fail *uncatchably* at module-instantiation time and take the host down.
- *   P2  Inject existence — every id the manifest asks the harness to resolve
- *       (`dsh.client.inject`) must actually resolve inside a real dsh profile.
- *       A dead id is what made the client bundle silently not register. The
- *       check resolves from the directory the host loads the plugin from, so it
- *       exercises Node's real lookup order (profile layer -> shared anchor ->
- *       CLI bundle) rather than a hand-maintained list of directories — those
- *       diverge, and the old list-based version could pass while the host
- *       resolved something else entirely. Falls back to enumeration (labelled
- *       approximate) only when the plugin is not installed yet.
- *       Local-only: reported as SKIP when no profile is reachable (offline CI).
- *   P3  Artifact consistency — `client/client.js` and `lib/client.js` must be
- *       byte-identical, i.e. `scripts/copy-client.mjs` was actually run.
- *   P4  typecheck -> test -> build.
- *   P5  Compatibility report — prints host versions and the runtime capability
- *       probe. Informational; never fails the run.
- *   P6  Startup independence — runs `scripts/startup-probe.mjs` in a child
- *       process that seals every `@deepseek-ai/dsh*` specifier on both the ESM
- *       and CJS paths, then imports `lib/index.js`. This is the dynamic proof of
- *       invariant I1: P1 shows no runtime host import exists, P6 shows the entry
- *       point still instantiates when the host is gone. Skipped with `--offline`
- *       only in the sense that it needs `lib/`; it never touches the network.
- *   P7  Client inject contract (rules R2 / R2b) — runs `scripts/client-probe.mjs`
- *       against `lib/client.js`: no service read may target a name that is
- *       neither declared in `exports.inject`, a cordis core member, nor a nested
- *       service (`remote.commands`) reached through its parent; and `apply()`
- *       must actually run on a minimal but faithful host (real `Service`
- *       instances for `remote` and `remote.commands`). This is the gate that was
- *       missing twice: 1.8.2 shipped `ctx.locale` on line 226 and 1.8.3 shipped
- *       `ctx.get('remote').commands` on line 252 — a service outside `inject`
- *       throws at access time, `apply()` does not catch it, and the whole client
- *       half stops registering. Neither the test suite nor P1–P6 ever executed
- *       the hand-written browser bundle, so nothing noticed either time. The
- *       probe also re-derives the namespace roots from the installed dsh and
- *       fails when they disagree with the set it guards, so a second namespaced
- *       service upstream cannot slip past unnoticed. Local and offline: it needs
- *       `lib/` and a devDependency (`@deepseek-ai/cordis`), never the network —
- *       the derivation reports SKIP when no dsh install is present, as in CI.
- *   P8  Committed runtime artifacts — every path the manifest publishes
- *       (`main`, `types`, `exports`) must exist on disk, be **tracked by git**,
- *       and show **no diff against HEAD** under `lib/`. Staged-but-uncommitted
- *       files therefore fail: the store validates a commit, and a green index is
- *       not a commit. DSH STORE never runs install,
- *       prepare or build, so a commit that ships only `src/` is an uninstallable
- *       package while `npm publish` still looks perfectly healthy — npm rebuilds
- *       via `prepublishOnly` and honours `files`. That is exactly how
- *       oss-prompt-optimizer 1.8.4 was deferred: `lib/` was gitignored, and
- *       every published path pointed into it. This gate is why `lib/` is tracked.
- *       SKIP (with the reason) outside a git checkout, e.g. inside a tarball.
- *   P9  Desktop/web dual compatibility — reads the desktop app's own runtime
- *       (`resources/app.asar` → `dsh/package.json`, e.g.
- *       `@deepseek-ai/dsh-desktop-runtime@0.2.0-rc.2`) and fails when that
- *       version's tuple is not enumerated by `dsh.compatibility.dsh` +
- *       `dshReleases`, or when a `dsh.client.inject` package is missing from it.
- *       The desktop ships a different dsh release line than the CLI/web one, so
- *       a range that only spans one tuple silently withholds the plugin there.
- *       SKIP when no desktop install is present (CI), so the gate is portable.
- *   P10 Evaluation-grader calibration — runs
- *       `scripts/check-eval-grader.mjs` against the BUILT `lib/` artifacts and
- *       fails when the golden set is malformed (duplicate ids, a case naming an
- *       unknown rubric dimension, an injection probe without a canary), when a
- *       shipped reference pair is graded in the wrong order, or when any of the
- *       judge-parser / verdict-math reverse controls stops holding. The eval
- *       harness is what the project now uses to judge every other change, so a
- *       grader that accepts anything would report every edit as an improvement;
- *       P4 only exercises `src/`, so this is also the packaging check that the
- *       golden set and the judge actually ship inside the published bundle.
- *   P11 Settings surface in a real browser — OPT-IN (`--browser-e2e`), runs
- *       `scripts/e4-settings-browser.mjs`: a throwaway DSH_HOME, a profile
- *       composed from the shipped `web` template, `dsh web` booted on a free
- *       port, and a real Chromium — the one already installed, nothing is
- *       downloaded — completing the token→cookie handshake before it renders
- *       the settings section and writes a field through to the profile patch on
- *       disk. This is the only gate that walks the chain a user actually
- *       touches end to end (handshake → served client bundle → real
- *       `configForms` → mounted slot → disk), and issue #3 lived in exactly
- *       that gap: every fake host passed while the real page saved nothing.
- *       Not in CI and off by default, so `pnpm preflight` stays hermetic; run
- *       it from a plain shell, outside the assistant sandbox.
+ * P12 (docs consistency) is advisory: it reports WARN rather than FAIL, because
+ * documentation drift cannot stop the host from booting.
  *
+ * @see docs/compatibility.md §6 — what each step proves, and its controls
+ * @see docs/compatibility.md §7 — the incidents each step exists to prevent
  * Usage:  pnpm preflight  [--skip-tests] [--offline] [--dsh-home <path>] [--browser-e2e]
  */
 
@@ -109,6 +32,8 @@ const dshHomeArg = dshHomeIndex === -1 ? null : (argv[dshHomeIndex + 1] ?? null)
 const PASS = 'PASS'
 const FAIL = 'FAIL'
 const SKIP = 'SKIP'
+/** Advisory findings: reported, never counted as a failure. */
+const WARN = 'WARN'
 const results = []
 
 function record(id, title, status, detail) {
@@ -794,6 +719,36 @@ function checkSettingsInBrowser() {
 }
 
 // ---------------------------------------------------------------------------
+// P12 — docs consistency (advisory)
+// ---------------------------------------------------------------------------
+
+/**
+ * Docs drifted because nothing checked them, so the checks are the drift that
+ * actually happened: the two READMEs grew different section orders, four docs
+ * named the same settings screen four ways, and retired names stayed in prose.
+ * Advisory because documentation cannot keep `dsh web` from booting — it must
+ * never turn a green release red, only say what has drifted.
+ */
+function checkDocsConsistency() {
+  const script = join(root, 'scripts', 'check-docs.mjs')
+  if (!existsSync(script)) {
+    record('P12', 'docs consistency', FAIL, 'scripts/check-docs.mjs is missing')
+    return
+  }
+  try {
+    const stdout = execFileSync(process.execPath, [script], { encoding: 'utf8' }).trim()
+    const clean = stdout.includes(': PASS')
+    record('P12', 'docs consistency', clean ? PASS : WARN, stdout.replace(/^P12 docs consistency:\s*(PASS|WARN[^-]*)\s*—\s*/, ''))
+  } catch (error) {
+    const details = [error?.stdout, error?.stderr]
+      .filter((part) => typeof part === 'string' && part.trim().length > 0)
+      .join('\n')
+      .trim()
+    record('P12', 'docs consistency', FAIL, details.split(/\r?\n/).slice(-12).join('\n    ') || String(error?.message ?? error))
+  }
+}
+
+// ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 
@@ -811,14 +766,20 @@ checkCommittedRuntimeArtifacts(manifest)
 checkDesktopCompatibility()
 checkEvalGrader()
 checkSettingsInBrowser()
+checkDocsConsistency()
 
 let failed = 0
+let warned = 0
 for (const result of results) {
   if (result.status === FAIL) failed++
+  if (result.status === WARN) warned++
   console.log(`  [${result.status}] ${result.id.padEnd(11)} ${result.title}`)
   if (result.detail) console.log(`         ${result.detail}`)
 }
-console.log(`\npreflight: ${failed === 0 ? 'OK' : `${failed} check(s) FAILED`}`)
+const outcome = failed > 0
+  ? `${failed} check(s) FAILED`
+  : warned > 0 ? `OK (${warned} warning(s))` : 'OK'
+console.log(`\npreflight: ${outcome}`)
 // `process.exitCode` rather than `process.exit()`: calling `process.exit()` right
 // after synchronous stdio writes can trip a libuv assertion on Windows before
 // the streams flush, hiding the actual result behind an abort.

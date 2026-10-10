@@ -1,22 +1,16 @@
 /**
  * Situation-awareness layer: pure, harness-free extraction of a structured
- * 角色/任务/目标 (role / task / goal) profile from a raw instruction, plus a
- * goal-alignment check for the validation loop and goal-drift detection for
- * iteration.
+ * 角色/任务/目标 (role / task / goal) profile from a raw instruction, plus
+ * goal-alignment checking for validation and goal-drift detection for iteration.
  *
- * Everything here is a pure function over plain strings — no harness
- * dependency, no `llm`, no config. P0 delivered explicit-role extraction,
- * goal/constraint extraction, `goalAlignment`, and the `{{情境画像}}` block
- * renderer. P1 added two-level task classification (`detectTaskSubtype`),
- * measurability detection, `goalDrift`, profile memoization, and
- * conversation-role fallback via `context`. P2 adds profile schema
- * versioning (`SITUATION_PROFILE_VERSION`), the injection-budget gate
- * (`SituationProfileLevel`), and session-goal merging (`mergeGoals`, used by
- * the service's session registry). P1 (role-design 方案) extends the role
- * extraction with capability (精通/擅长/Proficient in…) and behavior
- * (先给…/拒绝…/avoid…) signals plus scene-style identities (以…的身份 /
- * acting as…) — `RoleProfile` v2. The `mainVerb` / `object` /
- * `successCriteria` fields are declared for interface stability.
+ * It also owns the injection budget (`SituationProfileLevel`), the profile schema
+ * version (`SITUATION_PROFILE_VERSION`) and session-goal merging (`mergeGoals`),
+ * which the service's session registry calls.
+ *
+ * Everything here is a pure function over plain strings — no harness, no `llm`,
+ * no config — so the extraction rules are unit-testable without a host.
+ *
+ * @module situation
  */
 import { type TaskType } from './meta.js';
 /** Perceived role of the executor derived from the instruction. */
