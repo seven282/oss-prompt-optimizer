@@ -1,0 +1,17 @@
+# Package-manager build-script policy (committed; see .gitignore for why).
+#
+# pnpm 11+ requires an explicit allow/deny decision for every dependency that
+# declares a build script; while an entry is undecided pnpm scaffolds the
+# literal placeholder `set this to true or false` and fails the install with
+# ERR_PNPM_IGNORED_BUILDS (pnpm 10 only warns).
+#
+# esbuild arrives transitively (vitest -> vite -> esbuild). Its postinstall is
+# only a validator: the binary ships inside the platform package
+# (@esbuild/win32-x64), so the script does not supply anything — the full test
+# suite passes without it ever running. We therefore deny it explicitly:
+# `false` counts as a reviewed decision, keeps the install deterministic on
+# every machine, and avoids failing installs where spawning the validator is
+# impossible or flaky. Revisit only if esbuild stops shipping platform
+# binaries as optionalDependencies.
+allowBuilds:
+  esbuild: false

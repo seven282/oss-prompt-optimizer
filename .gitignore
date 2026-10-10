@@ -3,14 +3,13 @@ node_modules/
 .pnpm-store/
 .pnpm-cache/
 
-# pnpm 11+ build-script policy. Kept machine-local on purpose: approving a
-# dependency's install-time script is a supply-chain decision about *this*
-# machine, not a property of the package. pnpm scaffolds this file by itself
-# (with an undecided placeholder) whenever it meets an unapproved build script,
-# so committing it would also force pnpm-10 CI runners to parse a key only
-# pnpm 11+ understands. `prepublishOnly` runs the build through npm rather than
-# pnpm, so publishing does not depend on this file existing.
-pnpm-workspace.yaml
+# The pnpm 11+ build-script policy file is **committed**. The original reason
+# to keep it machine-local was that CI ran pnpm 10, which cannot parse
+# `allowBuilds`; since `packageManager` pins pnpm@12.4.1 for every consumer,
+# that concern is gone — and pnpm 12 fails a fresh `--frozen-lockfile` install
+# outright on unreviewed build scripts (strictDepBuilds defaults to true), so
+# CI needs this file to exist. Approvals here are package-level, not
+# machine-level; review any new entry like a dependency change.
 
 # `lib/` is deliberately **tracked**, not ignored. It is the published bundle:
 # `main` / `types` / `exports` all point into it, and DSH STORE validates a
