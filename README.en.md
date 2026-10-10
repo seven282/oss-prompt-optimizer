@@ -22,6 +22,8 @@ By default the result is heading-free plain text (`outputStyle: 'plain'`, fewer 
 - **Measurement loop** (1.11.0) — `/optimize-eval` lets the plugin **measure itself** instead of only asserting shape. Three layers, cheapest first: ① the **structural gate** (free, and the *same* validation function the optimization pipeline uses — not a copy, so "what we accept" and "what we measure" cannot drift apart); ② **per-case expectations** (substrings that must / must not appear — this is how an injection canary is checked); ③ a **weighted judge score** on a 1–5 scale (specificity / context / output contract / fidelity / economy, with a **safety boundary** dimension enabled for the injection case; weights normalized to 0–1). The judge **must write its reason before its score**: a missing reason, a score written first, a non-integer or out-of-range score, or an invented dimension is **discarded**, and a dimension the judge skipped is reported as missing rather than guessed. `run` compares the aggregate against the recorded `baseline` and reports a **regression** beyond the tolerance; the run and its token usage (from the 1.10.0 ledger) are persisted so comparisons survive a restart. The dataset comes from three places: the built-in **golden set** (14 cases, 8 core by default), the `evalSet` config, and **mining this machine's own session history** (`--mine`, needs a host with `sessionQuery`) — mined instructions are used **in memory only and never written to the state file**, the same privacy rule the episode log follows. The judge can be turned off (`evalJudge: false` → fully offline, no extra calls) or pointed at its own model (`evalJudgeProvider` / `evalJudgeModel`; the optimizer's route is reused by default, and a distinct model is recommended to avoid self-evaluation bias). Preflight **P10** calibrates the grader against the shipped reference pairs, including reverse controls that a score-fabricating parser would fail.
 - **Result caching** — in-memory LRU+TTL cache of validated results; identical requests return with **zero model calls** (`cacheEnabled` on by default, cleared on restart).
 - **Real usage ledger** (1.10.0) — reads the host `usage` block (provider-reported tokens), accumulates `input / output / cacheRead / cacheWrite / reasoning`, and derives a **cache hit rate**, surfaced in `/optimize --stats` and `/optimize --status` together with the **last optimization's** and the **last call's** usage. When the provider reports nothing the output says so explicitly, instead of mixing heuristic estimates with measurements. `/optimize --status` also distinguishes "0 model calls (cache hit / local render)" from "calls that reported no usage".
+- **Model identity + OTel signal** (1.13.0) — "which model did this run actually call" and an **OpenTelemetry GenAI-shaped** signal become visible: `/optimize --status` gains a "Target model: provider/model (reasoning effort)" line (the machine-readable tail of `/optimize --stats` gains `MODEL:` / `PROVIDER:` / `EFFORT:`), and the success/failure lifecycle payloads gain `route` and `genAi` (keyed by the OTel spec attribute names, so `span.setAttributes(payload.genAi)` needs no translation table). **Per run**: after a cache hit or a local zero-token render (no model call) the plugin reports **no model** — and no token counts it never measured.
+- **Client copy follows the interface language** (1.13.1) — fixes "the settings page and the nav label are stuck in English after an update/reinstall, and a restart does not help". The client half used to **capture** one translator during `apply()`, but the host's locale plugin applies *asynchronously* (it awaits its native bootstrap before providing the service), so this plugin could finish first — after which every label resolved to the raw key. It now resolves the translator **per call**, and takes the framework-synthesized `t` seat the contract provides for an entry that declares `locale: NS` (the renderer re-derives that seat per locale revision, so its identity is what invalidates memoized children); the page subscribes to locale changes and re-renders itself, so the fallback path is covered too. The ✨ button's previously hardcoded Chinese `title`/`aria-label` and every announcement string are now in the dictionary. On a host with no locale face the namespace is **not declared** at all — the renderer throws for an entry that declares one nobody provides, so declaring it unconditionally would turn "no i18n here" into "the settings page is broken".
 - **Settings panel** (1.7.8, requires the host to mount dsh-settings) — the plugin registers its full config as the `prompt-optimizer` namespace: all options (defaults/current values) are visible and editable under the Harness **Settings → plugin settings**; changes apply immediately and persist. On hosts without the settings service the bridge is skipped and config keeps resolving from `cordis.patch.yml` — zero behavioural change.
 - **Self-iteration system** — three-layer architecture for "the more you use it, the better it gets", zero token cost. Learning data (episode log) and run statistics persist to `~/.dsh/oss-prompt-optimizer/state.json` by default (1.8.1; shared user-level learning across profiles, `$DSH_HOME` and the `stateFile` config override the path, `persistState: false` restores the in-memory-only behavior). **Privacy**: only behavioral metadata (task type / duration / tokens / acceptance) is stored — never the instruction text. The result cache (`cacheEnabled`) stays in-memory and clears on restart by design:
   - **Session learning** (Layer 1) — records success/failure experiences from each optimization (task type, output style, temperature, etc.), building a preference model
@@ -75,19 +77,24 @@ installers can check it:
 | Item | Value |
 |---|---|
 | Node.js | `>=22` |
-| DSH range | `^0.1.6-alpha.2` |
-| Verified releases | `0.1.6-alpha.2` (with disposable-profile install / start / uninstall evidence) |
+| DSH range | `^0.2.0-rc.2` |
+| Verified releases | `0.2.0-rc.2` (CLI/web and the desktop runtime share the tuple; the desktop side carries disposable-profile install / start / uninstall evidence) |
 
 This plugin declares the **current latest** DSH release only: older releases are served by older
 plugin versions, so re-taking evidence for them would produce claims nobody reads.
+`0.2.0-rc.2` is also the first release carrying the settings contract this plugin is built on
+(`ctx.configForms` + volatile-backed forms); on anything older the panel degrades to **read-only
+with an explanation** rather than pretending it can write.
 
-> ⚠️ The range must enumerate tuples with `||`; writing `>=0.1.5-rc.1 <0.2.0` does **not** match
-> `0.1.6-alpha.2`. By the semver prerelease rule a prerelease version only satisfies a range when
-> some comparator carries the *same* `[major.minor.patch]` plus a prerelease.
+> ⚠️ The range must enumerate tuples with `||`; writing `>=0.1.5-rc.1 <0.2.0` matches **no**
+> `0.1.6-alpha.*` or `0.2.0-rc.*`. By the semver prerelease rule a prerelease version only
+> satisfies a range when some comparator carries the *same* `[major.minor.patch]` plus a
+> prerelease.
 
 Reproduce the evidence locally (throwaway `DSH_HOME`, your real profile is untouched):
 ```sh
 node scripts/e3-acceptance.mjs --dsh-bin <path/to/dsh/lib/bin.js> --json e3.json
+node scripts/e4-settings-browser.mjs --json e4.json   # settings surface in a real browser: handshake → fields → write-through
 # On Windows run this outside the assistant sandbox: `dsh web` calls reg.exe, and a blocked
 # sandbox leaves the host hanging with no output at all.
 ```
@@ -164,8 +171,9 @@ pnpm install --store-dir .pnpm-store --cache-dir .pnpm-cache   # sandboxed insta
 pnpm run typecheck    # tsc --noEmit
 pnpm test             # vitest (mocked llm, no real credentials needed)
 pnpm run build        # tsc -p tsconfig.build.json → lib/
-pnpm preflight        # compatibility gate P1–P8 (run before publishing)
+pnpm preflight        # compatibility gate P1–P10; add --browser-e2e for P11 (real browser, outside the sandbox)
 pnpm e3               # disposable-profile acceptance: install → start → uninstall (outside the sandbox)
+pnpm e4               # settings surface in a real browser: handshake → fields → write-through (outside the sandbox)
 ```
 
 All tests use a mocked `llm` stream and never read `.credentials.yaml`.
@@ -200,7 +208,7 @@ in `inject`. The cordis context is a Proxy, so reading a service that is not inj
 and `apply()` does not catch it, which means **one optional-service read takes the whole client half
 offline**: the ✨ button and the settings page disappear together, leaving
 `failed to apply loader entry … cannot get property "locale" without inject` in the console. That is
-the 1.8.2 outage, so optional services (`locale` / `sessions` / `settingsScope`) always go through
+the 1.8.2 outage, so optional services (`locale` / `sessions` / `configForms`) always go through
 **`ctx.get('<name>')`**, which does not require inject, returns the service or `undefined`, and never
 throws.
 
@@ -213,6 +221,7 @@ throws.
 | A client-side optional service is missing / renamed (`locale`…) | Read via `ctx.get()`, so only its wording is lost; the ✨ button and settings page still register |
 | `BlockAssembler` is missing | `/optimize` returns error code `UNSUPPORTED_ENV` with explicit wording — **no faked response, no silent failure** |
 | Client slot props contract is renamed | A candidate chain adapts; if all candidates fail the button is **not registered** and a self-diagnosing log is printed |
+| Settings service renamed (0.1.x `settingsScope` → 0.2.0 `configForms`) | The panel only reads `ctx.get('configForms')`; when it is absent or not writable the panel turns **read-only and says why**, and a refused write reports "the host refused the change" instead of a false "Saved" |
 | Domain packages jump versions (`0.1.5-rc` → `0.2.x`) | Runtime capability probing decides the usable surface; anything unavailable degrades |
 
 Degradation is not silent: the plugin **always prints one compat report line** at construction
@@ -232,7 +241,10 @@ pnpm preflight       # P1 dependency surface / P2 inject resolution / P3 artifac
                      # P7 client service-read contract (R2/R2b static scan + apply() actually run
                      #    on a faithful minimal host)
                      # P8 committed runtime artifacts (published paths exist, are tracked, no drift)
+                     # P9 desktop/web dual compat / P10 eval-grader calibration
+                     # P11 the settings surface in a real browser (needs --browser-e2e, run outside the sandbox)
 pnpm e3 --dsh-bin <that release's dsh/lib/bin.js>   # disposable profile: install → start → uninstall
+pnpm e4 --json e4.json                              # settings surface in a real browser: handshake → 8 fields → write-through
 dsh web              # on a real host: starts normally + one compat report line in the log
 ```
 
@@ -252,10 +264,21 @@ The `promptOptimizer` service emits events on the cordis event bus at key points
 | Event | When | Payload |
 |---|---|---|
 | `prompt-optimizer/optimize:start` | input validated, before the first model call | `{ method, input }` |
-| `prompt-optimizer/optimize:success` | success (`optimized: true`) | `{ method, input, result, durationMs }` |
-| `prompt-optimizer/optimize:failure` | fallback (`optimized: false`) | `{ method, input, result, durationMs }` |
+| `prompt-optimizer/optimize:success` | success (`optimized: true`) | `{ method, input, result, durationMs, route?, genAi? }` |
+| `prompt-optimizer/optimize:failure` | fallback (`optimized: false`) | `{ method, input, result, durationMs, route?, genAi? }` |
 
 - `method` is `'optimize'` or `'iterate'` (both share the three events); `input` is the raw input (untruncated); `result` is the full `OptimizeResult`; `durationMs` is the pipeline duration in milliseconds.
+- **`route` (1.13.0) is the model this run actually called**: `{ provider, model, reasoningEffort? }` (`reasoningEffort` is a plain string, no harness type). The `MODEL:` / `PROVIDER:` / `EFFORT:` fields of `/optimize --stats` and the "Target model" line of `/optimize --status` report the same fact, and all of them are **per run**: a cache hit or a local zero-token render (no model call) carries **no** `route` rather than the previous run's model.
+- **`genAi` (1.13.0) is the same fact in OpenTelemetry GenAI shape**, keyed by the literal spec attribute names, so it can go straight to a span:
+
+  ```ts
+  ctx.on('prompt-optimizer/optimize:success', ({ genAi }) => {
+    if (genAi) span.setAttributes(genAi)
+  })
+  ```
+
+  It carries `gen_ai.operation.name` (`'chat'`), `gen_ai.provider.name`, `gen_ai.request.model`, `gen_ai.conversation.id` (when the caller supplied a `sessionId`) and the five `gen_ai.usage.*` counts (input / output / cache_read / cache_creation / reasoning, mapping 1:1 onto the host-reported `inputTokens` / `outputTokens` / `cacheReadTokens` / `cacheWriteTokens` / `reasoningTokens`).
+  ⚠️ Two honesty rules: **no model call means no `genAi` block at all** (a fabricated all-zero span describes a call that never happened), and **an adapter that reports no usage leaves all five counts out** (it does not report zeros it never measured). `gen_ai.response.model` is **not** emitted — the harness reports the model a request asked for, never a distinct model that served it.
 - **Fire-and-forget observers**: listener errors are swallowed and never affect the pipeline.
 - TypeScript subscribers get typed payloads directly (the `declare module '@deepseek-ai/cordis'` augmentation ships with the package), or can reference the event names via the `PROMPT_OPTIMIZER_EVENTS` constant.
 - No events are emitted for pass-through (`skipIfAlreadyOptimized` hit) or invalid input (e.g. empty input).

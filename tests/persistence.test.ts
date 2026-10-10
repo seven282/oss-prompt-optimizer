@@ -30,6 +30,8 @@ const STATS: OptimizeStats = {
   usageCalls: 4, inputTokens: 900, outputTokens: 1200, cacheReadTokens: 300,
   cacheWriteTokens: 0, reasoningTokens: 0,
   lastRunUsage: { calls: 2, inputTokens: 500, outputTokens: 600, cacheReadTokens: 100, cacheWriteTokens: 0, reasoningTokens: 0 },
+  // The model the last run called (1.13.0); null after a run with no model call.
+  lastRunRoute: { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
   // Best-of-N selection + host feedback (1.12.0).
   selectRuns: 2, selectGains: 1, lastSelectCandidates: 3, lastSelectChosen: 2,
   lastSelectScore: 0.88, lastSelectGate: 3, feedbackSessions: 1, feedbackPositive: 4,

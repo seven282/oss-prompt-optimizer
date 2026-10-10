@@ -45,7 +45,7 @@ import { beforeAll, describe, expect, it } from 'vitest'
  *   are dot-free
  * - the only code that builds a dotted name is `remoteServiceKey()`
  *
- * so `slots`, `locale`, `sessions` and `settingsScope` cannot be hijacked and
+ * so `slots`, `locale`, `sessions` and `configForms` cannot be hijacked and
  * must NOT be flagged here (reading `slots.inject` is a plain property read —
  * over-reaching would make this test cry wolf and get weakened). When dsh grows
  * a new namespace root, this list is what has to be updated;
@@ -274,7 +274,7 @@ const PROBE_NAMES = [
   'remote',
   'remote.commands',
   'sessions',
-  'settingsScope',
+  'configForms',
 ]
 
 /** Which of `names` resolve on a real cordis context with no services provided. */
@@ -317,7 +317,7 @@ describe('client half inject contract (R2 / R2b)', () => {
     expect(kernel.size).toBeGreaterThan(0)
     expect([...kernel]).toContain('effect')
     expect([...kernel]).toContain('get')
-    for (const service of ['locale', 'slots', 'remote', 'remote.commands', 'sessions', 'settingsScope']) {
+    for (const service of ['locale', 'slots', 'remote', 'remote.commands', 'sessions', 'configForms']) {
       expect([...kernel]).not.toContain(service)
     }
   })
@@ -353,8 +353,22 @@ describe('client half inject contract (R2 / R2b)', () => {
     // listing one turns "one feature is missing" into "the whole client half
     // never loads". A nested name is optional by the same argument — the
     // namespace may not be mounted at apply() time.
-    for (const optional of ['locale', 'sessions', 'settingsScope', 'slots', 'remote.commands']) {
+    for (const optional of ['locale', 'sessions', 'configForms', 'slots', 'remote.commands']) {
       expect(injected ?? []).not.toContain(optional)
+    }
+  })
+
+  it('reads the 0.2.0 settings service, and only that name', () => {
+    // The settings service was renamed across a release boundary with no
+    // overlap (`settingsScope` in 0.1.x → `configForms` in 0.2.0), so the old
+    // name cannot be kept as a fallback read: on a current host it finds
+    // nothing, and a page that then renders enabled inputs is issue #3 again.
+    // The violation list above cannot catch this direction — a *missing* read
+    // is not a violation — so the migration is asserted directly.
+    const code = stripComments(source)
+    expect(code).toContain("ctx.get('configForms')")
+    for (const stale of ['settingsScope', "ctx.get('settingsScope')"]) {
+      expect(code).not.toContain(stale)
     }
   })
 

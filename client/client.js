@@ -27,7 +27,7 @@ window.__ModuleLoader__.load({
     // `/optimize` and `/auto-optimize` commands through `remote.commands.execute`.
     //
     // 1.8.2: the inject list is the MINIMUM the client half cannot work without.
-    // `settingsScope`, `sessions` and `locale` are all read defensively through
+    // `configForms`, `sessions` and `locale` are all read defensively through
     // `ctx.get()`, so listing them here only turned "settings page missing" into
     // "the whole client half never loads". Gating everything on them is what made
     // a single renamed service take the ✨ button offline.
@@ -39,8 +39,15 @@ window.__ModuleLoader__.load({
     // `tests/client-inject-contract.test.ts` scans for direct reads, and
     // `scripts/client-probe.mjs` re-checks the built artifact.
     var inject = ['remote']
+    // The Host plugin entry id AND the settings namespace are the same string
+    // (`cordis.patch.yml` `insert.id`), which is what `configForms.get()` keys on.
     var SETTINGS_NS = 'prompt-optimizer'
     var NS = 'prompt-optimizer-client'
+    // Every string a user can see lives here, in both languages. The ✨ button
+    // used to build its title/aria text from hardcoded Chinese literals, which
+    // is the other half of "the UI does not follow the language": a dictionary
+    // that is complete except for the one control the user interacts with is
+    // still a control stuck in one language (1.13.1).
     var zh = {
       'section.nav': '提示词优化',
       'section.sub': 'oss-prompt-optimizer · 配置与运行状态',
@@ -48,7 +55,30 @@ window.__ModuleLoader__.load({
       'action.reset': '恢复全部默认',
       'saved': '已保存：',
       'reset.all.done': '已恢复全部默认',
-      'hint': '本页仅列核心常用项；完整配置（缓存 / 情境感知 / 模板 / 自迭代等）→ 设置 → 插件 → oss-prompt-optimizer，默认值已调优、多数无需修改。',
+      'opt.on': '开启',
+      'opt.off': '关闭',
+      'field.meta': '默认 {default} · 当前 {current}',
+      'btn.label': '优化提示词',
+      'btn.title': '优化提示词 (prompt-optimizer)',
+      'btn.busy': '正在优化…（点击取消）',
+      'btn.cancel': '取消优化',
+      'btn.undo': '恢复优化前的提示词',
+      'btn.failed': '优化失败',
+      'announce.cancelled': '已取消优化',
+      'announce.restored': '已恢复优化前的原文',
+      'announce.optimized': '提示词已优化，可点击撤销按钮恢复原文',
+      'announce.optimized.cost': '提示词已优化（消耗约 {tokens} tokens），可点击撤销按钮恢复原文',
+      'error.prefix': '优化失败：',
+      'error.retry': '优化失败，请重试',
+      'save.failed': '保存失败：',
+      'save.rejected': '宿主拒绝了这次修改：',
+      'restore.failed': '恢复失败：',
+      'panel.loading': '正在读取宿主配置…',
+      'panel.unavailable': '宿主未提供可写的配置服务（本页面可能不是本机地址）。请在 cordis.patch.yml 中修改本插件配置。',
+      'panel.readonly': '当前连接只能读取配置，改动不会写入宿主。',
+      'status.unknown.session': '设置页无法确定当前会话——请在对话中运行 /optimize --status 查看状态。',
+      'status.fetch.failed': '无法获取状态：',
+      'hint': '本页仅列 8 项核心开关（可即时生效、无需重启）；其余配置（温度 / 预算 / 模板 / 评测等，大多已调优）写在 cordis.patch.yml 中。',
     }
     var en = {
       'section.nav': 'Prompt Optimizer',
@@ -57,7 +87,36 @@ window.__ModuleLoader__.load({
       'action.reset': 'Reset all to defaults',
       'saved': 'Saved: ',
       'reset.all.done': 'All defaults restored',
-      'hint': 'Core options only; the full config (cache / situation awareness / templates / self-iteration) lives under Settings → Plugins → oss-prompt-optimizer. Defaults are tuned — most need no changes.',
+      'opt.on': 'On',
+      'opt.off': 'Off',
+      'field.meta': 'Default {default} · current {current}',
+      'btn.label': 'Optimize prompt',
+      'btn.title': 'Optimize prompt (prompt-optimizer)',
+      'btn.busy': 'Optimizing… (click to cancel)',
+      'btn.cancel': 'Cancel optimization',
+      'btn.undo': 'Restore the prompt from before optimization',
+      'btn.failed': 'Optimization failed',
+      'announce.cancelled': 'Optimization cancelled',
+      'announce.restored': 'Original draft restored',
+      'announce.optimized': 'Prompt optimized — click undo to restore the original draft',
+      'announce.optimized.cost': 'Prompt optimized (~{tokens} tokens) — click undo to restore the original draft',
+      'error.prefix': 'Optimization failed: ',
+      'error.retry': 'Optimization failed — please retry',
+      'save.failed': 'Save failed: ',
+      'save.rejected': 'The host refused the change: ',
+      'restore.failed': 'Restore failed: ',
+      'panel.loading': 'Reading host configuration…',
+      'panel.unavailable': 'This host exposes no writable configuration service (this page may not be a local address). Edit this plugin in cordis.patch.yml instead.',
+      'panel.readonly': 'This connection can only read configuration; changes will not reach the host.',
+      'status.unknown.session': 'The settings page cannot determine the current session — run /optimize --status in a conversation to see the status.',
+      'status.fetch.failed': 'Unable to fetch status: ',
+      'hint': 'This page lists the 8 core switches only (each applies immediately, no restart); the remaining options (temperature / budgets / templates / evaluation — mostly pre-tuned) live in cordis.patch.yml.',
+    }
+
+    /** Shallow-merge `extra` into `base` (this file ships unbuilt — no object spread). */
+    function merged(base, extra) {
+      for (var key in extra) if (Object.prototype.hasOwnProperty.call(extra, key)) base[key] = extra[key]
+      return base
     }
 
     // One idempotent stylesheet for the buttons (injected once; global classes
@@ -79,7 +138,7 @@ window.__ModuleLoader__.load({
         '.po-status-pre{margin:0;font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-word;color:var(--dsw-alias-text-primary, inherit);max-height:40vh;overflow:auto}',
         '.po-section{padding:4px 2px}.po-section-head{display:flex;align-items:center;gap:10px;margin-bottom:14px}.po-section-title{font-size:15px;font-weight:600;color:var(--dsw-alias-text-primary, inherit)}.po-section-sub{font-size:12px;color:var(--dsw-alias-label-secondary, inherit);margin-top:2px}',
         '.po-field{margin-bottom:12px}.po-field-label{display:flex;justify-content:space-between;align-items:baseline;font-size:13px;color:var(--dsw-alias-text-primary, inherit);margin-bottom:4px}.po-field-default{font-size:11px;color:var(--dsw-alias-label-secondary, inherit)}',
-        '.po-field-input{width:100%;box-sizing:border-box;padding:5px 8px;font-size:13px;border:1px solid var(--dsw-alias-border-subtle, rgba(0,0,0,.18));border-radius:6px;background:var(--dsw-alias-bg-layer-1, transparent);color:var(--dsw-alias-text-primary, inherit)}.po-field-input:focus{outline:2px solid var(--dsw-alias-brand-primary, currentColor);outline-offset:0;border-color:transparent}',
+        '.po-field-input{width:100%;box-sizing:border-box;padding:5px 8px;font-size:13px;border:1px solid var(--dsw-alias-border-subtle, rgba(0,0,0,.18));border-radius:6px;background:var(--dsw-alias-bg-layer-1, transparent);color:var(--dsw-alias-text-primary, inherit)}.po-field-input:focus{outline:2px solid var(--dsw-alias-brand-primary, currentColor);outline-offset:0;border-color:transparent}.po-field-input:disabled{opacity:.55;cursor:not-allowed}',
         '.po-save{margin-top:4px;padding:6px 16px;font-size:13px;border:none;border-radius:6px;background:var(--dsw-alias-brand-primary, #0052d9);color:#fff;cursor:pointer}.po-save:hover{opacity:.9}',
         '.po-status-panel{position:static;max-width:none;background:var(--dsw-alias-bg-layer-2, #fff);border:1px solid var(--dsw-alias-border-subtle, rgba(0,0,0,.12));border-radius:8px;padding:10px 12px;margin-top:12px}',
         '.po-status-pre{margin:0;font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-word;color:var(--dsw-alias-text-primary, inherit);max-height:40vh;overflow:auto}',
@@ -237,14 +296,96 @@ window.__ModuleLoader__.load({
       // page. `ctx.get()` returns the service when the host provides one and
       // `undefined` when it does not, and never throws.
       var locale = ctx.get('locale')
-      if (locale && typeof locale.register === 'function') {
+      // Whether the host installed a locale face decides whether the slot
+      // registrations may DECLARE a namespace (`locale: NS`). Declaring one is
+      // what makes the renderer synthesize the `t` seat for our components
+      // (`kit['t'] = localeSeat(face, entry.locale)`, re-derived per locale
+      // revision — see the section component below) — but the renderer THROWS
+      // when an entry declares a namespace and no face is installed, and that
+      // throw takes the section down with it. So the declaration is gated on the
+      // face being here, and a host without one keeps working through the
+      // per-call lookup below.
+      var localeFace = locale && typeof locale.bind === 'function' ? locale : null
+      var localeOption = localeFace === null ? {} : { locale: NS }
+
+      // Registration is lazy for the same reason the lookup is: this plugin's
+      // `apply()` can run before the locale plugin's, which is `async` and awaits
+      // its native bootstrap before `ctx.provide('locale', …)`. Attempting once
+      // here and once at the first lookup covers both orders, and
+      // `dictsRegistered` keeps it to exactly one registration.
+      var dictsRegistered = false
+      function ensureDictionary() {
+        if (dictsRegistered) return
+        var live = ctx.get('locale')
+        if (!live || typeof live.register !== 'function') return
+        dictsRegistered = true
         ctx.effect(function () {
-          return locale.register(NS, { zh: zh, en: en })
+          try {
+            return live.register(NS, { zh: zh, en: en })
+          } catch (error) {
+            // A plugin update re-runs this file while the previous fiber's
+            // registrations may still be standing, and the runtime refuses a
+            // duplicate namespace+locale pair ("already has locale"). The
+            // disposer is identity-guarded — it removes only the entries it
+            // registered — so the dictionaries already in place stay valid and
+            // carrying on is the safe resolution. An uncaught throw here would
+            // abort `apply()` and take the ✨ button and the settings page with
+            // it, which is strictly worse than keeping an old-but-equal copy of
+            // the same strings.
+            console.warn('[prompt-optimizer] dictionary registration skipped:', error && error.message)
+            return undefined
+          }
         })
       }
-      var t = locale && typeof locale.bind === 'function'
-        ? locale.bind(NS)
-        : function (key) { return key }
+      ensureDictionary()
+
+      // No translator is captured, deliberately. `locale.bind(NS)` returns a
+      // LIVE closure — it reads the active language at call time, so a frozen
+      // `t` was never the failure mode it looked like — but a binding taken now
+      // can only ever see the face that exists now: one provided after this
+      // `apply()` ran is invisible to it, and then every label resolves to the
+      // raw key for the whole session. Resolving per call costs one store lookup
+      // per rendered string and cannot go stale — the same rule `executeCommand`
+      // follows for `remote.commands`.
+      function translate(key, params) {
+        ensureDictionary()
+        var live = ctx.get('locale')
+        if (!live || typeof live.bind !== 'function') return key
+        var bound = live.bind(NS)
+        return params === undefined ? bound(key) : bound(key, params)
+      }
+
+      // One-shot self-check, ~2.5 s after activation so a host preference that
+      // merely lands late is not mistaken for a fault. Silent whenever our copy
+      // resolves in the active language — every healthy session — and otherwise
+      // names which layer is wrong, instead of leaving "the settings are in
+      // English" to be re-derived from scratch each time it is reported.
+      // Removable in one edit: this function plus its single call site.
+      var lastLocaleWarning
+      function diagnoseLocale() {
+        var live = ctx.get('locale')
+        if (!live || typeof live.bind !== 'function' || typeof live.getSnapshot !== 'function') return
+        var snapshot
+        try { snapshot = live.getSnapshot() } catch (error) { return }
+        if (!snapshot || typeof snapshot !== 'object') return
+        var active = typeof snapshot.active === 'string' ? snapshot.active : ''
+        var expected = active === 'zh' ? zh['section.nav'] : en['section.nav']
+        var got = live.bind(NS)('section.nav')
+        if (got === expected) return
+        var who = got === 'section.nav'
+          ? 'our dictionary never reached the runtime'
+          : 'the runtime resolved another language (host-side)'
+        var message = '[prompt-optimizer] locale self-check: the settings copy is not in the active language'
+          + ' — active=' + active
+          + ' revision=' + String(snapshot.revision)
+          + ' resolve("section.nav")=' + JSON.stringify(got)
+          + ' expected=' + JSON.stringify(expected)
+          + ' ⇒ ' + who
+        if (message === lastLocaleWarning) return
+        lastLocaleWarning = message
+        console.warn(message)
+      }
+      if (typeof setTimeout === 'function') setTimeout(diagnoseLocale, 2500)
 
       // `remote.commands` is a NESTED service name, not a property of the
       // `remote` service: dsh-api-gateway registers every remote namespace
@@ -274,9 +415,23 @@ window.__ModuleLoader__.load({
       // ✨ Optimize button (composer tool row, left).
       slots.inject('conversation.input.left', function () {
         return slots.register(
-          { name: 'conversation.input.left', id: 'prompt-optimizer', order: 10, label: '优化提示词' },
+          merged({
+            name: 'conversation.input.left',
+            id: 'prompt-optimizer',
+            order: 10,
+            // A thunk, not a literal: the label is re-read whenever the slot
+            // ledger is projected, so it follows the active language without
+            // re-registering (`SlotLabel = string | (() => string)`).
+            label: function () { return translate('btn.label') },
+          }, localeOption),
           function OptimizeButton(props) {
             ensureStyles()
+            // The framework-synthesized `t` seat, present because this entry
+            // declares `locale: NS` (see `localeOption`). Preferred over our own
+            // lookup because the seat carries the locale revision in its
+            // identity; the per-call lookup is the fallback for hosts that
+            // installed no locale face, where the seat does not exist.
+            var t = props && typeof props.t === 'function' ? props.t : translate
             var busyState = React.useState(false)
             var busy = busyState[0]
             var setBusy = busyState[1]
@@ -319,7 +474,7 @@ window.__ModuleLoader__.load({
 
             function flashError(message) {
               setError(message)
-              setAnnounce('优化失败：' + message)
+              setAnnounce(t('error.prefix') + message)
               if (typeof setTimeout === 'function') {
                 setTimeout(function () { setError(null) }, 4000)
               }
@@ -334,13 +489,13 @@ window.__ModuleLoader__.load({
                   cancelRef.current = null
                 }
                 setBusy(false)
-                setAnnounce('已取消优化')
+                setAnnounce(t('announce.cancelled'))
                 return
               }
               if (canUndo) {
                 inputActions.setDraft(undo.original)
                 setUndo(null)
-                setAnnounce('已恢复优化前的原文')
+                setAnnounce(t('announce.restored'))
                 return
               }
               if (!canOptimize) return
@@ -356,12 +511,12 @@ window.__ModuleLoader__.load({
                   // 取消，否则落入 unexpected 分支误报「优化失败」（1.7.6）。
                   if (response === undefined || response.ok === false) {
                     if (controller && controller.signal.aborted) {
-                      setAnnounce('已取消优化')
+                      setAnnounce(t('announce.cancelled'))
                       return
                     }
                     var errMsg = response && response.error && typeof response.error.message === 'string'
                       ? response.error.message
-                      : '优化失败，请重试'
+                      : t('error.retry')
                     flashError(errMsg)
                     return
                   }
@@ -369,7 +524,7 @@ window.__ModuleLoader__.load({
                   if (result && result.kind === 'success' && typeof result.text === 'string' && result.text.length > 0) {
                     setUndo({ original: draft, optimized: result.text })
                     inputActions.setDraft(result.text)
-                    setAnnounce('提示词已优化，可点击撤销按钮恢复原文')
+                    setAnnounce(t('announce.optimized'))
                     // 成本可见: read the last run's output tokens and show a
                     // transient hint. Best-effort; a failure is ignored.
                     executeCommand(props.sessionId, '/optimize --stats', [])
@@ -380,7 +535,7 @@ window.__ModuleLoader__.load({
                           : null
                         if (match) {
                           setCost(match[1])
-                          setAnnounce('提示词已优化（消耗约 ' + match[1] + ' tokens），可点击撤销按钮恢复原文')
+                          setAnnounce(t('announce.optimized.cost', { tokens: match[1] }))
                           if (typeof setTimeout === 'function') {
                             setTimeout(function () { setCost(null) }, 4000)
                           }
@@ -391,19 +546,19 @@ window.__ModuleLoader__.load({
                     // dsh 协议：被中止的 handler 以 kind:'error' 结算（resolve 而非
                     // reject）——用户点取消时若宿主返回 error，须识别为取消而非失败。
                     if (controller && controller.signal.aborted) {
-                      setAnnounce('已取消优化')
+                      setAnnounce(t('announce.cancelled'))
                       return
                     }
                     flashError(result.text)
                   } else {
                     console.error('prompt-optimizer: unexpected command result', response)
-                    flashError('优化失败，请重试')
+                    flashError(t('error.retry'))
                   }
                 })
                 .catch(function (error) {
                   // A user-initiated abort is not an error.
                   if (controller && controller.signal.aborted) {
-                    setAnnounce('已取消优化')
+                    setAnnounce(t('announce.cancelled'))
                     return
                   }
                   console.error('prompt-optimizer: command call failed', error)
@@ -416,22 +571,22 @@ window.__ModuleLoader__.load({
             }
 
             var icon = SparklesIcon
-            var title = '优化提示词 (prompt-optimizer)'
-            var aria = '优化提示词'
+            var title = t('btn.title')
+            var aria = t('btn.label')
             var className = 'po-optimize-btn'
             if (busy) {
               icon = SpinnerIcon
-              title = '正在优化…（点击取消）'
-              aria = '取消优化'
+              title = t('btn.busy')
+              aria = t('btn.cancel')
             } else if (canUndo) {
               icon = UndoIcon
-              title = '恢复优化前的提示词'
-              aria = '恢复优化前的提示词'
+              title = t('btn.undo')
+              aria = t('btn.undo')
               className += ' is-undo'
             } else if (error !== null) {
               className += ' has-error'
-              title = '优化失败：' + error
-              aria = '优化失败'
+              title = t('error.prefix') + error
+              aria = t('btn.failed')
             }
 
             return React.createElement(
@@ -466,15 +621,25 @@ window.__ModuleLoader__.load({
         )
       })
 
-      // Settings-sidebar page（设置 → 侧边栏「Prompt 优化器」）— 1.8.0.
-      // The section shell renders the nav entry from `id`/`order`/`label`;
-      // the SVG mark lives inside the page header (settings.section owns no
-      // nav-icon seat by contract).
-        // Settings-sidebar page: SVG-marked header + core fields + live status.
+        // Settings-sidebar page（设置 → 侧边栏「Prompt 优化器」）— 1.8.0.
+        // SVG-marked header + core fields + live status. The section shell renders
+        // the nav entry from `id`/`order`/`label`; the mark lives inside the page
+        // header (settings.section owns no nav-icon seat by contract).
         function PromptOptimizerSection(props) {
           ensureStyles()
-          var settingsScope = ctx.get('settingsScope')
-          var scopeRef = React.useRef(null)
+          // Framework-synthesized `t` seat (see the button above). The renderer
+          // re-derives it per locale revision (`localeSeat(face, entry.locale)`),
+          // so preferring it is what puts this page on the documented path; the
+          // per-call lookup covers hosts that installed no locale face.
+          var t = props && typeof props.t === 'function' ? props.t : translate
+          // 0.2.0 replaced the 0.1.x `ctx.settingsScope` service with
+          // `ctx.configForms`; the two names never coexisted in any release, so
+          // there is no dual path to keep. The form is keyed by this plugin's
+          // HOST ENTRY ID, whose settings namespace is the same string
+          // (`configForms.get()` builds `new ConfigFormController(owner,
+          // { namespace: entryId }, …)`).
+          var configForms = ctx.get('configForms')
+          var formRef = React.useRef(null)
           var snapState = React.useState(null)
           var snap = snapState[0]
           var setSnap = snapState[1]
@@ -482,52 +647,78 @@ window.__ModuleLoader__.load({
           var savedMsg = savedState[0]
           var setSavedMsg = savedState[1]
           React.useEffect(function () {
-            if (!settingsScope || typeof settingsScope.bind !== 'function') return undefined
-            var scope
+            if (!configForms || typeof configForms.get !== 'function') return undefined
+            var form
             try {
-              scope = settingsScope.bind({ namespace: SETTINGS_NS })
+              form = configForms.get(SETTINGS_NS)
             } catch (err) {
-              console.error('prompt-optimizer: settings scope bind failed', err)
+              console.error('prompt-optimizer: config form lookup failed', err)
               return undefined
             }
-            scopeRef.current = scope
-            setSnap(scope.getSnapshot())
-            return scope.subscribe(function () { setSnap(scope.getSnapshot()) })
+            if (!form || typeof form.getSnapshot !== 'function') return undefined
+            formRef.current = form
+            setSnap(form.getSnapshot())
+            if (typeof form.subscribe !== 'function') return undefined
+            return form.subscribe(function () { setSnap(form.getSnapshot()) })
+          }, [])
+          // Re-render on a language change. The renderer already re-renders every
+          // outlet when the locale revision bumps, which keeps the `t` seat
+          // above fresh — but that only covers the seat path. On the fallback
+          // path (`translate`) nothing else would ever invalidate this render,
+          // so the page would keep whatever language it was first painted in
+          // until some unrelated state happened to change. One subscription
+          // makes both paths correct. The counter's value is never read;
+          // bumping it is the whole point.
+          var localeRevisionState = React.useState(0)
+          var setLocaleRevision = localeRevisionState[1]
+          React.useEffect(function () {
+            var live = ctx.get('locale')
+            if (!live || typeof live.subscribe !== 'function') return undefined
+            return live.subscribe(function () { setLocaleRevision(function (n) { return n + 1 }) })
           }, [])
 
+      /** Show a transient status line under the buttons. */
+      function flashSaved(message) {
+        setSavedMsg(message)
+        if (typeof setTimeout === 'function') setTimeout(function () { setSavedMsg('') }, 2500)
+      }
+
+      // 写一个字段。`ConfigForm.set()` 解析为 **boolean**（true = 宿主已接受），
+      // 不是「resolve 就算成功」：旧页面只看 .then 就打「已保存」，正是这个假成功
+      // 让一个根本没落库的设置页看起来正常（issue #3）。
       function setField(key, value) {
-        var scope = scopeRef.current
-        if (!scope) return
-        scope.set(key, value)
-          .then(function () {
-            setSavedMsg(t('saved') + key)
-            if (typeof setTimeout === 'function') setTimeout(function () { setSavedMsg('') }, 2500)
+        var form = formRef.current
+        if (!form) return
+        form.set(key, value)
+          .then(function (accepted) {
+            if (accepted === false) flashSaved(t('save.rejected') + key)
+            else flashSaved(t('saved') + key)
           })
           .catch(function (err) {
-            setSavedMsg('保存失败：' + (err instanceof Error ? err.message : String(err)))
+            setSavedMsg(t('save.failed') + (err instanceof Error ? err.message : String(err)))
           })
       }
 
-      // 恢复某字段为默认：清空用户层，字段回退 composition/默认层。
+      // 恢复某字段为默认：清空用户层，字段回退到 composition/默认层。
+      // 0.2.0 把 0.1.x 的 `clear` 改名为 `unset`，同样返回 boolean。
       function clearField(key) {
-        var scope = scopeRef.current
-        if (!scope || typeof scope.clear !== 'function') return
-        return scope.clear(key)
+        var form = formRef.current
+        if (!form || typeof form.unset !== 'function') return Promise.resolve()
+        return form.unset(key)
+          .then(function (accepted) {
+            if (accepted === false) flashSaved(t('save.rejected') + key)
+          })
           .catch(function (err) {
-            setSavedMsg('恢复失败：' + (err instanceof Error ? err.message : String(err)))
+            setSavedMsg(t('restore.failed') + (err instanceof Error ? err.message : String(err)))
           })
       }
 
       // 恢复全部核心字段为默认（底部统一按钮）。
       function clearAllFields() {
-        var scope = scopeRef.current
-        if (!scope || typeof scope.clear !== 'function') return
+        if (!formRef.current) return
         var jobs = []
         for (var i = 0; i < PO_FIELDS.length; i++) jobs.push(clearField(PO_FIELDS[i].key))
-        Promise.all(jobs).then(function () {
-          setSavedMsg(t('reset.all.done'))
-          if (typeof setTimeout === 'function') setTimeout(function () { setSavedMsg('') }, 2500)
-        })
+        Promise.all(jobs).then(function () { flashSaved(t('reset.all.done')) })
       }
 
           // 状态查看：settings.section 无 sessionId props——从 sessions 服务取
@@ -550,7 +741,7 @@ window.__ModuleLoader__.load({
           function fetchStatus() {
             var sessionId = getSessionId()
             if (sessionId === undefined) {
-              setStatusText('设置页无法确定当前会话——请在对话中运行 /optimize --status 查看状态。')
+              setStatusText(t('status.unknown.session'))
               return
             }
             executeCommand(sessionId, '/optimize --status', [])
@@ -561,12 +752,21 @@ window.__ModuleLoader__.load({
                 }
               })
               .catch(function (err) {
-                setStatusText('无法获取状态：' + (err instanceof Error ? err.message : String(err)))
+                setStatusText(t('status.fetch.failed') + (err instanceof Error ? err.message : String(err)))
               })
           }
 
+          // `status` is what makes a dead panel visible instead of silent:
+          // 'loading' until the Host's `settings.describe` reached this client,
+          // 'ready' while a section stands, 'unavailable' when the namespace is
+          // not served to this client (or the connection keeps preferences
+          // process-local — a non-loopback page). The old page rendered inputs
+          // for every state and called them "current", which is how "saved but
+          // never written" stayed invisible.
+          var status = snap && typeof snap.status === 'string' ? snap.status : 'loading'
           var resolved = snap && snap.value && typeof snap.value === 'object' ? snap.value : {}
           var writable = snap ? snap.writable !== false : false
+          var canEdit = formRef.current !== null && status === 'ready' && writable
 
           var groups = []
           for (var i = 0; i < PO_FIELDS.length; i++) {
@@ -587,6 +787,15 @@ window.__ModuleLoader__.load({
               ),
             ),
           )
+
+          // Degradation notice: say what is wrong, not merely that something is.
+          if (!canEdit) {
+            children.push(
+              React.createElement('div', { className: 'po-hint', key: 'availability', style: { marginBottom: 10 } },
+                t(formRef.current === null || status === 'unavailable' ? 'panel.unavailable' : status === 'ready' ? 'panel.readonly' : 'panel.loading'),
+              ),
+            )
+          }
 
           for (var g = 0; g < groups.length; g++) {
             var grp = groups[g]
@@ -615,9 +824,9 @@ window.__ModuleLoader__.load({
               if (field.type === 'select' || field.type === 'boolean') {
                 input = React.createElement(
                   'select',
-                  { className: 'po-field-input', 'data-po-key': field.key, value: field.type === 'boolean' ? (current ? 'true' : 'false') : String(current ?? ''), onChange: onFieldChange },
+                  { className: 'po-field-input', 'data-po-key': field.key, disabled: !canEdit, value: field.type === 'boolean' ? (current ? 'true' : 'false') : String(current ?? ''), onChange: onFieldChange },
                   field.type === 'boolean'
-                    ? [React.createElement('option', { key: 't', value: 'true' }, '开启'), React.createElement('option', { key: 'f', value: 'false' }, '关闭')]
+                    ? [React.createElement('option', { key: 't', value: 'true' }, t('opt.on')), React.createElement('option', { key: 'f', value: 'false' }, t('opt.off'))]
                     : field.options.map(function (opt) {
                         return React.createElement('option', { key: opt[0], value: opt[0] }, opt[1])
                       }),
@@ -625,7 +834,7 @@ window.__ModuleLoader__.load({
               } else {
                 input = React.createElement('input', {
                   className: 'po-field-input', type: 'number', step: field.step, min: field.min, max: field.max,
-                  'data-po-key': field.key,
+                  'data-po-key': field.key, disabled: !canEdit,
                   defaultValue: current !== undefined ? String(current) : '',
                   onBlur: onFieldChange,
                 })
@@ -635,7 +844,7 @@ window.__ModuleLoader__.load({
                   React.createElement('div', { className: 'po-field-label' },
                     React.createElement('span', null, field.label),
                     React.createElement('span', { className: 'po-field-default' },
-                      '默认 ' + String(field.defaultValue ?? '—') + ' · 当前 ' + String(current ?? '—'),
+                      t('field.meta', { default: String(field.defaultValue ?? '—'), current: String(current ?? '—') }),
                     ),
                   ),
                   input,
@@ -644,38 +853,49 @@ window.__ModuleLoader__.load({
             }
           }
 
-      children.push(
-        React.createElement('div', { key: 'save-row', style: { display: 'flex', alignItems: 'center', gap: 10, marginTop: 4 } },
-          React.createElement('button', { className: 'po-save', onClick: function () {
-            if (statusText !== null) { setStatusText(null); return }
-            fetchStatus()
-          } }, t('action.status')),
-          React.createElement('button', { className: 'po-reset', type: 'button', onClick: clearAllFields }, t('action.reset')),
-          savedMsg !== '' ? React.createElement('span', { className: 'po-hint', key: 'saved' }, savedMsg) : null,
-        ),
-      )
+          children.push(
+            React.createElement('div', { key: 'save-row', style: { display: 'flex', alignItems: 'center', gap: 10, marginTop: 4 } },
+              React.createElement('button', { className: 'po-save', onClick: function () {
+                if (statusText !== null) { setStatusText(null); return }
+                fetchStatus()
+              } }, t('action.status')),
+              React.createElement('button', { className: 'po-reset', type: 'button', disabled: !canEdit, onClick: clearAllFields }, t('action.reset')),
+              savedMsg !== '' ? React.createElement('span', { className: 'po-hint', key: 'saved' }, savedMsg) : null,
+            ),
+          )
 
-      if (statusText !== null) {
-        children.push(
-          React.createElement(
-            'div', { className: 'po-status-panel', key: 'status', style: { position: 'static', marginTop: 12, maxWidth: 'none' } },
-            React.createElement('pre', { className: 'po-status-pre' }, statusText),
-          ),
-        )
-      }
+          if (statusText !== null) {
+            children.push(
+              React.createElement(
+                'div', { className: 'po-status-panel', key: 'status', style: { position: 'static', marginTop: 12, maxWidth: 'none' } },
+                React.createElement('pre', { className: 'po-status-pre' }, statusText),
+              ),
+            )
+          }
 
-      children.push(
-        React.createElement('div', { className: 'po-hint', key: 'hint', style: { marginTop: 14 } },
-          t('hint'),
-        ),
-      )
+          children.push(
+            React.createElement('div', { className: 'po-hint', key: 'hint', style: { marginTop: 14 } },
+              t('hint'),
+            ),
+          )
 
           return React.createElement('div', { className: 'po-section' }, children)
         }
 
       slots.inject('settings.section', function () {
         return slots.register(
-          { name: 'settings.section', id: 'prompt-optimizer', order: 90, label: function () { return t('section.nav') }, locale: NS },
+          // `locale: NS` (via `localeOption`) is what makes the renderer hand the
+          // component its `t` seat, and the label a thunk that is re-read per
+          // ledger projection, so the nav row follows the active language
+          // without re-registration. It is declared only when a locale face is
+          // actually installed: the renderer throws for an entry that declares a
+          // namespace nobody provides.
+          merged({
+            name: 'settings.section',
+            id: 'prompt-optimizer',
+            order: 90,
+            label: function () { return translate('section.nav') },
+          }, localeOption),
           PromptOptimizerSection,
         )
       })

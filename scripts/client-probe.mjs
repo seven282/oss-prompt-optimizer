@@ -273,7 +273,7 @@ const PROBE_NAMES = [
   'remote',
   'remote.commands',
   'sessions',
-  'settingsScope',
+  'configForms',
 ]
 
 async function probeKernel(names) {
@@ -684,7 +684,7 @@ async function run() {
         `lib/client.js no longer injects "remote" — the button has no command channel (got [${declared.join(', ')}])`,
       )
     }
-    const overloaded = ['locale', 'sessions', 'settingsScope', 'slots', 'remote.commands'].filter((name) =>
+    const overloaded = ['locale', 'sessions', 'configForms', 'slots', 'remote.commands'].filter((name) =>
       declared.includes(name),
     )
     if (overloaded.length > 0) {
@@ -695,6 +695,26 @@ async function run() {
     } else {
       console.log('[PASS] inject holds only services the client half cannot work without')
     }
+  }
+
+  // The settings service was renamed with no overlap: 0.1.x `settingsScope`,
+  // 0.2.0 `configForms`. The artifact must read the current name and nothing
+  // else — a page that finds no form and renders enabled inputs anyway is
+  // issue #3 all over again, and no violation list above can catch a *missing*
+  // read.
+  const code = stripComments(source)
+  if (!code.includes("ctx.get('configForms')")) {
+    failures.push(
+      'lib/client.js never reads ctx.get(\'configForms\') — the settings page cannot find its form on'
+      + ' a 0.2.0 host, and will render a dead panel (issue #3)',
+    )
+  } else if (code.includes('settingsScope')) {
+    failures.push(
+      'lib/client.js still mentions the 0.1.x settings service name `settingsScope` in code — the two'
+      + ' names never coexisted, so this read finds nothing on any supported host',
+    )
+  } else {
+    console.log('[PASS] the settings page reads the 0.2.0 `configForms` service, and only that name')
   }
 
   const violations = violationsOf(source, kernel)

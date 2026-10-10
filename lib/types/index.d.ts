@@ -10,7 +10,7 @@ export declare const name = "prompt-optimizer";
  * service rename disables a single feature instead of the whole plugin.
  */
 export declare const inject: string[];
-export { Config } from './config.js';
+export { Config, LIVE_CONFIG_KEYS } from './config.js';
 export type { Config as ConfigType, PromptExample } from './config.js';
 export { buildIteratePrompt, buildOptimizePrompt, detectLanguage, detectTaskType, META_ITERATE, META_ITERATE_EN, META_PROMPT } from './meta.js';
 export type { MetaLanguage, TaskType } from './meta.js';
@@ -49,14 +49,16 @@ export type { ContextMessage, GatherContextOptions } from './context.js';
 export { buildSituationProfile, detectMeasurable, detectTaskSubtype, goalAlignment, goalDrift, mergeGoals, renderSituationBlock, subtypeLabel } from './situation.js';
 export type { GoalDrift, GoalProfile, RoleProfile, SituationProfile, SituationProfileLevel, TaskProfile, TaskSubtype } from './situation.js';
 export { registerOptimizeCommand } from './command.js';
-export { createSettingsBridge } from './settings.js';
+export { configureSettingsPage } from './settings.js';
+export type { SettingsPage } from './settings.js';
+export { adoptLiveConfig, followVolatileUpdates, isVolatileRef, plainConfig, VOLATILE_UPDATE_EVENT } from './live-config.js';
+export type { VolatileRef } from './live-config.js';
 export { formatStatus } from './status.js';
 export type { StatusSnapshot, StatusEvent } from './status.js';
 export { selectCandidatePure, scoreCandidates, candidateTemperature, structuralScore, formatSelection, selectionToken } from './select.js';
 export type { Candidate, CandidateGate, CandidateJudge, CandidateScore, SelectionSummary } from './select.js';
 export { feedbackBias, feedbackItems, formatFeedback, mergeItems, normalizeItem } from './feedback.js';
 export type { FeedbackLedger, MessageFeedbackLike } from './feedback.js';
-export type { SettingsBridge } from './settings.js';
 export { DEFAULT_TEMPLATES, validateTemplateSet } from './templates.js';
 export type { TemplateSet } from './templates.js';
 export { assertInput, estimateTokens, hasAllSections, hasOptimizedSections, hasSubstantialContent, hasValidSections, REQUIRED_SECTIONS, sectionBody, truncateByTokens, truncateInput, } from './validate.js';

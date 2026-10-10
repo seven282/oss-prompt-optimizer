@@ -74,6 +74,19 @@
   与**上一次调用**的用量。provider 未上报时明确标注「启发式估算」，不再让估算值
   与实测值混在一起。`/optimize --status` 还会区分「0 次模型调用（缓存命中/本地直出）」
   与「有调用但未上报」。
+- **模型与 OTel 信号**（1.13.0）：把「这次到底用了哪个模型」和一份 **OpenTelemetry GenAI 形状**
+  的观测信号补进可见面——`/optimize --status` 多一行「目标模型: provider/model（推理档）」
+  （`/optimize --stats` 的机器可读 token 尾部同步多出 `MODEL:` / `PROVIDER:` / `EFFORT:`），
+  生命周期事件的成功/失败载荷多出 `route` 与 `genAi`（键为 OTel 规范属性名，
+  可直接 `span.setAttributes(payload.genAi)`，无需翻译表）。
+  **按 run 记**：缓存命中与本地直出（零模型调用）后**不报模型**，也不报它没测到的 token 计数。
+- **客户端文案跟随界面语言**（1.13.1）：修复「更新/重装后设置页与导航标签冻结在英文、重启不恢复」
+  —— 客户端半边原先在 `apply()` 时**捕获**一次翻译器，而宿主 locale 插件的 `apply()` 是异步的
+  （`await` 原生 bootstrap 之后才提供服务），本插件可能**先跑完**，此后每个标签都解析到原始 key。
+  现改为**每次调用现取**，并按契约改用框架合成的 `t` seat（`locale: NS` 声明后由渲染器提供，
+  身份随 locale revision 变化），页内订阅 locale 变化自行重渲染；✨ 按钮原先写死中文的
+  `title`/`aria-label` 与全部播报文案一并进字典。宿主没装 locale face 时**不声明**命名空间
+  （渲染器对"声明了却不提供"的条目会直接抛错），只走回退路径，降级但不挂。
 - **设置面板**（1.7.8，需宿主挂载 dsh-settings）：插件将全部配置项注册为
   `prompt-optimizer` 命名空间——在 DeepSeek Harness 的**设置 → 插件/插件设置**
   面板中即可查看全部参数（默认值/当前值）并调整，改动即时生效并持久化；
@@ -212,18 +225,21 @@ manifest 里以 `engines` + `dsh.compatibility` 逐版本声明，供 DSH STORE 
 | 项 | 值 |
 |---|---|
 | Node.js | `>=22` |
-| DSH 范围 | `^0.1.6-alpha.2` |
-| 已验证版本 | `0.1.6-alpha.2`（含一次性 Profile 安装 / 启动 / 卸载证据） |
+| DSH 范围 | `^0.2.0-rc.2` |
+| 已验证版本 | `0.2.0-rc.2`（CLI/web 与桌面运行时同 tuple；桌面侧含一次性 Profile 安装 / 启动 / 卸载证据） |
 
 本插件只声明**当前最新**的 dsh 发布版：旧版本由旧版插件承接，重复为它们取证只会产出没人读的声明。
+`0.2.0-rc.2` 也是设置面契约（`ctx.configForms` + volatile 字段表单）落地的第一版；更早的宿主上
+设置页会**降级为只读并说明原因**，而不是假装能写。
 
 > ⚠️ 范围必须**逐 tuple 用 `||` 枚举**，不能写成 `>=0.1.5-rc.1 <0.2.0`：按 semver 的预发布规则，
 > 带预发布号的版本只有当比较集中存在**同一 `[major.minor.patch]` 且带预发布**的项时才满足范围，
-> 因此那个写法**匹配不到 `0.1.6-alpha.2`**。
+> 因此那种写法**匹配不到任何 `0.1.6-alpha.*` / `0.2.0-rc.*`**。
 
 本地复现证据（临时 `DSH_HOME`，不碰真实 profile）：
 ```sh
 node scripts/e3-acceptance.mjs --dsh-bin <path/to/dsh/lib/bin.js> --json e3.json
+node scripts/e4-settings-browser.mjs --json e4.json   # 设置面：真浏览器跑完换证 → 字段渲染 → 写盘
 # Windows 上须在助手沙箱外运行：dsh web 会调 reg.exe，沙箱拦下后宿主零输出挂住
 ```
 
@@ -234,8 +250,9 @@ pnpm install --store-dir .pnpm-store --cache-dir .pnpm-cache   # 沙箱内安装
 pnpm run typecheck    # tsc --noEmit
 pnpm test             # vitest（mock llm，不依赖真实密钥）
 pnpm run build        # tsc -p tsconfig.build.json → lib/
-pnpm preflight        # 兼容性门禁 P1–P8（发版前必跑）
+pnpm preflight        # 兼容性门禁 P1–P10（发版前必跑）；加 --browser-e2e 追加 P11（真浏览器，沙箱外跑）
 pnpm e3               # 一次性 Profile 验收：安装 → 启动 → 卸载（沙箱外跑）
+pnpm e4               # 设置面真浏览器验收：换证 → 字段渲染 → 写盘（沙箱外跑）
 ```
 
 测试全部使用 mock 的 `llm` 流，绝不读取 `.credentials.yaml`。
@@ -266,7 +283,7 @@ dsh 的域包（`dsh-llm`、`dsh-tools`、`dsh-timeout`…）仍在 `0.1.x-rc` �
 是 Proxy，读一个没在 `inject` 里的服务会**直接抛错**，而 `apply()` 不捕获它 ——
 于是**一个可选服务的直读就能让整个客户端半边不注册**：✨ 按钮与设置页一起消失，
 控制台留下 `failed to apply loader entry … cannot get property "locale" without inject`。
-这正是 1.8.2 的真机事故，所以可选服务（`locale` / `sessions` / `settingsScope`）一律走
+这正是 1.8.2 的真机事故，所以可选服务（`locale` / `sessions` / `configForms`）一律走
 **`ctx.get('<name>')`** —— 它不要求注入，返回服务或 `undefined`，永不抛错。
 
 ### 宿主契约变化时会发生什么
@@ -278,6 +295,7 @@ dsh 的域包（`dsh-llm`、`dsh-tools`、`dsh-timeout`…）仍在 `0.1.x-rc` �
 | 客户端可选服务缺失 / 改名（`locale`…） | 走 `ctx.get()`，只少对应文案；✨ 按钮与设置页照常注册 |
 | `BlockAssembler` 缺失 | `/optimize` 返回错误码 `UNSUPPORTED_ENV` 并给出明确文案，**不伪造消息、不静默失败** |
 | 客户端 slot props 契约改名 | 候选链自适配；全部失败则**不注册按钮**并打印自诊断日志 |
+| 设置面服务换代（0.1.x `settingsScope` → 0.2.0 `configForms`） | 设置页只读 `ctx.get('configForms')`；取不到或不可写时**降级为只读并写明原因**，写入被宿主拒绝时提示「宿主拒绝了这次修改」，不再出现「已保存」假成功 |
 | 域包整体升级（`0.1.5-rc` → `0.2.x`） | 运行时能力探测决定可用面；不可用即降级 |
 
 降级不是静默的：插件构造时**必定打印一行 compat report**（健康时 `info`，降级时 `warn`）：
@@ -294,7 +312,9 @@ pnpm preflight       # P1 依赖面 / P2 inject 真实解析 / P3 产物一致 /
                      # P5 兼容性报告 / P6 启动独立性（封死全部 dsh 包后入口仍能实例化）
                      # P7 客户端服务读取契约（R2/R2b 静态扫描 + 在忠实最小宿主上真跑 apply()）
                      # P8 提交产物新鲜度（发布路径存在、被 git 跟踪、与新建构建无漂移）
+                     # P9 桌面/网页双兼容 / P10 评测判官标定 / P11 真浏览器设置面（需 --browser-e2e）
 pnpm e3 --dsh-bin <目标版本的 dsh/lib/bin.js>   # 一次性 Profile：安装 → 启动 → 卸载
+pnpm e4 --json e4.json                          # 设置面真浏览器：换证 → 8 字段 → 写盘（沙箱外）
 dsh web              # 真机：正常启动 + 日志出现一行 compat report
 ```
 
@@ -313,11 +333,31 @@ dsh web              # 真机：正常启动 + 日志出现一行 compat report
 | 事件 | 时机 | 载荷 |
 |---|---|---|
 | `prompt-optimizer/optimize:start` | 输入校验通过、首次模型调用前 | `{ method, input }` |
-| `prompt-optimizer/optimize:success` | 成功（`optimized: true`） | `{ method, input, result, durationMs }` |
-| `prompt-optimizer/optimize:failure` | 降级（`optimized: false`） | `{ method, input, result, durationMs }` |
+| `prompt-optimizer/optimize:success` | 成功（`optimized: true`） | `{ method, input, result, durationMs, route?, genAi? }` |
+| `prompt-optimizer/optimize:failure` | 降级（`optimized: false`） | `{ method, input, result, durationMs, route?, genAi? }` |
 
 - `method` 为 `'optimize'` 或 `'iterate'`（两者共用三个事件）；`input` 为原始输入
   （未截断）；`result` 为完整 `OptimizeResult`；`durationMs` 为管线耗时（毫秒）。
+- **`route`（1.13.0）＝本次实际调用的模型**：`{ provider, model, reasoningEffort? }`
+  （`reasoningEffort` 是字符串，不带宿主类型）。`/optimize --stats` 的 `MODEL:` / `PROVIDER:` /
+  `EFFORT:` 与 `/optimize --status` 的「目标模型」行报的是同一件事，且**按 run 记**——
+  缓存命中或本地直出（零模型调用）后**不带** `route`，不会沿用上一次的模型。
+- **`genAi`（1.13.0）＝同一件事的 OpenTelemetry GenAI 形状**，键就是规范里的属性名字符串，
+  可直接交给 span：
+
+  ```ts
+  ctx.on('prompt-optimizer/optimize:success', ({ genAi }) => {
+    if (genAi) span.setAttributes(genAi)
+  })
+  ```
+
+  含 `gen_ai.operation.name`（`'chat'`）、`gen_ai.provider.name`、`gen_ai.request.model`、
+  `gen_ai.conversation.id`（调用方给了 `sessionId` 时）与五个 `gen_ai.usage.*` 计数
+  （input / output / cache_read / cache_creation / reasoning，与宿主上报的
+  `inputTokens` / `outputTokens` / `cacheReadTokens` / `cacheWriteTokens` / `reasoningTokens` 一一对应）。
+  ⚠️ 两条诚实规则：**无模型调用则整个 `genAi` 不出现**（不伪造一个全零 span）；
+  **适配器没上报 usage 时五个计数一起缺席**（不报它没测到的 0）。
+  `gen_ai.response.model` **不发** —— 宿主只报告被请求的模型，不报告另一个"实际服务"的模型。
 - **fire-and-forget 观察者**：监听器抛错被吞掉，不影响优化管线。
 - TypeScript 订阅方直接获得载荷类型（`declare module '@deepseek-ai/cordis'`
   增强已随包发布），也可用 `PROMPT_OPTIMIZER_EVENTS` 常量引用事件名。

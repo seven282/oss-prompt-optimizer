@@ -15,10 +15,11 @@ import {
   type Capabilities,
 } from './compat/index.js'
 import { Config, type Config as ConfigType } from './config.js'
-import { createSettingsBridge, type SettingsBridge } from './settings.js'
+import { configureSettingsPage, type SettingsPage } from './settings.js'
+import { adoptLiveConfig, followVolatileUpdates, plainConfig } from './live-config.js'
 import { OptimizeError, OptimizeErrorCode, INCOMPLETE_SECTIONS_MESSAGE, metaContentMessage, plainHeadingsMessage, thinOutputMessage, thinSectionsMessage, type OptimizeErrorCode as OptimizeErrorCodeType } from './errors.js'
 import { MaxTokensErrorWithPartial } from './llm.js'
-import { PROMPT_OPTIMIZER_EVENTS, type OptimizeMethod } from './events.js'
+import { PROMPT_OPTIMIZER_EVENTS, type GenAiSignal, type OptimizeMethod } from './events.js'
 import { STATUS_EVENT_MAX, type StatusEvent, type StatusSnapshot } from './status.js'
 import { detectLanguage, detectTaskType, isCompactInstruction, type MetaLanguage } from './meta.js'
 import {
@@ -355,9 +356,28 @@ function usageCount(value: number | undefined): number {
 type UsageLedger = Pick<
   OptimizeStats,
   'usageCalls' | 'inputTokens' | 'outputTokens' | 'cacheReadTokens' | 'cacheWriteTokens' | 'reasoningTokens' | 'lastRunUsage'
+    | 'lastRunRoute'
     | 'selectRuns' | 'selectGains' | 'lastSelectCandidates' | 'lastSelectChosen' | 'lastSelectScore' | 'lastSelectGate'
     | 'feedbackSessions' | 'feedbackPositive' | 'feedbackNegative' | 'feedbackBiasApplied'
 >
+
+/**
+ * Repair a persisted route (1.13.0). A file written before this version simply
+ * lacks the field; a corrupt one can carry anything. Anything without a
+ * non-empty `provider`/`model` pair is dropped rather than displayed as the
+ * model that produced the last run.
+ */
+function normalizeRoute(value: unknown): ModelRoute | null {
+  if (value === null || typeof value !== 'object') return null
+  const candidate = value as { provider?: unknown; model?: unknown; reasoningEffort?: unknown }
+  if (typeof candidate.provider !== 'string' || candidate.provider.length === 0) return null
+  if (typeof candidate.model !== 'string' || candidate.model.length === 0) return null
+  const route: ModelRoute = { provider: candidate.provider, model: candidate.model }
+  if (typeof candidate.reasoningEffort === 'string' && candidate.reasoningEffort.length > 0) {
+    route.reasoningEffort = candidate.reasoningEffort
+  }
+  return route
+}
 
 function normalizeLoadedUsage(stats: UsageLedger): void {
   stats.usageCalls = usageCount(stats.usageCalls)
@@ -394,6 +414,7 @@ function normalizeLoadedUsage(stats: UsageLedger): void {
         reasoningTokens: usageCount(last.reasoningTokens),
       }
     : null
+  stats.lastRunRoute = normalizeRoute(stats.lastRunRoute)
 }
 
 /** Run-statistics snapshot (观测; see `getStats`). */
@@ -437,6 +458,13 @@ export interface OptimizeStats {
    */
   lastRunUsage: RunUsage | null
   /**
+   * The route the most recent run actually called (1.13.0, benchmark checklist
+   * item 6). `null` when that run made no model call — a local zero-token
+   * render or a cache hit — because keeping the previous model there would
+   * attribute it to a run that never used it.
+   */
+  lastRunRoute: ModelRoute | null
+  /**
    * Best-of-N selection counters (1.12.0 P1-A). `selectRuns` counts runs that
    * generated more than one candidate; `selectGains` counts the subset where a
    * later candidate actually replaced the baseline draw — the ratio is the
@@ -479,6 +507,27 @@ interface ResolvedRoute {
 }
 
 /**
+ * The portable form of a resolved route (1.13.0, benchmark checklist item 6):
+ * what leaves the plugin through `getStats()` and the lifecycle events.
+ * `ReasoningEffortId` is a harness type, and a published `.d.ts` that imported
+ * it would make every consumer resolve a host package it may not have — so the
+ * reasoning effort travels as a plain string. Read-only by construction: the
+ * optimizer always copies, never hands out its own object.
+ */
+export interface ModelRoute {
+  provider: string
+  model: string
+  reasoningEffort?: string
+}
+
+/** Narrow an internal route to its portable form (drops nothing we can name). */
+function toModelRoute(route: ResolvedRoute): ModelRoute {
+  return route.reasoningEffort === undefined
+    ? { provider: route.provider, model: route.model }
+    : { provider: route.provider, model: route.model, reasoningEffort: route.reasoningEffort }
+}
+
+/**
  * The `promptOptimizer` service (class-form plugin): optimizes raw
  * instructions into professional four-section prompts through the harness
  * `llm` service, and registers the `prompt_optimize` tool, the `/optimize`
@@ -498,10 +547,19 @@ export class PromptOptimizerService extends Service {
   static Config = Config
 
   private readonly config: ConfigType
+  /**
+   * The config object the loader resolved, kept by identity: its eight
+   * `volatile()` fields are cosmokit references, and the loader mutates those
+   * references in place on a live edit. `liveConfigListener` re-reads them.
+   */
+  private readonly rawConfig: ConfigType
   /** Host capability probe result (1.8.2): see compat/capability.ts. */
   private readonly capabilities: Capabilities
-  /** P0（1.7.8）dsh-settings 可选桥：null 表示宿主无 settings，完全跳过。 */
-  private settingsBridge: SettingsBridge | null = null
+  /**
+   * dsh-settings 接入句柄（1.8.0 设置页 / 0.2.0 起走 volatile 热更新）：
+   * `null` 表示宿主没有 settings 服务，设置页降级为 `cordis.patch.yml`。
+   */
+  private settingsPage: SettingsPage | null = null
   /** P1（1.7.9）最近优化事件（FIFO，供 --status/状态按钮展示）。 */
   private readonly recentEvents: StatusEvent[] = []
   /** The active role-document template set (resolved and validated at construction). */
@@ -549,6 +607,8 @@ export class PromptOptimizerService extends Service {
     cacheWriteTokens: 0,
     reasoningTokens: 0,
     lastRunUsage: null as RunUsage | null,
+    /** The route of the most recent run (1.13.0); null when it called no model. */
+    lastRunRoute: null as ModelRoute | null,
     /** Best-of-N selection (1.12.0): runs that generated >1 candidate. */
     selectRuns: 0,
     /** Of those, runs where a later candidate actually beat the baseline draw. */
@@ -569,6 +629,13 @@ export class PromptOptimizerService extends Service {
   private runCallCount = 0
   /** Provider-reported usage of the current run (reset with `runCallCount`). */
   private runUsage: RunUsage = emptyUsage()
+  /**
+   * The route the current run actually called (1.13.0), captured at the single
+   * place a model call is made (`generateOnce`). Undefined for a run that never
+   * reaches the model — which is precisely what keeps a local zero-token render
+   * and a cache hit from naming a model they never used.
+   */
+  private runRoute: ResolvedRoute | undefined
   /** P1（1.8.1）state persistence adapter (noop when persistState off). */
   private readonly persistence: PersistAdapter
   /** The resolved judge rubric (1.11.0); construction fails loudly on an unknown override id. */
@@ -597,7 +664,13 @@ export class PromptOptimizerService extends Service {
   constructor(ctx: Context, config: ConfigType) {
     super(ctx, 'promptOptimizer')
     assertConfigKeys(config)
-    this.config = config
+    // The eight `LIVE_CONFIG_KEYS` fields are schema-declared `volatile()`: the
+    // loader hands over cosmokit REFERENCES for them, and a reference is truthy,
+    // so reading one as a value would silently invert every `if (this.config.x)`
+    // test. Keep the loader's object (its references are updated in place) and
+    // serve the rest of the service a plain-value snapshot of it.
+    this.rawConfig = config
+    this.config = plainConfig(config)
     this.capabilities = probeCapabilities()
     // 1.8.2：启动打印一行能力报告。降级是"静默减功能"，这行日志是它的补偿
     // 机制——用户在 `dsh web` 启动输出里能直接看到哪个能力缺失。
@@ -610,8 +683,12 @@ export class PromptOptimizerService extends Service {
       ctx.logger?.warn?.(compatReport)
     }
     this.templates = resolveTemplates(config)
+    // `cacheEnabled` is live, so the capacity is NOT derived from it: sizing the
+    // store at 0 while the switch is off would make "turn the cache back on in
+    // the panel" a save that cannot take effect. Every read and write below is
+    // gated on `this.config.cacheEnabled` instead.
     this.cache = createOptimizeCache<CachedOptimize>({
-      maxEntries: config.cacheEnabled ? config.cacheMaxEntries : 0,
+      maxEntries: config.cacheMaxEntries,
       ttlMs: config.cacheTtlMs,
     })
     this.episodes = new EpisodeLog(200)
@@ -641,24 +718,25 @@ export class PromptOptimizerService extends Service {
         this.flushPersist()
       })
     }
-    // P0（1.7.8）dsh-settings 可选接入：存在则注册命名空间并在每次调用前
-    // 采纳用户层（设置面板/命令持久化改动）；不存在则完全跳过（零影响）。
-    // 1.8.2：改为作用域注入——settings 服务缺失/改名时只是没有设置面板，
-    // 插件本身照常加载。
-    scopedInject(ctx, ['settings'], (scoped) => {
-      this.settingsBridge = createSettingsBridge(scoped, { ...config }, (resolved) => {
-        Object.assign(this.config, resolved)
-      })
-    })
+    // Settings panel（1.8.0 自建页面；0.2.0 起编辑走 volatile 热更新）。
+    // 宿主要做的只剩一件事：告诉 dsh-settings 不要再自动生成第二个页面。
+    // 0.1.x 的 `settings.register()` 桥已删除——0.2.0 的 SettingsForms 没有这个方法，
+    // 而两代的设置面服务名互斥，所以不存在需要双路径的版本。
+    this.settingsPage = configureSettingsPage(ctx)
+    // A live edit is committed IN PLACE by the loader (the plugin is NOT
+    // remounted), so the snapshot above has to be re-read from the references —
+    // otherwise the panel would report a save the running service never sees.
+    // See live-config.ts for the whole handshake.
+    followVolatileUpdates(ctx, this.config, this.rawConfig)
     // 1.8.2：每个功能各自门禁。任一服务缺失 → 只有那个功能消失。
     const capabilities = this.capabilities
     scopedInject(ctx, ['tools'], (scoped) => {
-      registerPromptOptimizeTool(scoped, config, this, capabilities)
+      registerPromptOptimizeTool(scoped, this.config, this, capabilities)
     })
     scopedInject(ctx, ['systemPrompt'], (scoped) => {
       registerPromptOptimizeGuidance(scoped)
     })
-    registerAutoOptimizeHook(ctx, config, this, capabilities)
+    registerAutoOptimizeHook(ctx, this.config, this, capabilities)
     scopedInject(ctx, ['commands'], (scoped) => {
       registerOptimizeCommand(scoped, this)
     })
@@ -958,11 +1036,53 @@ export class PromptOptimizerService extends Service {
     }
   }
 
+  /**
+   * The model identity of one finished run (1.13.0): the portable route plus
+   * the same facts under the OpenTelemetry GenAI attribute names. `undefined`
+   * when the run never called a model — a cache hit or a local render emits
+   * neither a route nor a GenAI block, because there is no inference to
+   * describe and a zero-filled block would invent a span.
+   */
+  private routeSignal(sessionId: string | undefined): { route: ModelRoute; genAi: GenAiSignal } | undefined {
+    const route = this.runRoute
+    if (route === undefined) return undefined
+    const usage = this.runUsage
+    return {
+      route: toModelRoute(route),
+      genAi: {
+        'gen_ai.operation.name': 'chat',
+        'gen_ai.provider.name': route.provider,
+        'gen_ai.request.model': route.model,
+        ...(sessionId !== undefined && sessionId.length > 0 ? { 'gen_ai.conversation.id': sessionId } : {}),
+        // All-or-nothing: a call the adapter reported nothing for leaves the
+        // counts out rather than reporting zeros it never measured.
+        ...(usage.calls > 0
+          ? {
+              'gen_ai.usage.input_tokens': usage.inputTokens,
+              'gen_ai.usage.output_tokens': usage.outputTokens,
+              'gen_ai.usage.cache_read.input_tokens': usage.cacheReadTokens,
+              'gen_ai.usage.cache_creation.input_tokens': usage.cacheWriteTokens,
+              'gen_ai.usage.reasoning.output_tokens': usage.reasoningTokens,
+            }
+          : {}),
+      },
+    }
+  }
+
   /** Fire `optimize:success` or `optimize:failure` based on the outcome. */
-  private emitCompleted(method: OptimizeMethod, input: string, result: OptimizeResult, durationMs: number): void {
+  private emitCompleted(
+    method: OptimizeMethod,
+    input: string,
+    result: OptimizeResult,
+    durationMs: number,
+    sessionId?: string,
+  ): void {
     this.stats.runs++
     this.stats.lastRunCalls = this.runCallCount
     this.stats.lastRunUsage = { ...this.runUsage }
+    // Per-run, like `lastRunUsage`: a run that called no model clears it, so
+    // `/optimize --stats` can never show a model from an earlier run.
+    this.stats.lastRunRoute = this.runRoute === undefined ? null : toModelRoute(this.runRoute)
     if (result.optimized) {
       this.stats.success++
       if (result.outputTokens !== undefined) this.stats.lastOutputTokens = result.outputTokens
@@ -971,10 +1091,11 @@ export class PromptOptimizerService extends Service {
     }
     this.stats.totalDurationMs += durationMs
     if (durationMs > this.stats.maxDurationMs) this.stats.maxDurationMs = durationMs
+    const signal = this.routeSignal(sessionId)
     try {
       this.ctx.emit(
         result.optimized ? PROMPT_OPTIMIZER_EVENTS.success : PROMPT_OPTIMIZER_EVENTS.failure,
-        { method, input, result, durationMs },
+        { method, input, result, durationMs, ...(signal ?? {}) },
       )
     } catch (error) {
       // Log but don't break the pipeline
@@ -1556,7 +1677,7 @@ export class PromptOptimizerService extends Service {
       recentEvents: [...this.recentEvents],
       autoAdapt: this.config.autoAdapt,
       minAdaptEpisodes: this.config.minAdaptEpisodes,
-      settingsPanel: this.settingsBridge !== null,
+      settingsPanel: this.settingsPage !== null,
       ...(evalSummary.last !== undefined
         ? {
             evalSummary: {
@@ -1692,13 +1813,17 @@ export class PromptOptimizerService extends Service {
     // hit or a local render does no selection, and leaving the old summary in
     // place would attribute one run's decision to another.
     this.lastSelection = undefined
+    // Same reasoning for the run's model identity (1.13.0): a run that never
+    // reaches the model must not inherit the previous run's route.
+    this.runRoute = undefined
     try {
       assertInput(rawInput)
     } catch {
       throw new OptimizeError(OptimizeErrorCode.EMPTY_INPUT, 'prompt-optimizer: instruction must be a non-empty string')
     }
-    // P0（1.7.8）设置面板：每次调用前采纳 settings 用户层（面板/命令改动即时生效）。
-    this.settingsBridge?.sync()
+    // 设置面板改动无需在此采纳：八个可编辑字段是 schema-declared `volatile()`，
+    // 宿主就地提交后立刻发 `loader/volatile-update`，构造函数里注册的监听器已把
+    // 新值写进 `this.config`（live-config.ts）。
     // 方案 B: pass-through only when there is no meaningful NEW conversation
     // context. With a non-empty context the input is re-optimized — the
     // conversation has moved on and the result should reflect it. 造梦模式
@@ -1749,7 +1874,7 @@ export class PromptOptimizerService extends Service {
           const out = this.config.outputStyle === 'role-task-goal'
             ? toRoleTaskGoal(seed, metaLanguage === 'en')
             : seed
-          this.emitCompleted('optimize', rawInput, { prompt: out, optimized: true, retries: 0, local: true, outputTokens: this.estimateTextTokens(out) }, 0)
+          this.emitCompleted('optimize', rawInput, { prompt: out, optimized: true, retries: 0, local: true, outputTokens: this.estimateTextTokens(out) }, 0, options.sessionId)
           return {
             prompt: out,
             optimized: true,
@@ -1766,7 +1891,7 @@ export class PromptOptimizerService extends Service {
           const out = this.config.outputStyle === 'role-task-goal'
             ? toRoleTaskGoal(seed, metaLanguage === 'en')
             : seed
-          this.emitCompleted('optimize', rawInput, { prompt: out, optimized: true, retries: 0, local: true, outputTokens: this.estimateTextTokens(out) }, 0)
+          this.emitCompleted('optimize', rawInput, { prompt: out, optimized: true, retries: 0, local: true, outputTokens: this.estimateTextTokens(out) }, 0, options.sessionId)
           return {
             prompt: out,
             optimized: true,
@@ -1779,7 +1904,7 @@ export class PromptOptimizerService extends Service {
         // hybrid with low alignment: refine via LLM.
         const refinedStartedAt = Date.now()
         const refined = await this.refineLocal(seed, rawInput, metaLanguage, options, profile, senseNeeds, effective)
-        this.emitCompleted('optimize', rawInput, refined, Date.now() - refinedStartedAt)
+        this.emitCompleted('optimize', rawInput, refined, Date.now() - refinedStartedAt, options.sessionId)
         return refined
       }
     }
@@ -1816,7 +1941,7 @@ export class PromptOptimizerService extends Service {
         this.stats.cached++
         this.runCallCount = 0 // a cache hit makes zero model calls
         this.runUsage = emptyUsage()
-        this.emitCompleted('optimize', rawInput, hit.result, 0)
+        this.emitCompleted('optimize', rawInput, hit.result, 0, options.sessionId)
         return cloneOptimizeResult(hit.result)
       }
     }
@@ -1882,7 +2007,7 @@ export class PromptOptimizerService extends Service {
     if (selection === undefined && result.optimized && cacheKey !== undefined) {
       this.cache.set(cacheKey, { result: cloneOptimizeResult(result), input, context: options.context })
     }
-    this.emitCompleted('optimize', rawInput, result, Date.now() - startedAt)
+    this.emitCompleted('optimize', rawInput, result, Date.now() - startedAt, options.sessionId)
     return result
   }
 
@@ -2016,6 +2141,8 @@ export class PromptOptimizerService extends Service {
    * previous result is returned unchanged with an explanation instead.
    */
   async iterate(lastOptimized: string, instruction: string, options: OptimizeOptions = {}): Promise<OptimizeResult> {
+    // A run starts here too: clear the previous run's model identity (1.13.0).
+    this.runRoute = undefined
     try {
       assertInput(lastOptimized)
     } catch {
@@ -2066,7 +2193,7 @@ export class PromptOptimizerService extends Service {
         this.stats.cached++
         this.runCallCount = 0 // a cache hit makes zero model calls
         this.runUsage = emptyUsage()
-        this.emitCompleted('iterate', lastOptimized, hit.result, 0)
+        this.emitCompleted('iterate', lastOptimized, hit.result, 0, options.sessionId)
         return cloneOptimizeResult(hit.result)
       }
     }
@@ -2088,7 +2215,7 @@ export class PromptOptimizerService extends Service {
     if (result.optimized && cacheKey !== undefined) {
       this.cache.set(cacheKey, { result: cloneOptimizeResult(result), input: `${last}\u0000${next}`, context: options.context })
     }
-    this.emitCompleted('iterate', lastOptimized, result, Date.now() - startedAt)
+    this.emitCompleted('iterate', lastOptimized, result, Date.now() - startedAt, options.sessionId)
     return result
   }
 
@@ -2458,6 +2585,10 @@ export class PromptOptimizerService extends Service {
   ): Promise<string> {
     const callStartedAt = Date.now()
     this.runCallCount++
+    // The route this run is actually calling (1.13.0): captured here, at the
+    // only place a model call happens, so every caller of `generateOnce`
+    // (pipeline, refine, best-of-N, judge) reports the model it really used.
+    this.runRoute = route
     // 输入侧 token 统计（1.4.6）：让每次调用的输入消耗可见——输出 token 低不代表
     // 总成本低，模板/情境/示例/上下文构成的 system 才是大头。
     this.stats.lastInputTokens = this.estimateTextTokens(system)

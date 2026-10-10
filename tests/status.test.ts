@@ -14,6 +14,11 @@ function makeSnapshot(overrides: Partial<StatusSnapshot> = {}): StatusSnapshot {
       inputTokens: 300, outputTokens: 1500, cacheReadTokens: 900,
       cacheWriteTokens: 100, reasoningTokens: 0,
       lastRunUsage: { calls: 2, inputTokens: 100, outputTokens: 700, cacheReadTokens: 200, cacheWriteTokens: 0, reasoningTokens: 0 },
+      // The route the last run called (1.13.0); null after a run that made no
+      // model call. No reasoning effort here: the tests below add one where
+      // they mean to, so a bare fixture cannot smuggle the word 推理 into
+      // assertions that are about something else.
+      lastRunRoute: { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
       // Best-of-N selection + host feedback (1.12.0).
       selectRuns: 2, selectGains: 1, lastSelectCandidates: 3, lastSelectChosen: 2,
       lastSelectScore: 0.88, lastSelectGate: 3, feedbackSessions: 1, feedbackPositive: 4,
@@ -110,6 +115,32 @@ describe('formatStatus (P1, 1.7.9)', () => {
     const withReasoning = formatStatus(makeSnapshot({ stats: { ...base, reasoningTokens: 120 } }), 'zh')
     expect(withReasoning).toContain('推理 120 tok')
     expect(formatStatus(makeSnapshot({ stats: base }), 'zh')).not.toContain('推理')
+  })
+
+  it('names the model the last run called (1.13.0)', () => {
+    const base = makeSnapshot().stats
+    expect(formatStatus(makeSnapshot(), 'zh')).toContain('目标模型: deepseek-official/deepseek-v4-flash')
+    expect(formatStatus(makeSnapshot(), 'en')).toContain('Target model: deepseek-official/deepseek-v4-flash')
+    // The reasoning effort is optional in the route: shown when reported…
+    const withEffort = { ...base, lastRunRoute: { provider: 'p', model: 'm', reasoningEffort: 'high' } }
+    expect(formatStatus(makeSnapshot({ stats: withEffort }), 'zh')).toContain('目标模型: p/m ｜ 推理档 high')
+    expect(formatStatus(makeSnapshot({ stats: withEffort }), 'en')).toContain('Target model: p/m ｜ effort high')
+    // …and absent (not fabricated) when it is not.
+    expect(formatStatus(makeSnapshot(), 'zh')).not.toContain('推理档')
+  })
+
+  it('prints no target-model line after a run that called no model', () => {
+    // Reverse control for the line above: the route is per-run, so a local
+    // render or a cache hit must not leave the previous model on screen — the
+    // feature is silent, not "carried over".
+    const idle = { ...makeSnapshot().stats, lastRunRoute: null }
+    const zh = formatStatus(makeSnapshot({ stats: idle }), 'zh')
+    expect(zh).not.toContain('目标模型')
+    expect(formatStatus(makeSnapshot({ stats: idle }), 'en')).not.toContain('Target model')
+    // …while a route still produces it, so the assertion above cannot pass by
+    // the whole block being broken.
+    expect(formatStatus(makeSnapshot({ stats: { ...idle, lastRunRoute: { provider: 'p', model: 'm' } } }), 'zh'))
+      .toContain('目标模型: p/m')
   })
 
   it('lists recent events newest-first with ok/fail markers', () => {

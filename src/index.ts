@@ -12,7 +12,7 @@ export const name = 'prompt-optimizer'
  */
 export const inject = ['llm']
 
-export { Config } from './config.js'
+export { Config, LIVE_CONFIG_KEYS } from './config.js'
 export type { Config as ConfigType, PromptExample } from './config.js'
 export { buildIteratePrompt, buildOptimizePrompt, detectLanguage, detectTaskType, META_ITERATE, META_ITERATE_EN, META_PROMPT } from './meta.js'
 export type { MetaLanguage, TaskType } from './meta.js'
@@ -36,7 +36,12 @@ export type { ContextMessage, GatherContextOptions } from './context.js'
 export { buildSituationProfile, detectMeasurable, detectTaskSubtype, goalAlignment, goalDrift, mergeGoals, renderSituationBlock, subtypeLabel } from './situation.js'
 export type { GoalDrift, GoalProfile, RoleProfile, SituationProfile, SituationProfileLevel, TaskProfile, TaskSubtype } from './situation.js'
 export { registerOptimizeCommand } from './command.js'
-export { createSettingsBridge } from './settings.js'
+export { configureSettingsPage } from './settings.js'
+export type { SettingsPage } from './settings.js'
+// 1.13.1: the volatile-config handshake is pure data work, exported so a host —
+// or a test — can reproduce it without going through the service.
+export { adoptLiveConfig, followVolatileUpdates, isVolatileRef, plainConfig, VOLATILE_UPDATE_EVENT } from './live-config.js'
+export type { VolatileRef } from './live-config.js'
 export { formatStatus } from './status.js'
 export type { StatusSnapshot, StatusEvent } from './status.js'
 // 1.12.0: the best-of-N ranking rules and the host-feedback counters are pure
@@ -46,7 +51,6 @@ export { selectCandidatePure, scoreCandidates, candidateTemperature, structuralS
 export type { Candidate, CandidateGate, CandidateJudge, CandidateScore, SelectionSummary } from './select.js'
 export { feedbackBias, feedbackItems, formatFeedback, mergeItems, normalizeItem } from './feedback.js'
 export type { FeedbackLedger, MessageFeedbackLike } from './feedback.js'
-export type { SettingsBridge } from './settings.js'
 export { DEFAULT_TEMPLATES, validateTemplateSet } from './templates.js'
 export type { TemplateSet } from './templates.js'
 export {

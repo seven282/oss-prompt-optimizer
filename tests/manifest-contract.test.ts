@@ -87,6 +87,21 @@ function coveredByFiles(path: string): boolean {
 const RUNTIME_PATHS = declaredRuntimePaths()
 const TERMINALS = new Set(['compatible', 'incompatible', 'unknown'])
 
+/**
+ * The dsh releases this plugin claims to serve, as exact versions.
+ *
+ * A list, not a scalar: the desktop app bundles its own runtime and that
+ * runtime is a *different* dsh release line whenever the two surfaces diverge,
+ * so a range over one tuple silently withholds the plugin on the other.
+ *
+ * Both surfaces currently carry `0.2.0-rc.2` — `scripts/preflight.mjs` P9 reads
+ * the installed `app.asar` and prints the tuple it found — which is also the
+ * first release with the settings contract this plugin is built on
+ * (`ctx.configForms` + volatile-backed forms). Everything older than it renders
+ * the panel read-only by design, which is why it is no longer claimed.
+ */
+const SERVED_DSH_RELEASES = ['0.2.0-rc.2']
+
 describe('manifest contract — runtime artifacts survive into a fixed commit', () => {
   it('declares at least one runtime path', () => {
     expect(RUNTIME_PATHS.length).toBeGreaterThan(0)
@@ -167,6 +182,11 @@ describe('manifest contract — DSH STORE compatibility declarations', () => {
   })
 
   it('reverse control — the tuple rule rejects a range that cannot match', () => {
+    // Illustrated with a historical version pair, so this stays true whatever
+    // the manifest currently declares. `0.1.6-alpha.2` is a prerelease of
+    // 0.1.6, and no comparator in a `>=0.1.5-rc.1 <0.2.0` range carries that
+    // tuple, so the range cannot match it — the exact mistake the `||`
+    // enumeration exists to avoid.
     const version = '0.1.6-alpha.2'
     const wrongRange = '>=0.1.5-rc.1 <0.2.0'
     const [major, minor, patch] = version.replace(/-.*$/, '').split('.')
@@ -175,16 +195,15 @@ describe('manifest contract — DSH STORE compatibility declarations', () => {
     expect(covered).toBe(false)
   })
 
-  it('enumerates both release lines the plugin must serve: CLI/web and desktop', () => {
-    // The desktop app bundles its own runtime (a different dsh release line from
-    // the CLI/web one), so a range that spans only one tuple withholds the
-    // plugin on the other surface. `scripts/preflight.mjs` P9 proves the desktop
-    // tuple against an actually installed app; this assertion is the portable
-    // half that also runs in CI.
+  it('enumerates every dsh release tuple the plugin claims to serve', () => {
+    // The desktop app bundles its own runtime, and a range that spans only one
+    // tuple withholds the plugin on the other surface. `scripts/preflight.mjs`
+    // P9 proves the desktop tuple against an actually installed app; this
+    // assertion is the portable half that also runs in CI.
     const range = manifest.dsh?.compatibility?.dsh ?? ''
     const releases = manifest.dsh?.compatibility?.dshReleases ?? {}
     const clauses = range.split('||').map((clause) => clause.trim().replace(/^[\^~]/, ''))
-    for (const version of ['0.1.6-alpha.2', '0.2.0-rc.2']) {
+    for (const version of SERVED_DSH_RELEASES) {
       const tuple = version.replace(/-.*$/, '')
       expect(
         clauses.some((clause) => clause.startsWith(tuple)),
@@ -192,6 +211,12 @@ describe('manifest contract — DSH STORE compatibility declarations', () => {
       ).toBe(true)
       expect(releases[version], `${version} has no dshReleases verdict`).toBe('compatible')
     }
+    // Reverse control: the predicate above has to be able to answer no, or it
+    // would pass for any range at all. The probe version is derived from a real
+    // one by bumping its major, so it can never become a legitimate entry.
+    const bogus = SERVED_DSH_RELEASES[0].replace(/^\d+/, (value) => String(Number(value) + 9)).replace(/-.*$/, '')
+    expect(bogus).not.toBe(SERVED_DSH_RELEASES[0])
+    expect(clauses.some((clause) => clause.startsWith(bogus))).toBe(false)
   })
 })
 

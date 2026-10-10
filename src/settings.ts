@@ -1,89 +1,103 @@
 /**
- * Optional DeepSeek Harness settings integration (P0, 1.7.8).
+ * Optional DeepSeek Harness settings integration.
  *
- * Registers the plugin's config schema as a `ctx.settings` namespace so the
- * Harness settings panel renders every option (45+ fields) with defaults,
- * live values and user overrides — no hand-written settings page needed.
+ * **What this module is not (any more).** Up to 0.1.x it registered the plugin's
+ * whole Config schema as a `ctx.settings` namespace (`settings.register(ns,
+ * schema, { base })`) and re-adopted the resolved value before every run.
+ * dsh **0.2.0 removed `SettingsForms.register`** — the service now exposes only
+ * `configure/writable/documentPath/prepareDocument/describe/update/replace/
+ * mutate` — so that bridge could never resolve a value: it returned `null` on a
+ * current host while the client kept reading a service name (`settingsScope`)
+ * that no longer exists. That is issue #3: a settings page that said "saved" and
+ * wrote nothing.
  *
- * Resolution (dsh-settings): schema defaults → `base` (this plugin's
- * entry-config snapshot) → user document (edited in the settings panel).
- * `scope.get()` therefore returns the FINAL configuration; the service
- * adopts it by shallow-assigning onto its own config object.
+ * **How editing works now.** The plugin owns its page (a `settings.section` nav
+ * entry, see `client/client.js`) and its eight live Config fields are declared
+ * `volatile()`, so dsh-settings projects them into a form
+ * (`volatileForm()` → `configForms` → `remote.settings.mutate`) and the loader
+ * commits an edit **in place** without remounting the plugin (`live-config.ts`).
  *
- * The bridge is fully optional: when `ctx.settings` is not mounted (or
- * registration fails), it returns null and the plugin keeps resolving its
- * entry config alone — zero behavioural change in settings-less hosts.
+ * **What is left for the host side.** One thing: tell dsh-settings not to
+ * auto-generate a second page for this entry — the official convention for a
+ * plugin that ships its own, and it stops two editors from owning one document.
+ *
+ * The handshake stays fully optional: a deployment without the settings service
+ * logs nothing, shows no page, and keeps resolving config from
+ * `cordis.patch.yml` alone.
  *
  * @module settings
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import { Config } from './config.js'
-import type { Config as ConfigType } from './config.js'
-
-/** Opaque dsh-settings service surface (kept structural to avoid a new dep). */
-interface SettingsServiceLike {
-  register(ns: string, schema: unknown, options?: { base?: unknown }): SettingsScopeLike
-}
-
-/** Opaque SettingsScope returned by register. */
-interface SettingsScopeLike {
-  /** Final resolved value: defaults → base → user document. */
-  get(): unknown
-  /** Deep-merge a JSON-compatible patch into the user layer and persist. */
-  update(patch: Record<string, unknown>): Promise<unknown>
-}
-
-/** Bridge handle consumed by the optimizer service. */
-export interface SettingsBridge {
-  /** Re-adopt the resolved configuration into the service config. */
-  sync(): boolean
-  /** Persist a user-layer patch (e.g. runtime command overrides). */
-  update(patch: Partial<ConfigType>): Promise<void>
-}
+import { scopedInject } from './compat/scope.js'
 
 /**
- * Lazily create the settings bridge.
+ * Structural view of the dsh-settings service.
  *
- * `base` is the plugin's current entry-config snapshot (from cordis.yml /
- * cordis.patch.yml); the user document layered on top becomes the effective
- * config. `apply` receives the fully resolved value so the service can adopt
- * it without chasing individual keys.
- *
- * Returns null when settings is unavailable or registration fails — callers
- * must treat null as "keep entry config only".
+ * Kept structural on purpose (as the previous bridge was): this package must not
+ * take a dependency on `dsh-settings` just to say "do not auto-generate a page",
+ * and a host that renamed the method has to degrade to "no page policy" rather
+ * than fail the plugin load.
  */
-export function createSettingsBridge(
-  ctx: Context,
-  base: Partial<ConfigType>,
-  apply: (resolved: Partial<ConfigType>) => void,
-): SettingsBridge | null {
-  const settings = (ctx as unknown as { settings?: SettingsServiceLike }).settings
-  if (settings === undefined || typeof settings.register !== 'function') {
-    return null
-  }
-  let scope: SettingsScopeLike | undefined
-  try {
-    scope = settings.register('prompt-optimizer', Config, { base })
-  } catch (err) {
-    ctx.logger?.warn?.('prompt-optimizer: settings 命名空间注册失败，跳过设置面板', err)
-    return null
-  }
-  return {
-    sync(): boolean {
-      const resolved = scope?.get()
-      if (resolved !== undefined && resolved !== null && typeof resolved === 'object') {
-        apply(resolved as Partial<ConfigType>)
-        return true
-      }
-      return false
+interface SettingsServiceLike {
+  /**
+   * Register the calling plugin instance's automatic-page policy.
+   * @param presentation - `auto: false` suppresses the generated page.
+   * @param owner - the plugin's own fiber; the policy is keyed by it.
+   * @returns the disposer removing the policy.
+   */
+  configure(presentation: { auto: boolean }, owner?: unknown): () => void
+}
+
+/** Handle for the optional settings handshake, consumed by the service. */
+export interface SettingsPage {
+  /** True once a live settings service accepted the page policy. */
+  readonly active: boolean
+}
+/**
+ * Register this plugin's settings-page policy with the host, when there is one.
+ *
+ * Never throws and never blocks: the service is reached through `scopedInject`,
+ * which calls back only once `settings` is actually available, and every step
+ * inside is guarded. The returned handle is mutated in place, so the caller can
+ * hold it from construction time and observe `active` turning true later.
+ *
+ * @param ctx - the plugin's context (the caller's fiber becomes the page owner).
+ * @returns the handle; `active` stays false on a host without dsh-settings.
+ */
+export function configureSettingsPage(ctx: Context): SettingsPage {
+  // `settings` may only appear after this call returns (that is the whole point
+  // of `scopedInject`), so the flag lives outside the exposed object and the
+  // handle reads it through a getter.
+  let active = false
+  const handle: SettingsPage = {
+    get active(): boolean {
+      return active
     },
-    async update(patch: Partial<ConfigType>): Promise<void> {
-      if (scope === undefined) return
-      await scope.update(patch as Record<string, unknown>)
-      // Scope.get() reflects the committed user layer immediately after
-      // update settles; re-sync so the service sees the change.
-      this.sync()
-    },
   }
+  scopedInject(ctx, ['settings'], (scoped) => {
+    const settings = (scoped as unknown as { settings?: SettingsServiceLike }).settings
+    if (settings === undefined || typeof settings.configure !== 'function') return
+    const fiber = (ctx as unknown as { fiber?: unknown }).fiber
+    let dispose: (() => void) | undefined
+    try {
+      dispose = settings.configure({ auto: false }, fiber)
+    } catch (err) {
+      // A second policy for the same fiber throws — that is a host-side fact,
+      // not a reason to lose the rest of the plugin.
+      ctx.logger?.warn?.('prompt-optimizer: settings 页面策略注册失败，宿主自动页保持原样', err)
+      return
+    }
+    active = true
+    // Tie the policy to this plugin's lifetime. `effect` returned by `inject`
+    // exists on every supported host; the guard keeps an odd context from
+    // turning hygiene into a crash.
+    const effect = (scoped as unknown as { effect?: unknown }).effect
+    if (typeof dispose === 'function' && typeof effect === 'function') {
+      try {
+        ;(effect as (callback: () => unknown) => unknown).call(scoped, () => dispose)
+      } catch { /* best effort */ }
+    }
+  })
+  return handle
 }

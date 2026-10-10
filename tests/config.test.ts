@@ -1,9 +1,26 @@
 import { describe, expect, it } from 'vitest'
-import { Config } from '../src/config.js'
+import { Config, LIVE_CONFIG_KEYS } from '../src/config.js'
+import { isVolatileRef } from '../src/live-config.js'
 
 /** Schemastery's callable types input as the full output; the loader passes
  *  partial user config, so tests cast through `never` to model that. */
-const validate = (input: unknown) => Config(input as never)
+const raw = (input: unknown) => Config(input as never) as unknown as Record<string, unknown>
+
+/**
+ * The loader hands `LIVE_CONFIG_KEYS` over as cosmokit references, not values
+ * (`live-config.ts` is what unwraps them). Every assertion below is about the
+ * VALUE the plugin ends up reading, so unwrap once here — and the dedicated
+ * test further down pins which keys are references.
+ */
+const validate = (input: unknown): Record<string, unknown> => {
+  const value = raw(input)
+  const plain: Record<string, unknown> = {}
+  for (const key of Object.keys(value)) {
+    const field = value[key]
+    plain[key] = isVolatileRef(field) ? field.get() : field
+  }
+  return plain
+}
 
 describe('Config schema', () => {
   it('fills defaults for an empty config', () => {
@@ -158,5 +175,31 @@ describe('Config schema', () => {
     // rejects them at construction so a config typo still fails the load.
     const value = validate({ unknownKey: true })
     expect(value).toMatchObject({ unknownKey: true, temperature: 0.2 })
+  })
+
+  it('declares exactly LIVE_CONFIG_KEYS as volatile references', () => {
+    // Two facts in one assertion, and both matter:
+    //  - a `volatile()` node is what makes the settings panel able to render a
+    //    form AT ALL (dsh-settings' `volatileForm()` returns undefined for a
+    //    schema without one, and the namespace then never reaches the client);
+    //  - the volatile set is exactly the set the service unwraps, so a field
+    //    added to the list without the other half fails here rather than in
+    //    production as "truthy reference read as a boolean".
+    const value = raw({})
+    const volatile = Object.keys(value).filter((key) => isVolatileRef(value[key]))
+    expect(volatile.sort()).toEqual([...LIVE_CONFIG_KEYS].sort())
+    // Control: the schema has far more keys than the live list, so the filter
+    // above is genuinely discriminating rather than everything-is-volatile.
+    expect(Object.keys(value).length).toBeGreaterThan(LIVE_CONFIG_KEYS.length * 4)
+    expect(isVolatileRef(value.temperature)).toBe(false)
+  })
+
+  it('reports the default through a volatile reference', () => {
+    // The panel reads `snapshot.value[key]`, which comes from the same
+    // references — a reference that lost its default would show "—" for a field
+    // the user never touched.
+    const autoOptimize = raw({}).autoOptimize
+    expect(isVolatileRef(autoOptimize)).toBe(true)
+    expect(isVolatileRef(autoOptimize) ? autoOptimize.get() : undefined).toBe(true)
   })
 })

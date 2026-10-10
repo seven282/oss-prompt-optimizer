@@ -168,6 +168,13 @@ export interface OptimizeStats {
      */
     lastRunUsage: RunUsage | null;
     /**
+     * The route the most recent run actually called (1.13.0, benchmark checklist
+     * item 6). `null` when that run made no model call — a local zero-token
+     * render or a cache hit — because keeping the previous model there would
+     * attribute it to a run that never used it.
+     */
+    lastRunRoute: ModelRoute | null;
+    /**
      * Best-of-N selection counters (1.12.0 P1-A). `selectRuns` counts runs that
      * generated more than one candidate; `selectGains` counts the subset where a
      * later candidate actually replaced the baseline draw — the ratio is the
@@ -191,6 +198,19 @@ export interface OptimizeStats {
     feedbackBiasApplied: number;
 }
 /**
+ * The portable form of a resolved route (1.13.0, benchmark checklist item 6):
+ * what leaves the plugin through `getStats()` and the lifecycle events.
+ * `ReasoningEffortId` is a harness type, and a published `.d.ts` that imported
+ * it would make every consumer resolve a host package it may not have — so the
+ * reasoning effort travels as a plain string. Read-only by construction: the
+ * optimizer always copies, never hands out its own object.
+ */
+export interface ModelRoute {
+    provider: string;
+    model: string;
+    reasoningEffort?: string;
+}
+/**
  * The `promptOptimizer` service (class-form plugin): optimizes raw
  * instructions into professional four-section prompts through the harness
  * `llm` service, and registers the `prompt_optimize` tool, the `/optimize`
@@ -209,10 +229,19 @@ export declare class PromptOptimizerService extends Service {
     static inject: string[];
     static Config: import("@deepseek-ai/schemastery").default<Config>;
     private readonly config;
+    /**
+     * The config object the loader resolved, kept by identity: its eight
+     * `volatile()` fields are cosmokit references, and the loader mutates those
+     * references in place on a live edit. `liveConfigListener` re-reads them.
+     */
+    private readonly rawConfig;
     /** Host capability probe result (1.8.2): see compat/capability.ts. */
     private readonly capabilities;
-    /** P0（1.7.8）dsh-settings 可选桥：null 表示宿主无 settings，完全跳过。 */
-    private settingsBridge;
+    /**
+     * dsh-settings 接入句柄（1.8.0 设置页 / 0.2.0 起走 volatile 热更新）：
+     * `null` 表示宿主没有 settings 服务，设置页降级为 `cordis.patch.yml`。
+     */
+    private settingsPage;
     /** P1（1.7.9）最近优化事件（FIFO，供 --status/状态按钮展示）。 */
     private readonly recentEvents;
     /** The active role-document template set (resolved and validated at construction). */
@@ -237,6 +266,13 @@ export declare class PromptOptimizerService extends Service {
     private runCallCount;
     /** Provider-reported usage of the current run (reset with `runCallCount`). */
     private runUsage;
+    /**
+     * The route the current run actually called (1.13.0), captured at the single
+     * place a model call is made (`generateOnce`). Undefined for a run that never
+     * reaches the model — which is precisely what keeps a local zero-token render
+     * and a cache hit from naming a model they never used.
+     */
+    private runRoute;
     /** P1（1.8.1）state persistence adapter (noop when persistState off). */
     private readonly persistence;
     /** The resolved judge rubric (1.11.0); construction fails loudly on an unknown override id. */
@@ -367,6 +403,14 @@ export declare class PromptOptimizerService extends Service {
     private fuzzyCandidate;
     /** Fire `optimize:start`; a throwing listener must never break the pipeline. */
     private emitStart;
+    /**
+     * The model identity of one finished run (1.13.0): the portable route plus
+     * the same facts under the OpenTelemetry GenAI attribute names. `undefined`
+     * when the run never called a model — a cache hit or a local render emits
+     * neither a route nor a GenAI block, because there is no inference to
+     * describe and a zero-filled block would invent a span.
+     */
+    private routeSignal;
     /** Fire `optimize:success` or `optimize:failure` based on the outcome. */
     private emitCompleted;
     /**

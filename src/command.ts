@@ -120,9 +120,16 @@ export function registerOptimizeCommand(ctx: Context, service: PromptOptimizerSe
         // feature never ran), FEEDBACK* the host signal counts.
         const select = `SELRUNS:${stats.selectRuns}|SELGAINS:${stats.selectGains}|SELCAND:${stats.lastSelectCandidates}|SELCHOSEN:${stats.lastSelectChosen}|SELSCORE:${stats.lastSelectScore}|SELGATE:${stats.lastSelectGate}`
         const feedback = `FBSESSIONS:${stats.feedbackSessions}|FBPOS:${stats.feedbackPositive}|FBNEG:${stats.feedbackNegative}|FBBIAS:${stats.feedbackBiasApplied}`
+        // 1.13.0: which model the last run actually called. Empty values mean
+        // the run called no model (cache hit / local render). Appended last so
+        // a consumer written against the older prefix keeps parsing.
+        const route = stats.lastRunRoute
+        const model = route === null
+          ? 'MODEL:|PROVIDER:|EFFORT:'
+          : `MODEL:${route.model}|PROVIDER:${route.provider}|EFFORT:${route.reasoningEffort ?? ''}`
         return {
           kind: 'success',
-          text: `OPTIMIZE_STATS:TOKENS:${stats.lastOutputTokens}|INPUT:${stats.lastInputTokens}|CALLS:${stats.lastRunCalls}|LASTMSCALL:${stats.lastCallMs}|LOCAL:${stats.local}|REFINED:${stats.refined}|${real}|CACHER:${stats.cacheReadTokens}|CACHEW:${stats.cacheWriteTokens}|USAGECALLS:${stats.usageCalls}|${select}|${feedback}`,
+          text: `OPTIMIZE_STATS:TOKENS:${stats.lastOutputTokens}|INPUT:${stats.lastInputTokens}|CALLS:${stats.lastRunCalls}|LASTMSCALL:${stats.lastCallMs}|LOCAL:${stats.local}|REFINED:${stats.refined}|${real}|CACHER:${stats.cacheReadTokens}|CACHEW:${stats.cacheWriteTokens}|USAGECALLS:${stats.usageCalls}|${select}|${feedback}|${model}`,
         }
       }
 

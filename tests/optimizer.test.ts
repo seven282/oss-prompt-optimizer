@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { GenerateOptions, StreamChunk, TokenUsage } from '@deepseek-ai/dsh-llm'
 import { TimeoutReason } from '@deepseek-ai/dsh-timeout'
 import type { Config } from '../src/config.js'
@@ -1097,6 +1100,83 @@ describe('PromptOptimizerService events', () => {
     expect(start.method).toBe('iterate')
   })
 
+  it('carries the model route and a GenAI signal on the outcome (1.13.0)', async () => {
+    const state = makeCtx([usageStream(FOUR_SECTIONS, { inputTokens: 700, outputTokens: 240, cacheReadTokens: 500, cacheWriteTokens: 30, reasoningTokens: 40 })])
+    const service = makeService(state)
+    await service.optimize('帮我写一份 PRD', { sessionId: 'session-42' })
+    const done = state.emitCalls[1].payload as { route?: unknown; genAi?: Record<string, unknown> }
+    // The target model is part of the record, not only of the request.
+    expect(done.route).toEqual({ provider: 'deepseek-official', model: 'deepseek-v4-flash' })
+    // …and the same facts under the OpenTelemetry GenAI attribute names, so a
+    // consumer can hand the block straight to `span.setAttributes()`.
+    expect(done.genAi).toEqual({
+      'gen_ai.operation.name': 'chat',
+      'gen_ai.provider.name': 'deepseek-official',
+      'gen_ai.request.model': 'deepseek-v4-flash',
+      'gen_ai.conversation.id': 'session-42',
+      'gen_ai.usage.input_tokens': 700,
+      'gen_ai.usage.output_tokens': 240,
+      'gen_ai.usage.cache_read.input_tokens': 500,
+      'gen_ai.usage.cache_creation.input_tokens': 30,
+      'gen_ai.usage.reasoning.output_tokens': 40,
+    })
+  })
+
+  it('reports the host-resolved route including the reasoning effort', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    state.selection = { provider: 'custom-provider', model: 'custom-model', reasoningEffort: 'high' }
+    const service = makeService(state, { ...DEFAULT_CONFIG, provider: undefined, model: undefined })
+    await service.optimize('帮我写一份 PRD')
+    const done = state.emitCalls[1].payload as { route?: unknown; genAi?: Record<string, unknown> }
+    expect(done.route).toEqual({ provider: 'custom-provider', model: 'custom-model', reasoningEffort: 'high' })
+    expect(done.genAi?.['gen_ai.provider.name']).toBe('custom-provider')
+  })
+
+  it('omits the token attributes when the adapter reports no usage', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    const service = makeService(state)
+    await service.optimize('帮我写一份 PRD')
+    const done = state.emitCalls[1].payload as { genAi?: Record<string, unknown> }
+    // The run DID call the model — the model is still named…
+    expect(done.genAi?.['gen_ai.request.model']).toBe('deepseek-v4-flash')
+    // …but a zero-filled usage block would claim a measurement that never
+    // happened, so the counts are absent rather than 0.
+    expect(Object.keys(done.genAi ?? {}).filter((key) => key.startsWith('gen_ai.usage.'))).toEqual([])
+    // The session id is only claimed when the caller supplied one.
+    expect(Object.keys(done.genAi ?? {})).not.toContain('gen_ai.conversation.id')
+  })
+
+  it('emits no route and no GenAI signal for a run that calls no model', async () => {
+    const state = makeCtx([textStream(FOUR_SECTIONS)])
+    const service = makeService(state)
+    await service.optimize('帮我写一份周报', { signal: new AbortController().signal })
+    await service.optimize('帮我写一份周报', { signal: new AbortController().signal })
+    const hit = state.emitCalls[1].payload as { genAi?: unknown }
+    const cached = state.emitCalls[3].payload as { genAi?: unknown; route?: unknown }
+    // Reverse control: a real model call DOES carry the block, so the absent
+    // assertions below cannot pass by the field never being emitted at all.
+    expect(hit.genAi).toBeDefined()
+    expect(cached.genAi).toBeUndefined()
+    expect(cached.route).toBeUndefined()
+    // Per-run, not sticky: the second run does not inherit the first one's model.
+    expect(service.getStats().lastRunRoute).toBeNull()
+  })
+
+  it('names no model for a local zero-token render', async () => {
+    const state = makeCtx([])
+    const service = makeService(state, { ...DEFAULT_CONFIG, localTemplate: 'on' })
+    const result = await service.optimize('帮我写周报', { signal: new AbortController().signal, sessionId: 's1' })
+    expect(result.local).toBe(true)
+    expect(state.streamCalls).toHaveLength(0)
+    // The local path emits the outcome only (no start: nothing was attempted),
+    // and it stays silent about a model it never called.
+    expect(state.emitCalls).toHaveLength(1)
+    const done = state.emitCalls[0].payload as { genAi?: unknown; route?: unknown }
+    expect(done.genAi).toBeUndefined()
+    expect(done.route).toBeUndefined()
+    expect(service.getStats().lastRunRoute).toBeNull()
+  })
+
   it('swallows a throwing listener and still returns the result', async () => {
     const state = makeCtx([textStream(FOUR_SECTIONS)], { throwingEmit: true })
     const service = makeService(state)
@@ -2094,5 +2174,42 @@ describe('role-task-goal pipeline (1.6.5)', () => {
     expect(result.prompt).toContain('任务：')
     expect(result.prompt).toContain('目标：')
     expect(state.streamCalls).toHaveLength(0)
+  })
+})
+
+describe('persisted route repair (1.13.0)', () => {
+  it('drops a corrupt persisted route instead of showing it as fact', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'po-route-'))
+    const file = join(dir, 'state.json')
+    const seed = (route: unknown): void => {
+      writeFileSync(file, JSON.stringify({
+        version: 1,
+        updatedAt: 0,
+        stats: { lastRunRoute: route },
+        episodes: [],
+        events: [],
+        evalRuns: [],
+        evalBaseline: null,
+      }), 'utf8')
+    }
+    const config: Config = { ...DEFAULT_CONFIG, persistState: true, stateFile: file }
+    try {
+      // A string where a route belongs: loading is documented as best-effort,
+      // so it is repaired rather than trusted (or thrown about).
+      seed('deepseek-official/deepseek-v4-flash')
+      expect(makeService(makeCtx([]), config).getStats().lastRunRoute).toBeNull()
+      // Half a route is not a route.
+      seed({ provider: 'deepseek-official' })
+      expect(makeService(makeCtx([]), config).getStats().lastRunRoute).toBeNull()
+      seed({ model: 'deepseek-v4-flash' })
+      expect(makeService(makeCtx([]), config).getStats().lastRunRoute).toBeNull()
+      // …while a well-formed one survives, which is what makes the three
+      // assertions above meaningful rather than a permanently-null field.
+      seed({ provider: 'deepseek-official', model: 'deepseek-v4-flash', reasoningEffort: 'high' })
+      expect(makeService(makeCtx([]), config).getStats().lastRunRoute)
+        .toEqual({ provider: 'deepseek-official', model: 'deepseek-v4-flash', reasoningEffort: 'high' })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

@@ -216,3 +216,73 @@
 ⚠️ **与本地模板路径互斥**：`localTemplate: on|hybrid` 在 LLM 管线之前就返回，因此不会产生候选。要吃择优收益需让指令走完整管线（即默认的 `off`）。
 
 非法配置（类型错误、越界、未知键、provider/model 只配其一）会在加载时响亮失败。
+
+## 设置侧边栏页面（1.13.1 修复）
+
+「设置 → Prompt 优化器」页面**只列 8 个需要用户决策的开关**，其余（温度 / 预算 / 模板 / 评测…）
+默认已调优，仍写在 `cordis.patch.yml` 里：
+
+| 字段 | 类型 | 默认 |
+|---|---|---|
+| `outputStyle` | select | `plain` |
+| `situationProfileLevel` | select | `full` |
+| `contextAware` | boolean | `true` |
+| `cacheEnabled` | boolean | `true` |
+| `optimizationProfile` | select | `balanced` |
+| `localTemplate` | select | `off` |
+| `autoOptimize` | boolean | `true` |
+| `autoAdapt` | boolean | `true` |
+
+**写入契约（0.2.0）**：页面从 `ctx.get('configForms')` 取本插件 entry 的表单
+（`configForms.get('<host entry id>')`，entry id 与 settings 命名空间是同一个字符串
+`prompt-optimizer`），`set()` / `unset()` 均解析为 **boolean**——`true` 表示宿主已接受。
+页面读这个值：`false` 时提示「宿主拒绝了这次修改」，只有真的接受才显示「已保存」。
+写入后由 loader 的 `loader/volatile-update` **就地刷新**，不重挂载插件。
+
+**只读降级**：`get()` 拿不到表单、`status !== 'ready'`、或 `writable === false` 时，
+页面把全部输入与「恢复全部默认」置灰，并显示对应原因（宿主未提供可写配置服务 /
+当前连接只能读 / 正在读取），而不是渲染一堆看起来能用的输入框。
+
+**为什么必须是 volatile 字段**：dsh-settings 只在 schema 上出现 `volatile` 节点时才
+把该 entry 投影成表单（`volatileForm()` 无 volatile 返回 `undefined` ⇒ `describe()` 返回空
+⇒ 命名空间整条不出现）。这 8 个字段因此在 `src/config.ts` 上标了 `.volatile()`，并且
+**必须 per-use 读取**（不能像其他字段那样在构造期缓存成普通值）。
+
+> ⚠️ 给新字段标 `.volatile()` 前先确认它在运行期是 per-use 读的。构造期一次性解析的字段
+> （`templates` / `cacheTtlMs` / `persistence` / `evalRubric` / `maxCalls`…）标了 volatile
+> 只会撒谎：面板能改，改完不生效。`src/config.ts` 的 `LIVE_CONFIG_KEYS` 是白名单，
+> 由 `tests/config.test.ts` 双向守着。
+
+## 常见问题（FAQ）
+
+### 控制台报 `/api/changes.summary` 404
+
+打开右侧栏「本轮改动」的某些历史轮次时，浏览器控制台出现：
+
+```
+GET /api/changes.summary?sessionId=…&seq=…  404 (Not Found)
+```
+
+**这不是本插件的错误，也不是宿主的 bug —— 是「本轮改动 / Review」面板的固有设计，不需要修复。**
+
+该路由属于宿主自带包 `@deepseek-ai/dsh-client-ui-deliverables`（右侧栏「本轮改动」标签页），
+数据源是 `dsh-workspace-changes` 的**进程内内存**：
+
+```js
+byId.get(sessionId)?.summary(seq)   // 只在 turn/start 时写入；session/disposed 或插件卸载即清空
+```
+
+宿主源码注释自己就写着 *"404 once the Host no longer serves it"* —— 按设计如此。
+
+| 疑问 | 结论 |
+|---|---|
+| 为什么只有部分 `seq` 报 404？ | **正常**。只有「当前这个 dsh 进程跑过的轮次」可查；重启 `dsh web` 后，旧轮次的 Review 面板必然打不开 |
+| 那一轮的改动是不是丢了？ | **没丢**。文件改动在磁盘与 git 里，面板只是一个摘要视图 |
+| 会不会影响插件功能或自迭代学习？ | **不会**。插件既不调用该路由，也不产生 `workspace/changes` 事件 |
+
+判定依据（可自查）：本仓库不引用 `changes.summary` / `changes.diff` / `changes-review`；
+插件的自迭代数据写在 `$DSH_HOME/oss-prompt-optimizer/state.json`（工作区之外，走 Node `fs`，
+不进宿主记录器）；自动优化钩子仅在 `agent/pre-step` 改写 `payload.messages`，
+**不追加会话事件，因此不影响 `seq` 对齐**。
+
+**规避方式**：同一进程内刷新不会 404；重启后要回顾旧改动，看 git 日志，不必指望该面板。

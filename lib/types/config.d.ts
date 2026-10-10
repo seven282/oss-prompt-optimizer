@@ -393,7 +393,50 @@ export interface Config {
     feedbackScanLimit: number;
 }
 /**
+ * Fields the settings panel can change **without restarting the plugin**.
+ *
+ * These — and only these — are declared `volatile()` in the schema below. The
+ * loader turns each one into a live reference, commits an edit to it in place
+ * (`updateVolatile`), and emits `loader/volatile-update`; the plugin then
+ * refreshes its plain-value copy (`live-config.ts`).
+ *
+ * ⭐ Two properties are required of a key on this list, and both are checked by
+ * tests rather than by the type system:
+ *
+ * 1. **The panel needs at least one of them.** dsh-settings projects a Config
+ *    schema through `volatileForm()`; a schema with no volatile node yields no
+ *    form at all, the namespace never reaches `configForms.describe()`, and the
+ *    client form sits at `unavailable` forever. Without a volatile field there
+ *    is no editable panel, whatever the client does.
+ * 2. **The field must be read per use, never cached at construction.** Anything
+ *    resolved once in the constructor (`templates`, the cache's capacity, the
+ *    persistence adapter, the judge rubric) cannot change in place: marking such
+ *    a field volatile would let the panel report a successful save while the
+ *    running service kept the old behaviour — the exact failure this list has to
+ *    avoid.
+ *
+ * The list mirrors the client's `PO_FIELDS` (the core switches on the plugin's
+ * own settings page); `tests/client-apply.test.ts` asserts the two stay aligned.
+ */
+export declare const LIVE_CONFIG_KEYS: readonly ["outputStyle", "situationProfileLevel", "contextAware", "cacheEnabled", "optimizationProfile", "localTemplate", "autoOptimize", "autoAdapt"];
+/**
  * Loader schema: validates configuration and fills defaults at plugin load.
  * Invalid configuration fails the load loudly (harness convention).
+ *
+ * ⚠️ Two shapes meet here; the `as unknown as` at the end of the literal is the
+ * seam between them, not a silenced mismatch:
+ *
+ *  - **Runtime** — eight keys carry `volatile()`, so schemastery hands the
+ *    loader cosmokit *references* (`{ get(), [Symbol.for('cosmokit.volatile.write')] }`)
+ *    for them rather than values. `adoptLiveConfig()` (`live-config.ts`) reads
+ *    those references into a plain `Config` before the plugin ever touches them.
+ *  - **Published types** — `Config` stays the plain-value shape, so
+ *    `@deepseek-ai/cosmokit` never becomes part of this package's public surface
+ *    for every consumer.
+ *
+ * schemastery types the schema faithfully (volatile fields *are* references),
+ * so a plain output type can no longer be inferred. `tests/config.test.ts`
+ * pins both halves: the volatile set matches `LIVE_CONFIG_KEYS`, and the
+ * remaining keys really are plain values.
  */
 export declare const Config: z<Config>;

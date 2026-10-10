@@ -75,13 +75,26 @@
  *       grader that accepts anything would report every edit as an improvement;
  *       P4 only exercises `src/`, so this is also the packaging check that the
  *       golden set and the judge actually ship inside the published bundle.
+ *   P11 Settings surface in a real browser — OPT-IN (`--browser-e2e`), runs
+ *       `scripts/e4-settings-browser.mjs`: a throwaway DSH_HOME, a profile
+ *       composed from the shipped `web` template, `dsh web` booted on a free
+ *       port, and a real Chromium — the one already installed, nothing is
+ *       downloaded — completing the token→cookie handshake before it renders
+ *       the settings section and writes a field through to the profile patch on
+ *       disk. This is the only gate that walks the chain a user actually
+ *       touches end to end (handshake → served client bundle → real
+ *       `configForms` → mounted slot → disk), and issue #3 lived in exactly
+ *       that gap: every fake host passed while the real page saved nothing.
+ *       Not in CI and off by default, so `pnpm preflight` stays hermetic; run
+ *       it from a plain shell, outside the assistant sandbox.
  *
- * Usage:  pnpm preflight  [--skip-tests] [--offline] [--dsh-home <path>]
+ * Usage:  pnpm preflight  [--skip-tests] [--offline] [--dsh-home <path>] [--browser-e2e]
  */
 
 import { execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, realpathSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -89,6 +102,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const argv = process.argv.slice(2)
 const skipTests = argv.includes('--skip-tests')
 const offline = argv.includes('--offline')
+const browserE2e = argv.includes('--browser-e2e')
 const dshHomeIndex = argv.indexOf('--dsh-home')
 const dshHomeArg = dshHomeIndex === -1 ? null : (argv[dshHomeIndex + 1] ?? null)
 
@@ -727,6 +741,59 @@ function checkEvalGrader() {
 }
 
 // ---------------------------------------------------------------------------
+// P11 — settings surface in a real browser (opt-in: `--browser-e2e`)
+// ---------------------------------------------------------------------------
+/**
+ * The one gate that crosses every boundary at once, and therefore the one that
+ * would have caught issue #3 ("save says OK, nothing is stored"): it boots a
+ * real `dsh web`, lets a real Chromium complete the token→cookie handshake,
+ * loads the served client bundle, mounts the settings slot and watches a field
+ * edit land in the profile patch on disk. Nothing here is faked, which is also
+ * why it cannot run in CI: it needs an installed Chromium and a real host boot.
+ *
+ * It is read from the child's `--json` evidence rather than from stdout, because
+ * unlike the other delegated probes this one prints a full human-readable log.
+ */
+function checkSettingsInBrowser() {
+  if (!browserE2e) return
+  const script = join(root, 'scripts', 'e4-settings-browser.mjs')
+  if (!existsSync(script)) {
+    record('P11', 'settings surface in a real browser', FAIL, 'scripts/e4-settings-browser.mjs is missing')
+    return
+  }
+  const evidencePath = join(tmpdir(), `po-p11-${process.pid}.json`)
+  try {
+    execFileSync(process.execPath, [script, '--json', evidencePath], {
+      encoding: 'utf8',
+      maxBuffer: 32 * 1024 * 1024,
+      timeout: 15 * 60 * 1000,
+    })
+    const evidence = JSON.parse(readFileSync(evidencePath, 'utf8'))
+    const checks = Array.isArray(evidence.checks) ? evidence.checks : []
+    const failed = checks.filter((c) => !c.ok).map((c) => `${c.id} ${c.label}`)
+    const gaps = Array.isArray(evidence.gaps) ? evidence.gaps : []
+    const detail = `${checks.filter((c) => c.ok).length}/${checks.length} check(s) — ${evidence.plugin} on ${evidence.dshHost || 'unknown host'}`
+      + (failed.length ? `\n    failing: ${failed.join('; ')}` : '')
+      + (gaps.length ? `\n    gaps: ${gaps.map((g) => `${g.id} ${g.label}`).join('; ')}` : '')
+    record('P11', 'settings surface in a real browser', evidence.verdict === 'PASS' ? PASS : FAIL, detail)
+  } catch (error) {
+    const details = [error?.stdout, error?.stderr]
+      .filter((part) => typeof part === 'string' && part.trim().length > 0)
+      .join('\n')
+      .trim()
+    record(
+      'P11',
+      'settings surface in a real browser',
+      FAIL,
+      details.split(/\r?\n/).slice(-12).join('\n    ') || String(error?.message ?? error),
+    )
+  } finally {
+    // One named file, never a pattern: this runs next to a real user's temp dir.
+    if (existsSync(evidencePath)) rmSync(evidencePath, { force: true })
+  }
+}
+
+// ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 
@@ -743,6 +810,7 @@ checkClientInjectContract()
 checkCommittedRuntimeArtifacts(manifest)
 checkDesktopCompatibility()
 checkEvalGrader()
+checkSettingsInBrowser()
 
 let failed = 0
 for (const result of results) {

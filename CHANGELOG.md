@@ -1,5 +1,230 @@
 # Changelog
 
+## [1.13.1] - 2026-10-10
+
+**修复一：更新/重装后客户端设置页与导航标签不跟随语言（冻结在英文）。**
+
+用户报告（1.8.6，桌面版 DSH，界面语言中文）：每次更新或重装插件后，设置导航按钮显示
+`Prompt Optimizer`、页内文案落 `View status` / `Reset all to defaults` / `Core options only…`；
+重启不恢复，再次更新必现；而**手工改一次 `lib/client.js` 触发重新求值就立刻恢复中文**。
+
+**修复二：设置面板「点保存提示成功、实际不落库」（issue #3）。**
+
+用户在最新宿主上报告设置页改字段没反应。查明是**一条断掉的写入通路**，两个原因叠加：
+
+1. 客户端读的是 `ctx.settingsScope`（0.1.x 的服务名），而 0.2.0 把它换成了
+   `ctx.configForms` —— **两代服务名一刀两断、无任何版本同时具备**，所以表单**从来没找到过**；
+   服务端 `SettingsForms.register` 在 0.2.0 也已被移除，旧桥连值都解析不出来（恒返回 `null`）。
+2. 找到了表单也仍会假成功：`ConfigForm.set()` 解析为 **boolean**（`true` = 宿主已接受），
+   旧代码只挂了 `.then()` 就打「已保存」，**从不读那个值** —— 被拒绝的写入与成功的写入看起来
+   完全一样。
+
+按用户口径**只适配最新宿主**（不保留旧服务名回退）。修复后：字段改动由 loader 的
+`loader/volatile-update` **就地刷新、不重挂载**；写入被拒绝时提示「宿主拒绝了这次修改」；
+拿不到表单 / 不可写时面板**降级为只读并写明原因**，不再渲染一堆看起来能用的输入框。
+
+### Fixed（客户端 i18n）
+
+- **客户端半边不再在 `apply()` 时捕获翻译器。** 原实现读一次 `ctx.get('locale')` 并
+  `locale.bind(NS)` 缓存下来。调查结论是**捕获点**而非"翻译器被冻结"：`bind()` 返回的是
+  **活闭包**（`(key, params) => this.translate(ns, key, params)`，`translate` 每次重读
+  `snapshot.active`），所以语言切换本是跟得上的；捕获真正盖不住的是**当时还不存在的那个
+  face** —— locale 插件的 `apply()` 是 `async`，`await` 完原生 bootstrap 才
+  `ctx.provide('locale', …)`，本插件的 `apply()` 完全可能先跑完。此后整个会话里每个标签都
+  解析到**原始 key**。现改为**每次调用现取**（与同文件 `remote.commands` 同一条规矩），
+  并让字典注册也惰性化（首次取用时补注册）。
+- **改用框架合成的 `t` seat。** 两处 `slots.register` 现在按契约声明 `locale: NS`
+  （声明后渲染器才 `kit['t'] = localeSeat(face, entry.locale)`），组件优先用 `props.t`；
+  该 seat 的**身份随 locale revision 变化**，正是 `React.memo` 失效通道的官方路径。
+  原始查找保留为**回退**（宿主没装 locale face 时 seat 不存在）。
+- **`locale: NS` 改为按需声明**：渲染器对"声明了命名空间却没人提供 face"的条目**直接抛错**，
+  无条件声明会把"这台宿主没有 i18n"升级成"设置页整体挂掉"。无 face 宿主不再声明、只走回退。
+- **页内文本补上重渲染通道**：回退路径下没有任何东西会让组件失效，页面会停在首次绘制的语言。
+  组件订阅 locale 变化并自增一个计数器，两条路径都正确。
+- **✨ 按钮的硬编码中文进字典**：`title` / `aria-label` 原先写死中文，英文界面下仍是中文。
+  与之同批把按钮的全部文案（含 aria-live 播报、错误前缀、状态提示）纳入 zh/en 双表，
+  并给 `announce.optimized.cost` 用上 `{tokens}` 模板参数。
+- **重复注册不再中断 `apply()`**：更新会在旧 fiber 的 disposer 跑完之前重跑本文件，而运行时
+  会拒绝重复的"命名空间+语言"对（`already has locale`）；此前该抛出会冒泡出去，把 ✨ 按钮与
+  设置页一起带走（与 1.8.2 / 1.8.3 同一类故障）。现捕获并降级为一条 `console.warn`
+  —— 运行时的 disposer 有身份保护（只删自己登记的那份），留着旧字典是安全的。
+
+### Added
+
+- **一次性 locale 自检**（激活约 2.5 s 后跑一次，健康时完全静默）：当本插件文案没有解析到
+  当前语言时，打印 `active` / `revision` / 实际解析值 / 期望值，并指明**责任层**——
+  「字典没进运行时（我们的）」还是「解析到了另一种语言（宿主侧）」。这样下一次同类报告自带定位。
+  可一处删除（函数 + 一处调用点）。
+
+### Fixed（设置面板 · issue #3）
+
+- **写入通路换到 0.2.0 的服务名**：客户端改读 `ctx.get('configForms')`，并用
+  `configForms.get('<host entry id>')` 取本插件 entry 的表单（entry id 与 settings 命名空间
+  是同一个字符串 `prompt-optimizer`，`ConfigFormController` 就是按它构造的）。
+  **不做旧名回退** —— 两个名字从不在同一版本共存，回退只会在两边都拿到空。
+- **不再吞掉宿主的答复**：`set()` / `unset()` 的 boolean 结果现在真的被读。
+  `false` ⇒ 提示「宿主拒绝了这次修改：<字段>」；只有 `true` 才显示「已保存」。
+  这也顺带修掉 `clear` → **`unset`** 的改名（0.1.x 的 `clear` 在 0.2.0 上不存在）。
+- **8 个核心字段标 `.volatile()`，并改为 per-use 读取**（`src/config.ts` 的
+  `LIVE_CONFIG_KEYS`）。这是**设置面能否看见字段的唯一开关**：dsh-settings 的
+  `volatileForm()` 在 schema 上找不到 volatile 节点就返回 `undefined`，
+  `describe()` 随之返回空数组 ⇒ **该 entry 整条从设置面消失**，`configForms.get(ns)`
+  永远停在 `loading`/`unavailable`。
+- **`this.config` / `this.rawConfig` 一分为二**（`src/live-config.ts`，新增，无宿主依赖）：
+  loader 传进来的对象里 volatile 字段是 **`{ get(), [Symbol.for('cosmokit.volatile.write')] }`
+  引用**而不是普通值，构造期必须解成快照（`plainConfig`）；同一个对象又必须原样保留
+  （`adoptLiveConfig`，**保持对象身份**），并订阅 `loader/volatile-update`
+  （`followVolatileUpdates`）在 loader 就地提交后重读引用 —— 全程**不重挂载插件**。
+- **缓存容量不再由 live 字段决定**：缓存原先按 `cacheEnabled ? cacheMaxEntries : 0` 建，
+  于是「在面板上打开缓存」永远不会生效。现固定用 `cacheMaxEntries`，`cacheEnabled`
+  在**每次读缓存时**判断。
+- **面板会说清自己的状态**：新增 `status` / `writable` 维度。取不到表单、`status !== 'ready'`、
+  或 `writable === false` ⇒ 所有输入与「恢复全部默认」置灰，并显示对应原因
+  （宿主未提供可写配置服务 / 当前连接只能读 / 正在读取）。**旧页面在"没找到表单"时照样
+  渲染可编辑输入框**，这正是 issue #3 能长期潜伏的原因。
+- **`src/settings.ts` 的老桥删除**：不再 `settings.register(...)`，只剩一条
+  `settings.configure({ auto: false }, ctx.fiber)` —— 告诉 dsh-settings 不要为同一命名空间
+  再自动生成第二个编辑器（官方约定）。服务不存在时**静默保持 inactive、不 warn**
+  （无设置服务的部署是正常部署）。
+- **类型注解与 `.volatile()` 的输出类型对不上**（`src/config.ts`）：`export const Config: z<Config>`
+  要求 schema 的输出是普通值 `Config`，可八个 `volatile()` 字段让 schemastery **如实**推导出
+  `Volatile<T>` 引用 ⇒ `TS2322`。改为在对象字面量末尾 `as unknown as z<Config>`：运行时形状不变，
+  公开类型仍保持普通值 `Config`（`@deepseek-ai/cosmokit` 不进公开面），注释写明这条断言描述的是
+  `adoptLiveConfig()` 所在的那条边界。⚠️ 这是**纯类型改动** —— `lib/config.js` 的可执行代码
+  逐字节不变（`as unknown as` 被擦除），只有跟随源码的 JSDoc 变了。
+
+### Changed
+
+- **依赖 `@deepseek-ai/schemastery` `^3.18.1` → `^3.18.4`**：`.volatile()` 是 3.18.4 才引入的
+  （3.18.1 里 `undefined`）。
+- **`vitest` `^3.2.0` → `^4.1.11`（devDependency）**：CI 的 `pnpm audit --audit-level=high`
+  被**上游新公告**判死，与仓库代码无关。四条打在 `vitest` 的依赖子树上：
+  - **critical** `tinypool` `GHSA-5gmw-xhrv-c9v3`（已修 `>=2.1.1`）与 `GHSA-85c8-ppgw-ccpr`
+    （已修 `>=2.1.2`），路径 `.>vitest>tinypool`；
+  - **high** `source-map-js` `GHSA-68fv-2mgg-jv7q`（已修 `>=1.2.2`）；
+  - **moderate** `vitest` 自身 `GHSA-82fw-gwwq-j7x9`（已修 `>=4.1.11`）。
+  `vitest@3.2.7` 声明的是 `tinypool: ^1.1.1`，而 1.x 线**停在 1.1.1、没有任何已修版本** ⇒
+  3.x 上无论打补丁还是 override 都过不了门禁。`vitest@4.1.11` 的依赖表已移除 `tinypool` 与
+  `vite-node`，四个条目一起消失；`source-map-js` 由重新解析从 `1.2.1` 抬到 `1.2.2`
+  （`postcss@8.5.26` 声明的 `^1.2.1` 本就允许，锁文件只是停在 1.2.2 发布之前）。
+  依赖树 **121 → 71 个包**；`vite` 保持 `7.3.6`（vitest 4 的 `^6 || ^7 || ^8` 接受该锁定值，
+  不会被抬到 8.x）。迁移面为零：`vitest.config.ts` 只有 `include` + `environment: 'node'`，
+  全仓只用到 `vi.fn` / `vi.spyOn`。
+- **兼容性声明收窄到 `^0.2.0-rc.2`**：`engines.dsh` / `dsh.compatibility.dsh` 去掉
+  `^0.1.6-alpha.2`，`dshReleases` 只留 `0.2.0-rc.2: compatible`。理由有二：① 0.2.0-rc.2 是
+  设置面契约（`ctx.configForms` + volatile 表单）落地的第一版，本版起设置页是核心功能；
+  ② CLI/web 与桌面运行时（`@deepseek-ai/dsh-desktop-runtime`）**现在同 tuple**，
+  `scripts/preflight.mjs` P9 读的就是装好的 `app.asar`，`0.1.6-alpha.2` 已无任何发行面承接。
+
+### Tests
+
+- 用例数 821 → **854**（32 个文件）。1.13.1 共新增 33 条：locale 批次 12 条 + 设置面板批次 21 条。
+- **locale 批次 12 条**，重点是**测试假宿主不再说谎**：旧 stub 是
+  `bind: (ns) => (key) => \`${ns}:${key}\`` —— 一个**冻结捕获**，与真实的 `LocaleFace`（活闭包）
+  恰好相反，也已经**恰好就是那个 bug 的形状**，所以任何回归都测不出来。新模型按已装包源码重建
+  `LocaleRuntime`：`catalog` 恒含 zh(→en)/en、`register` 对重复对抛错、disposer 按**对象身份**
+  删除、`bind` 每命名空间记忆一个**按调用时求值**的闭包、`translate` 走 fallback 链再走 `common`
+  再回 key、支持 `{name}` 参数。三条反向控制：① 捕获式翻译器在**同一个 face、同一份字典**下永远
+  返回 key，而按调用现取的路径返回中文；② 假 face 确实拒绝重复注册（否则"重复注册不中断"是空过）；
+  ③ 自检在健康会话**不发声**、在字典缺失时点名到位。组件断言不再依赖源码文本（最小 `react` 替身
+  + 遍历返回树取文本），因为本仓库没有 `react-dom`、也没有 DOM 环境。
+- **设置面板批次 21 条**：
+  - **客户端 9 条**（`tests/client-apply.test.ts`），宿主模型按 `ConfigFormController` /
+    `ConfigFormSnapshot` 重建：**故意不提供 `clear()`**（0.2.0 改名成 `unset`，旧调用必须抛错
+    而不是静默无事发生），`set()` 的结果**由 `accepted` 决定**而不是恒 `true`。
+    覆盖：读宿主值而非 schema 默认值、boolean 以 boolean 而非字符串下发、
+    **被拒绝时提示拒绝而不是「已保存」**、`unset` 逐字段恢复默认、订阅 snapshot 让宿主侧改动
+    到达页面、entry 未知时降级为只读、`writable: false` 时说明只读、宿主没有 `configForms` 时
+    仍然注册成功。另有一条**反向控制**：同一份假宿主下 `set()` 必须真的能返回 `true` 与 `false`，
+    否则「拒绝」那条断言是空过。
+  - **服务端 11 条**：`tests/live-config.test.ts`（新文件，8 条，用
+    `Symbol.for('cosmokit.volatile.write')` 自造引用，含「报告的是当前值而非构造时的值」的反向
+    控制）、`tests/settings.test.ts` 重写后 5 → 6 条、`tests/config.test.ts` 4 → 6 条
+    （`LIVE_CONFIG_KEYS` 与 volatile 集合**双向相等** + 非 volatile 键数量反向控制）。
+  - 剩下 1 条是下面的静态方向性断言（`client-inject-contract`）。
+- ⚠️ **`ctx.effect(cb)` 的语义先测错了**：cordis 4.0.1 的 `fiber.effect()` 是
+  **立刻调用 `cb`、把它的返回值登记为清理函数**（`_execute()` → `runner.execute.call(this)`，
+  随后 `if (typeof effect === 'function') runner.collect(effect)`），不是"teardown 时才调用 `cb`"。
+  假 `effect` 按错的语义写，「把策略绑到插件生命周期」这条就会**空过**；现已按源码对齐。
+- **静态契约同步**：`tests/client-inject-contract.test.ts` 的探测名单与"可选服务不得进 `inject`"
+  清单换成 `configForms`，并新增一条**方向性断言**（源码必须读 `ctx.get('configForms')`、
+  且代码里不得再出现 `settingsScope`）—— 违规列表抓不到"**少读**"，而这正是 issue #3 的形状。
+  `scripts/client-probe.mjs`（P7）对**构建产物**做同样的检查。
+- `tests/manifest-contract.test.ts` 的"两条发行线"断言改为按 `SERVED_DSH_RELEASES` 常量核对，
+  并加了"同一谓词必须能判否"的反向控制（当前两发行面同 tuple，所以列表只有一项）。
+
+### Tooling（设置面真浏览器验收 · 门禁 P11）
+
+- 新增 `scripts/e4-settings-browser.mjs`（`pnpm e4`）——**把设置面走完最后一层**：临时 `DSH_HOME`
+  + 出厂 `web` 模板 → 装本地产物 → `dsh web` 起在随机端口 → **真 Chromium** 完成 token→cookie
+  换证 → 断言客户端 bundle 真被取回（200，不是白屏）→ 打开设置面断言 `LIVE_CONFIG_KEYS`
+  八个字段全部渲染 → 改一个字段并断言它**写进 `profiles/e2e/cordis.patch.yml`**、UI 回读一致。
+  **13/13 通过**，含 2 条反向控制：假 token 不得进入应用；待写值不得已经在盘上。
+- **为什么必须加**：issue #3 的每一个假宿主都能过 —— 假宿主不做换证、不取服务端下发的 bundle、
+  也不挂设置插槽，而这正是那条链的三道关。真浏览器在真宿主源上同时成立，才叫验证过。
+- 用 `playwright-core` 驱动**本机已装的 Chrome/Edge**（`--channel chrome|msedge`），**不下载浏览器**；
+  它**不进 `dependencies`/`devDependencies`**（`--pw-root` 或 `PO_PLAYWRIGHT_CORE` 指向任意一份
+  安装即可），因此不改发布面、不碰锁文件。
+- **接进门禁但默认不跑**：`pnpm preflight --browser-e2e` 追加 **P11**（读子进程的 `--json` 证据判定）。
+  默认关闭是因为它需要真浏览器和一次真实宿主启动，会让 `pnpm preflight` 与 CI 失去离线可重复性
+  —— 与 `pnpm e3` 同一条理由。Windows 上同样**须在助手沙箱外**运行（`dsh web` 会探测 `reg.exe`）。
+- 两个环境事实写进了脚本注释，都是踩出来的：新 profile 首启有**引导弹窗链**（预览版说明 →
+  添加 API Key），**弹窗在时页面上任何点击都会超时**（看起来完全像选择器写错）；
+  设置面**没有「保存」按钮**（`configForms` 改字段即落盘），所以「点保存」的诚实等价物是
+  「改一个值 + 看磁盘 patch 变 + 读回一致」。
+
+### Known gaps
+
+- 设置页的**核心字段表（`PO_FIELDS`）仍是中文单语**：字段名、选项文案、"默认/当前" 模板都还是
+  字面量。本次刻意不动（改动面大且与报告无关，历史上也一直是中文），英文界面下该区域仍为中文。
+- **`0.1.6-alpha.2` 对照宿主上的设置页是只读的**（该宿主没有 `configForms`）。插件本身仍能加载、
+  ✨ 按钮与命令照常工作，但本版**不再声明**对该版本的支持，也不再为它取证。
+
+## [1.13.0] - 2026-10-09
+
+**P1+P2：把「用了哪个模型」与一份 OpenTelemetry GenAI 形状的观测信号补进可见面。**
+
+对标清单（大厂提示词优化机制调研给出的 8 项基准）里，第 6 项「声明目标模型」与第 7 项
+「至少发一个 OTel-GenAI 形状信号」此前只做到了**一半**：路由早在 1.10.0 就解析并记进评测，
+但**优化路径的事件与 `/optimize --stats` 里从不出现模型**；账本里的
+`input / output / cacheRead / cacheWrite / reasoning` 与 `gen_ai.usage.*` **一一对应**，
+却没有规范命名、事件也不带 usage。本次把这两件事补完——**不碰管线、不碰缓存键、不改
+meta-prompt**，因此**不影响**任何评测分数与既有缓存命中率。
+
+### Added
+
+- **`route`：本次 run 实际调用的模型**（benchmark 清单第 6 项）。生命周期事件的成功/失败载荷
+  新增 `route: { provider, model, reasoningEffort? }`，`/optimize --stats` 的机器可读 token
+  尾部追加 `MODEL:` / `PROVIDER:` / `EFFORT:`，`/optimize --status` 增一行「目标模型」。
+  路由在 `generateOnce`（唯一发出模型调用的地方）捕获，因此择优、精修、续传各路径报的都是
+  **真正用到的那个模型**，而不是配置里写的那个。
+- **`genAi`：同一件事的 OTel GenAI 形状**（第 7 项）。键为规范里的**属性名字面量**
+  （`gen_ai.operation.name` / `gen_ai.provider.name` / `gen_ai.request.model` /
+  `gen_ai.conversation.id` / 五个 `gen_ai.usage.*`），消费方可直接
+  `span.setAttributes(payload.genAi)`，无需翻译表。
+
+### Notes（两条诚实规则，由测试与反向控制守着）
+
+- **无模型调用则整块不出现**：缓存命中、本地零 token 直出、跳过透传后 `route`/`genAi` **都不发**，
+  且 `stats.lastRunRoute` 归 `null` —— 一个全零的 `genAi` 会描述一次从未发生的推理。
+- **没测到的数字不报**：适配器未上报 usage 时，五个 `gen_ai.usage.*` 计数**一起缺席**，
+  而不是报 0（与 `RunUsage.calls` 区分「上报 0」和「没上报」同一条规矩）。
+- `gen_ai.response.model` **不发**：宿主只报告被请求的模型，不报告另一个"实际服务"的模型。
+- **公开类型不引入宿主类型**：`ModelRoute.reasoningEffort` 是字符串而非宿主的
+  `ReasoningEffortId`——`lib/types/*.d.ts` 里因此**不出现** `@deepseek-ai/dsh-llm`，
+  消费方不必为了读一个字段去解析宿主包。
+- 持久化的 `stats.lastRunRoute` 加载时经 `normalizeRoute` 修复（非对象、缺 provider、缺 model → `null`）：
+  载入是 best-effort，宁可丢一个字段也不抛错。
+
+### Docs
+
+- `docs/configuration.md` 新增「常见问题（FAQ）」一节：把 `dsh web` 右侧栏「本轮改动」面板
+  的 `/api/changes.summary` 404 记为**已知设计噪声**——摘要只活在跑过那一轮的那个进程内存里
+  （宿主源码注释原文即 *"404 once the Host no longer serves it"*），插件既不调用该路由、
+  也不产生 `workspace/changes` 事件，功能与自迭代学习都不受影响。
+- README 中英双份：事件表补 `route`/`genAi` 的形状与两条诚实规则；功能清单新增
+  「模型与 OTel 信号（1.13.0）」条目。
+
 ## [1.12.1] - 2026-09-23
 
 **修复：`/optimize-eval run --all` 在默认配置下是空操作。**
