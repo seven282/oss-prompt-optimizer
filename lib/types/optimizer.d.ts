@@ -9,6 +9,8 @@ import { type EvalComparison, type EvalRun } from './eval.js';
 import { type SelectionSummary } from './select.js';
 import { type FeedbackLedger } from './feedback.js';
 import { type AdaptationHints, type UserOverrides } from './adapt.js';
+import { type OptimizeStats } from './optimizer/usage.js';
+export type { ModelRoute, OptimizeStats, RunUsage } from './optimizer/usage.js';
 export { MaxTokensError } from './llm.js';
 /** Stable capability-owned timeout reason code for optimization calls. */
 export declare const PROMPT_OPTIMIZER_TIMEOUT_CODE = "PROMPT_OPTIMIZER_TIMEOUT";
@@ -109,106 +111,6 @@ export interface OptimizeResult {
      * would quote the prompt.
      */
     selection?: SelectionSummary;
-}
-/**
- * Provider-reported token usage for ONE optimization run, summed over its
- * model calls (1.10.0). Counts follow the harness `TokenUsage` contract and
- * are DISJOINT: `inputTokens` is uncached input only, cached input arrives
- * separately as `cacheReadTokens` / `cacheWriteTokens` (billed input = the sum
- * of the three). `calls` counts the calls that actually reported usage, so a
- * cache hit or a local zero-token render is `calls: 0` with every count 0 —
- * that is the honest answer, not a missing measurement.
- */
-export interface RunUsage {
-    calls: number;
-    inputTokens: number;
-    outputTokens: number;
-    cacheReadTokens: number;
-    cacheWriteTokens: number;
-    reasoningTokens: number;
-}
-/** Run-statistics snapshot (观测; see `getStats`). */
-export interface OptimizeStats {
-    runs: number;
-    success: number;
-    failed: number;
-    cached: number;
-    /** Local zero-token template renders (1.5.6, 观测). */
-    local: number;
-    /** Local renders refined by a cheap LLM call (1.6.1 `hybrid`, 观测). */
-    refined: number;
-    totalDurationMs: number;
-    maxDurationMs: number;
-    lastOutputTokens: number;
-    lastCallMs: number;
-    avgCallMs: number;
-    maxCallMs: number;
-    totalCallMs: number;
-    callCount: number;
-    lastRunCalls: number;
-    lastInputTokens: number;
-    /**
-     * Provider-reported usage, cumulative over the plugin's lifetime (1.10.0).
-     * Before this the plugin only ever showed HEURISTIC estimates; `usageCalls`
-     * is what tells the two apart — when it is 0 the provider reported nothing
-     * and the `*Tokens` fields above are guesses, when it is > 0 these fields
-     * are the real numbers and the guesses are the fallback.
-     */
-    usageCalls: number;
-    inputTokens: number;
-    outputTokens: number;
-    cacheReadTokens: number;
-    cacheWriteTokens: number;
-    reasoningTokens: number;
-    /**
-     * Provider-reported usage of the most recent optimization run (`null` when
-     * no usage was reported for it). Rides along with `lastRunCalls`, so a run
-     * that made 2 calls and reported nothing is distinguishable from one that
-     * reported 2 calls' worth of tokens.
-     */
-    lastRunUsage: RunUsage | null;
-    /**
-     * The route the most recent run actually called (1.13.0, benchmark checklist
-     * item 6). `null` when that run made no model call — a local zero-token
-     * render or a cache hit — because keeping the previous model there would
-     * attribute it to a run that never used it.
-     */
-    lastRunRoute: ModelRoute | null;
-    /**
-     * Best-of-N selection counters (1.12.0 P1-A). `selectRuns` counts runs that
-     * generated more than one candidate; `selectGains` counts the subset where a
-     * later candidate actually replaced the baseline draw — the ratio is the
-     * only honest answer to "is the extra spend buying anything".
-     */
-    selectRuns: number;
-    selectGains: number;
-    lastSelectCandidates: number;
-    lastSelectChosen: number;
-    lastSelectScore: number;
-    lastSelectGate: number;
-    /**
-     * Host feedback signal (1.12.0 P1-B), counts only. `feedbackSessions` is how
-     * many sessions were read; the positive/negative tallies are judgments the
-     * human filed on assistant messages, and `feedbackBiasApplied` is the
-     * temperature delta they produced on the last run.
-     */
-    feedbackSessions: number;
-    feedbackPositive: number;
-    feedbackNegative: number;
-    feedbackBiasApplied: number;
-}
-/**
- * The portable form of a resolved route (1.13.0, benchmark checklist item 6):
- * what leaves the plugin through `getStats()` and the lifecycle events.
- * `ReasoningEffortId` is a harness type, and a published `.d.ts` that imported
- * it would make every consumer resolve a host package it may not have — so the
- * reasoning effort travels as a plain string. Read-only by construction: the
- * optimizer always copies, never hands out its own object.
- */
-export interface ModelRoute {
-    provider: string;
-    model: string;
-    reasoningEffort?: string;
 }
 /**
  * The `promptOptimizer` service (class-form plugin): optimizes raw
