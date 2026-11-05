@@ -30,8 +30,12 @@ jobs:
         # Covers both `src`/`tests` (tsconfig.json) and the hand-written client
         # half (tsconfig.client.json) — the file behind the 1.8.2 / 1.8.3 incidents.
         run: pnpm typecheck
-      - name: Test
-        run: pnpm test
+      # Coverage gate: the suite plus the 95% four-dimension threshold in
+      # vitest.config.ts (statements / branches / functions / lines). A single
+      # `pnpm test` step would leave the decision paths unmeasured — this is the
+      # invariant, so it replaces the plain run rather than doubling it.
+      - name: Test + coverage gate
+        run: pnpm test:coverage
       - name: Build
         run: pnpm build
       # Gate the invariants that keep the plugin from ever blocking the host:

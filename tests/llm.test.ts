@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { BlockAssembler, type FinishReason, type StreamChunk } from '@deepseek-ai/dsh-llm'
-import { assembleStream, finishToError, MaxTokensError } from '../src/llm.js'
+import { assembleStream, finishToError, MaxTokensError, MaxTokensErrorWithPartial } from '../src/llm.js'
 import { OptimizeError, OptimizeErrorCode } from '../src/errors.js'
 
 describe('finishToError', () => {
@@ -62,5 +62,16 @@ describe('assembleStream', () => {
       assembler.push(chunk)
     }
     expect(assembleStream(assembler)).toBe('角色：分析师。')
+  })
+})
+
+describe('MaxTokensErrorWithPartial', () => {
+  it('carries the original cause when there is one', () => {
+    const original = new MaxTokensError('partial')
+    const cause = new Error('upstream reset')
+    ;(original as { cause?: unknown }).cause = cause
+    const wrapped = new MaxTokensErrorWithPartial('partial', original)
+    expect(wrapped.cause).toBe(cause)
+    expect(wrapped.partial).toBe('partial')
   })
 })

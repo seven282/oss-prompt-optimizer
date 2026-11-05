@@ -14,7 +14,9 @@ import {
   renderSituationBlock,
   SITUATION_PROFILE_VERSION,
   subtypeLabel,
+  subtypeKeywords,
 } from '../src/situation.js'
+import type { SituationProfile } from '../src/situation.js'
 
 describe('buildSituationProfile — role', () => {
   it('extracts an explicit Chinese role clause with expertise', () => {
@@ -405,5 +407,143 @@ describe('audience noise gate (1.6.8 P-D)', () => {
   it('keeps genuine short audience phrases', () => {
     const profile = buildSituationProfile('面向产品经理，写一份 PRD 文档')
     expect(profile.role.audience).toBe('产品经理')
+  })
+})
+
+describe('situation branch matrix', () => {
+  it('keeps registered success criteria and lets the current ones win', () => {
+    const registry = { primary: '写周报', constraints: ['预算 5 万'], successCriteria: ['500 字以内'] }
+    expect(mergeGoals(registry, { constraints: [], successCriteria: [] })).toEqual({
+      primary: '写周报', constraints: ['预算 5 万'], successCriteria: ['500 字以内'],
+    })
+    expect(mergeGoals(registry, { constraints: ['不要虚构数据'], successCriteria: ['含表格'] })).toEqual({
+      primary: '写周报', constraints: ['不要虚构数据'], successCriteria: ['含表格'],
+    })
+  })
+
+  it('labels every archetype and returns undefined for other', () => {
+    expect(archetypeLabel('code', false)).toContain('工程师')
+    expect(archetypeLabel('writing', false)).toContain('撰稿')
+    expect(archetypeLabel('analysis', false)).toContain('分析')
+    expect(archetypeLabel('ops', false)).toContain('执行')
+    expect(archetypeLabel('ops', true)).toContain('ops')
+    expect(archetypeLabel('other', false)).toBeUndefined()
+  })
+
+  it('falls back to the raw key for an unknown subtype', () => {
+    expect(subtypeLabel('no-such-subtype' as never, false)).toBe('no-such-subtype')
+    expect(subtypeKeywords('no-such-subtype' as never)).toEqual([])
+    expect(subtypeKeywords('writing-report' as never).length).toBeGreaterThan(0)
+  })
+
+  it('renders the added / modified / dropped drift lines and omits unchanged', () => {
+    const profile = buildSituationProfile('帮我写一份周报，面向 CTO，预算 5 万')
+    expect(renderSituationBlock(profile, false, 'added')).toContain('新增了目标/约束')
+    expect(renderSituationBlock(profile, false, 'modified')).toContain('修改了目标')
+    expect(renderSituationBlock(profile, false, 'dropped')).toContain('移除了部分目标')
+    expect(renderSituationBlock(profile, true, 'added')).toContain('ADDS goal/constraint')
+    expect(renderSituationBlock(profile, true, 'modified')).toContain('MODIFIES the goal')
+    expect(renderSituationBlock(profile, true, 'dropped')).toContain('DROPS some goal')
+    expect(renderSituationBlock(profile, false, 'unchanged')).not.toContain('相对上次结果')
+  })
+
+  it('renders tone, capability, behavior and audience into the role line', () => {
+    const profile = buildSituationProfile('你是一名资深产品经理，精通 B 端设计，先给出结论，面向 CTO，语气要正式')
+    const zh = renderSituationBlock(profile, false)
+    expect(zh).toContain('能力：')
+    expect(zh).toContain('行为：')
+    expect(zh).toContain('受众：')
+    expect(zh).toContain('语气：')
+    const en = renderSituationBlock(profile, true)
+    expect(en).toContain('capability:')
+    expect(en).toContain('behavior:')
+    expect(en).toContain('audience:')
+    expect(en).toContain('tone:')
+  })
+
+  it('skips role and core action at minimal but keeps goal and constraints', () => {
+    const profile = buildSituationProfile('你是一名资深产品经理，帮我写一份周报，不要使用 emoji')
+    const minimal = renderSituationBlock(profile, false, undefined, 'minimal')
+    expect(minimal).toContain('约束：')
+    expect(minimal).not.toContain('角色：')
+    expect(minimal).not.toContain('核心动作：')
+    expect(renderSituationBlock(profile, false, undefined, 'off')).toBe('')
+  })
+
+  it('rejects a noisy audience phrase and keeps scanning for a plausible one', () => {
+    const profile = buildSituationProfile('针对家长的育儿痛点给出方案，面向新手父母')
+    expect(profile.role.audience).toBe('新手父母')
+  })
+
+  it('extracts an English audience, a year-based expertise and an English behavior rule', () => {
+    const audience = buildSituationProfile('Write a report targeting busy CTOs')
+    expect(audience.role.audience).toBe('busy CTOs')
+    const years = buildSituationProfile('I have 10 years of experience writing PRDs')
+    expect(years.role.expertise).toBe('10 years')
+    const behavior = buildSituationProfile('Always lead with the conclusion.')
+    expect(behavior.role.behavior).toBeDefined()
+  })
+
+  it('evicts the oldest cached profile once the cache is full', () => {
+    const first = buildSituationProfile('缓存基线指令 帮我写周报')
+    expect(buildSituationProfile('缓存基线指令 帮我写周报')).toBe(first)
+    for (let i = 0; i < 130; i++) buildSituationProfile(`缓存填充指令 ${i} 帮我写周报`)
+    // The oldest entry is gone, so the same input is re-derived rather than
+    // served from a cache that grew without bound.
+    expect(buildSituationProfile('缓存基线指令 帮我写周报')).not.toBe(first)
+  })
+
+  it('classifies a known type without a subtype at the base confidence', () => {
+    const result = heuristicClassifier.classify('帮我优化一下流程')
+    expect(result.confidence).toBeGreaterThan(0)
+    expect(result.confidence).toBeLessThanOrEqual(1)
+  })
+})
+
+describe('classifier and extractor boundaries', () => {
+  it('raises confidence when the subtype is recognised', () => {
+    const classified = heuristicClassifier.classify('帮我写一份周报', '')
+    expect(classified.type).toBe('writing')
+    expect(classified.subtype).toBeDefined()
+    expect(classified.confidence).toBeGreaterThan(0.6)
+  })
+
+  it('renders every archetype label in both languages', () => {
+    expect(archetypeLabel('code', true)).toBe('senior engineer / architect')
+    expect(archetypeLabel('writing', true)).toBe('senior writer / editor')
+    expect(archetypeLabel('ops', false)).toBeTruthy()
+  })
+
+  it('rejects a verb match whose object is blank', () => {
+    // The verb is there but nothing follows it, so there is no object to tag.
+    expect(extractMainVerbObject('please write ')).toBeUndefined()
+  })
+
+  it('reads a role clause that runs to the end of the input', () => {
+    expect(buildSituationProfile('你是一名资深产品经理').role.explicit).toBe('你是一名资深产品经理')
+    const en = buildSituationProfile('Act as a senior reviewer')
+    expect(en.role.explicit?.toLowerCase()).toContain('senior reviewer')
+  })
+
+  it('extracts an English audience', () => {
+    // The English audience marker is "target(ing) <phrase>".
+    const profile = buildSituationProfile('Write a weekly report targeting busy CTOs')
+    expect(profile.role.audience?.toLowerCase()).toContain('cto')
+  })
+
+  it('renders no role part when the signals carry no nameable label', () => {
+    // Confident enough to be injected (audience + tone) but with neither an
+    // explicit clause nor an archetype — there is simply nothing to name.
+    const profile: SituationProfile = {
+      version: SITUATION_PROFILE_VERSION,
+      role: { confidence: 2, audience: 'CTO', tone: '正式' },
+      task: { type: 'other' },
+      goal: { primary: undefined, constraints: [], successCriteria: [] },
+    }
+    const block = renderSituationBlock(profile, false)
+    // No archetype line is invented for an unclassified task; the soft signals
+    // still render on their own.
+    expect(block).toContain('受众：CTO')
+    expect(block).not.toContain('角色：资深')
   })
 })

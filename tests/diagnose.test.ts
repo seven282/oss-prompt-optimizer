@@ -73,3 +73,28 @@ describe('refineInstruction', () => {
     expect(refineInstruction('en')).toBe('Keep the structure and content unchanged, but tighten redundant wording further; keep the `---`-separated extended-insights appendix unchanged. If it is already concise enough, return it as-is.')
   })
 })
+
+describe('buildDiagnosis in English', () => {
+  it('asks for a heading-free body when headings leaked into plain style', () => {
+    const text = buildDiagnosis({
+      minSectionChars: 10,
+      prompt: '## Role\nx',
+      outputStyle: 'plain',
+      language: 'en',
+      failureCode: OptimizeErrorCode.HEADINGS_IN_PLAIN,
+    })
+    expect(text).toContain('must not contain any section headings')
+  })
+
+  it('reports thin sections in English', () => {
+    const text = buildDiagnosis({
+      minSectionChars: 10,
+      prompt: '## Role\n你\n## Task\n写\n## Context\n团队\n## Format\n短文',
+      outputStyle: 'sections',
+      language: 'en',
+      failureCode: OptimizeErrorCode.THIN_SECTIONS,
+    })
+    expect(text).toContain('Thin section')
+    expect(text).toContain('fewer than 10 meaningful characters')
+  })
+})

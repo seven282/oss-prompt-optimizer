@@ -167,3 +167,39 @@ describe('formatPreferences', () => {
     expect(text).not.toContain('质量评分')
   })
 })
+
+describe('preference branch matrix', () => {
+  it('averages a quality window that mixes judged and unjudged runs', () => {
+    const log = new EpisodeLog()
+    log.push(makeEpisode({ quality: 0.8 }))
+    log.push(makeEpisode({ quality: undefined }))
+    log.push(makeEpisode({ quality: 0.6 }))
+    const prefs = computePreferences(log)
+    // Unjudged runs are excluded, not counted as zero: the window is [0.8, 0.6].
+    expect(prefs.qualityTrend).toEqual([0.7])
+    expect(prefs.feedbackCount).toBe(2)
+  })
+
+  it('formats subtype and profile distributions in Chinese', () => {
+    const log = new EpisodeLog()
+    fillLog(log, 3, { subtype: 'writing-report', profile: 'balanced' })
+    const prefs = computePreferences(log)
+    const text = formatPreferences(prefs, 'zh')
+    expect(text).toContain('高频子类（前 5）：')
+    expect(text).toContain('writing-report: 3 次')
+    expect(text).toContain('Profile 分布：')
+    expect(text).toContain('balanced: 3 次')
+  })
+
+  it('formats subtype and profile distributions in English', () => {
+    const log = new EpisodeLog()
+    fillLog(log, 2, { subtype: 'code-review', profile: 'fast', quality: 0.5 })
+    const prefs = computePreferences(log)
+    const text = formatPreferences(prefs, 'en')
+    expect(text).toContain('Top Subtypes (5):')
+    expect(text).toContain('code-review: 2')
+    expect(text).toContain('Profile Distribution:')
+    expect(text).toContain('fast: 2')
+    expect(text).toContain('Quality: 0.50')
+  })
+})

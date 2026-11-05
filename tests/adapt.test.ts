@@ -241,3 +241,103 @@ describe('formatAdaptationHints', () => {
     expect(text).toContain('edit rate high')
   })
 })
+
+describe('adapt branch matrix', () => {
+  const prefs = (over: Partial<ReturnType<typeof computePreferences>>) => ({
+    total: 10, localUsageRate: 0, localAcceptanceRate: 0, avgQuality: 3, editRate: 0.5,
+    qualityTrend: [] as number[], dominantTaskType: 'writing', taskTypeFreq: new Map<string, number>(),
+    ...over,
+  }) as ReturnType<typeof computePreferences>
+
+  it('raises temperature for a clearly writing-dominant history', () => {
+    const hints = computeAdaptation(
+      prefs({ total: 20, taskTypeFreq: new Map([['writing', 16]]) }),
+      'balanced', 'off', 0.2,
+      DEFAULT_ADAPT_CONFIG,
+    )
+    expect(hints.temperature).toBe(0.4)
+    expect(hints.reasons.join('\n')).toContain('Dominant writing tasks (80%)')
+  })
+
+  it('leaves temperature alone when writing is not dominant', () => {
+    const hints = computeAdaptation(
+      prefs({ taskTypeFreq: new Map([['writing', 3]]) }),
+      'balanced', 'off', 0.2,
+      DEFAULT_ADAPT_CONFIG,
+    )
+    expect(hints.temperature).toBeUndefined()
+  })
+
+  it('formats every hint field in English, including local template and temperature', () => {
+    const text = formatAdaptationHints(
+      { reasons: ['because'], profile: 'fast', localTemplate: 'hybrid', temperature: 0.4 },
+      'en',
+    )
+    expect(text).toContain('Profile → fast')
+    expect(text).toContain('Local template → hybrid')
+    expect(text).toContain('Temperature → 0.4')
+    expect(text).toContain('Reasons:')
+  })
+
+  it('applies a lone localTemplate or temperature override', () => {
+    const base = { profile: 'balanced' as const, localTemplate: 'off' as const, temperature: 0.2 }
+    const local = resolveParams('writing', { reasons: [] }, { localTemplate: 'hybrid' }, base)
+    expect(local.localTemplate).toBe('hybrid')
+    expect(local.source).toBe('user:local')
+    const temp = resolveParams('writing', { reasons: [] }, { temperature: 1.4 }, base)
+    expect(temp.temperature).toBe(1.4)
+    expect(temp.source).toBe('user:temp')
+  })
+})
+
+describe('adapt boundary matrix', () => {
+  const prefs = (over: Record<string, unknown>) => ({
+    total: 20, localUsageRate: 0, localAcceptanceRate: 0, avgQuality: 3, editRate: 0.3,
+    qualityTrend: [] as number[], dominantTaskType: undefined, taskTypeFreq: new Map(),
+    ...over,
+  }) as never
+
+  it('leaves the profile alone in the dead band and when it is already fast', () => {
+    const mid = computeAdaptation(prefs({ editRate: 0.3 }), 'fast', 'off', 0.2, DEFAULT_ADAPT_CONFIG)
+    expect(mid.profile).toBeUndefined()
+    const low = computeAdaptation(prefs({ editRate: 0.01 }), 'fast', 'off', 0.2, DEFAULT_ADAPT_CONFIG)
+    expect(low.profile).toBeUndefined()
+  })
+
+  it('leaves the local template alone when local is already off or acceptance is unremarkable', () => {
+    const alreadyOff = computeAdaptation(
+      prefs({ localUsageRate: 0.5, localAcceptanceRate: 0.01 }), 'balanced', 'off', 0.2, DEFAULT_ADAPT_CONFIG,
+    )
+    expect(alreadyOff.localTemplate).toBeUndefined()
+    const mid = computeAdaptation(
+      prefs({ localUsageRate: 0.5, localAcceptanceRate: 0.6 }), 'balanced', 'off', 0.2, DEFAULT_ADAPT_CONFIG,
+    )
+    expect(mid.localTemplate).toBeUndefined()
+    const alreadyOn = computeAdaptation(
+      prefs({ localUsageRate: 0.5, localAcceptanceRate: 0.99 }), 'balanced', 'on', 0.2, DEFAULT_ADAPT_CONFIG,
+    )
+    expect(alreadyOn.localTemplate).toBeUndefined()
+  })
+
+  it('tolerates a quality trend with a hole in it', () => {
+    const hints = computeAdaptation(
+      prefs({ qualityTrend: [0.9, undefined] }), 'balanced', 'off', 0.5, DEFAULT_ADAPT_CONFIG,
+    )
+    expect(hints.temperature).toBe(0.4)
+  })
+
+  it('does not raise the temperature when writing dominates but it is already warm', () => {
+    const hints = computeAdaptation(
+      prefs({ dominantTaskType: 'writing', taskTypeFreq: new Map([['writing', 16]]), total: 20 }),
+      'balanced', 'off', 0.5, DEFAULT_ADAPT_CONFIG,
+    )
+    expect(hints.temperature).toBeUndefined()
+  })
+
+  it('formats a reasons-only hint in Chinese and a field-only hint in English', () => {
+    expect(formatAdaptationHints({ reasons: ['仅原因'] }, 'zh')).toContain('仅原因')
+    const en = formatAdaptationHints({ reasons: ['x'], temperature: 0.3 }, 'en')
+    expect(en).toContain('Temperature → 0.3')
+    expect(en).not.toContain('Profile →')
+  })
+})

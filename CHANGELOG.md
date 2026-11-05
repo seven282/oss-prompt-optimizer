@@ -8,6 +8,33 @@
 - 版本号遵循十进制进位：末尾 +1，满 10 向前进位（`1.3.9` + 1 = `1.4.0`），**不会出现尾位 ≥ 10**。
 - 已发布的历史条目**不再改写**；本条约定适用于新条目。
 
+## [1.13.3] - 2026-11-06
+
+**覆盖率变成真门禁：四个维度都要 ≥95%，CI 直接卡。**
+
+在此之前测试只跑 `vitest run`，「覆盖率」是一个没人测量的形容词——一份 2026-10 的对齐计划
+里写着「先只测量不设阈值跑一个月」，于是分支密度最高的 `optimizer.ts`（598 个分支）从来
+没有被数字盯过。现在 `vitest.config.ts` 里钉死 statements / branches / functions / lines
+四条 95% 阈值，`pnpm test:coverage` 低于任一条直接非零退出，CI 的 build-test 用它替换了原来
+的 `pnpm test`。
+
+补的是**真实决策路径**，不是把测试写多：宿主能力降级拆成「缺一个 / 缺两个」矩阵（错误消息
+只点缺的那个）、会话目标的 TTL 与淘汰、早停的尾部复位、判官失败的「未判分」语义（不是假
+0 分）、反馈扫描上限、hybrid 精修的重试闭环、以及中英双语每条命令面的分支。当前实测：
+statements 98.5% / branches 95.93% / functions 99.33% / lines 98.89%。
+
+### Added
+
+- **`pnpm test:coverage`**：跑全量单测并输出覆盖率摘要，阈值不过即失败。
+- **CI 覆盖率门禁**：`build-test` 的 Test 步骤改为 `pnpm test:coverage`。
+
+### Changed
+
+- **`@vitest/coverage-v8` 入 devDependencies**（精确锁 `4.1.11`，与 `vitest` 同版本——两者
+  版本不一致时 v8 provider 会静默改写统计口径）。
+- **单测从 998 增至 1081 例**，新增 `optimizer-public` / `optimizer-degraded` /
+  `compat-scope` / `tool` 等文件，覆盖公开面、降级面与生命周期。
+
 ## [1.13.2] - 2026-11-05
 
 **兼容矩阵补齐到 0.2.2-rc.1，并修掉 P9 的三条误报。**

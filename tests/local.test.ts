@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { buildLocalTemplate, buildRefinePrompt, goalAnchorsScore, localTemplateGate } from '../src/local.js'
 import { toRoleTaskGoal } from '../src/validate.js'
-import { buildSituationProfile } from '../src/situation.js'
+import { buildSituationProfile, SITUATION_PROFILE_VERSION, type SituationProfile } from '../src/situation.js'
 
 describe('localTemplateGate (1.5.6)', () => {
   it('passes a structured subcategory with extractable signals in hybrid mode', () => {
@@ -163,5 +163,120 @@ describe('role-task-goal local fold (1.6.5)', () => {
     expect(p).toContain('只输出三行标签——角色：、任务：、目标：')
     const s = buildRefinePrompt('## Role\nx', 'weekly report', true, undefined, undefined, 'sections')
     expect(s).toContain('Keep the ## Role / ## Task / ## Context / ## Format structure')
+  })
+})
+
+describe('local branch matrix', () => {
+  it('scores goal anchors that carry only constraints or only a role', () => {
+    const constraintsOnly = {
+      goal: { constraints: ['预算 5 万'] },
+      role: {},
+      task: { type: 'writing' },
+    } as never
+    expect(goalAnchorsScore(constraintsOnly)).toBeCloseTo(0.3)
+
+    const roleOnly = {
+      goal: { constraints: [] },
+      role: { audience: 'CTO' },
+      task: { type: 'writing' },
+    } as never
+    expect(goalAnchorsScore(roleOnly)).toBeCloseTo(0.2)
+
+    const explicitRole = {
+      goal: { constraints: [] },
+      role: { explicit: '资深分析师' },
+      task: { type: 'writing' },
+    } as never
+    expect(goalAnchorsScore(explicitRole)).toBeCloseTo(0.1)
+  })
+
+  it('gates on each usable signal independently in hybrid mode', () => {
+    // A blank context is NOT a signal: whitespace must not turn a bare
+    // category into a local render.
+    expect(localTemplateGate('翻译', 'hybrid', '   ').ok).toBe(false)
+    // A measurable requirement on its own is.
+    const measurable = localTemplateGate('翻译 300 字以内的产品说明', 'hybrid')
+    expect(measurable.ok).toBe(true)
+    expect(measurable.subtype).toBeDefined()
+  })
+
+  it('refuses an unknown subcategory and echoes the instruction instead', () => {
+    expect(buildLocalTemplate('原始指令', 'no-such-subtype')).toBe('原始指令')
+  })
+
+  it('folds audience, goal, constraints, measurable and context into the render', () => {
+    const zh = buildLocalTemplate('帮我写周报，面向 CTO，不超过 500 字', 'writing-report', 'zh')
+    expect(zh).toContain('面向')
+    expect(zh).toContain('需满足可量化要求')
+    const withContext = buildLocalTemplate('帮我写周报', 'writing-report', 'en', '上周讨论过预算')
+    expect(withContext).toContain('Conversation context: 上周讨论过预算')
+    // A blank context contributes nothing.
+    expect(buildLocalTemplate('帮我写周报', 'writing-report', 'en', '   ')).not.toContain('Conversation context')
+  })
+
+  it('renders the refine prompt with and without goal anchors, diagnosis and RTG shape', () => {
+    const profile = buildSituationProfile('帮我写周报，面向 CTO，预算 5 万，3 天内交给老板')
+    const zh = buildRefinePrompt('本地骨架', '帮我写周报', false, profile)
+    expect(zh).toContain('目标与约束（优化时须保留并补全）')
+    const en = buildRefinePrompt('local seed', 'write a report', true, profile)
+    expect(en).toContain('Goal anchors to keep and complete')
+    // No profile → no anchor block at all.
+    expect(buildRefinePrompt('seed', 'x', false)).not.toContain('目标与约束')
+    // A diagnosis is appended when present, skipped when empty.
+    expect(buildRefinePrompt('seed', 'x', false, profile, '缺少受众')).toContain('上一次输出未体现')
+    expect(buildRefinePrompt('seed', 'x', false, profile, '')).not.toContain('上一次输出未体现')
+    expect(buildRefinePrompt('seed', 'x', true, profile, undefined, 'role-task-goal')).toContain('Role:, Task:, Goal:')
+    expect(buildRefinePrompt('seed', 'x', false, profile, undefined, 'role-task-goal')).toContain('只输出三行标签')
+  })
+})
+
+describe('local render matrix', () => {
+  it('scores a profile that states a primary goal', () => {
+    const profile = buildSituationProfile('帮我写周报，目标是覆盖本周三个项目的进展与风险')
+    expect(goalAnchorsScore(profile)).toBeGreaterThan(0)
+  })
+
+  it('renders the English audience, measurable and context lines from an English instruction', () => {
+    const en = buildLocalTemplate('Write a report targeting busy CTOs, 500 words max', 'writing-report', 'en', 'we discussed the rollout')
+    expect(en).toContain('Audience: busy CTOs')
+    expect(en).toContain('Must meet quantifiable requirements')
+    expect(en).toContain('Conversation context: we discussed the rollout')
+  })
+
+  it('appends an English diagnosis to the refine prompt', () => {
+    const profile = buildSituationProfile('帮我写周报，面向 CTO')
+    const en = buildRefinePrompt('seed', 'write a report', true, profile, 'audience')
+    expect(en).toContain('the previous attempt missed')
+  })
+
+  it('renders a goal sentence into the context block in both languages', () => {
+    expect(buildLocalTemplate('帮我写周报，目标是覆盖三个项目进展', 'writing-report', 'zh')).toContain('覆盖三个项目进展')
+    expect(buildLocalTemplate('Write a report, the goal is to cover three projects', 'writing-report', 'en')).toContain('three projects')
+  })
+})
+
+describe('refine and render boundaries', () => {
+  it('renders English anchors and skips the goal line when there is none', () => {
+    const constrained: SituationProfile = {
+      version: SITUATION_PROFILE_VERSION,
+      role: { confidence: 1, audience: 'CTO' },
+      task: { type: 'writing' },
+      goal: { primary: undefined, constraints: ['结论先行'], successCriteria: [] },
+    }
+    const en = buildRefinePrompt('## Role\nWriter', 'write a weekly report', true, constrained)
+    expect(en).toContain('Constraint: 结论先行')
+    expect(en).toContain('Audience: CTO')
+    expect(en).not.toContain('Goal:')
+  })
+
+  it('injects the conversation context into the rendered template', () => {
+    const en = buildLocalTemplate('Write a weekly report', 'writing-report', 'en', '  previous round agreed on scope  ')
+    expect(en).toContain('Conversation context: previous round agreed on scope')
+    const zh = buildLocalTemplate('写一份周报', 'writing-report', 'zh', '上一轮已确认范围')
+    expect(zh).toContain('对话背景：上一轮已确认范围')
+  })
+
+  it('returns the instruction untouched for an unknown subtype', () => {
+    expect(buildLocalTemplate('随便写点', 'nope-unknown', 'zh')).toBe('随便写点')
   })
 })

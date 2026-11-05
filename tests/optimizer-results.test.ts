@@ -113,3 +113,16 @@ describe('resolveTemplates', () => {
     expect(merged.iterateEn).toBe(DEFAULT_TEMPLATES.iterateEn)
   })
 })
+
+describe('resolveTemplates with a partial custom set', () => {
+  it('fills the missing languages from the built-in set', () => {
+    const resolved = resolveTemplates({
+      templateId: 'default',
+      metaPromptTemplate: { optimizeEn: DEFAULT_TEMPLATES.optimizeEn },
+    } as never)
+    // The Chinese variants were not overridden, so the defaults stand.
+    expect(resolved.optimizeZh).toBe(DEFAULT_TEMPLATES.optimizeZh)
+    expect(resolved.iterateZh).toBe(DEFAULT_TEMPLATES.iterateZh)
+    expect(resolved.optimizeEn).toBe(DEFAULT_TEMPLATES.optimizeEn)
+  })
+})

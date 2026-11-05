@@ -195,3 +195,202 @@ describe('formatStatus (P1, 1.7.9)', () => {
     expect(formatStatus(makeSnapshot({ stats: { ...base, feedbackBiasApplied: 0 } }), 'zh')).toContain('温度偏置 无偏置')
   })
 })
+
+describe('formatStatus branch matrix', () => {
+  it('maps every resolution-source token in both languages', () => {
+    const cases: [string, string, string][] = [
+      ['user:profile', '用户覆盖（命令，会话级）', 'user override (command, session)'],
+      ['user:local', '用户覆盖（命令，会话级）', 'user override (command, session)'],
+      ['user:temp', '用户覆盖（命令，会话级）', 'user override (command, session)'],
+      ['session:profile', '会话学习（Layer 1）', 'session learning (Layer 1)'],
+      ['session:local', '会话学习（Layer 1）', 'session learning (Layer 1)'],
+      ['session:temp', '会话学习（Layer 1）', 'session learning (Layer 1)'],
+      ['smart:code', '智能默认值（Layer 2）', 'smart default (Layer 2)'],
+      ['smart:writing', '智能默认值（Layer 2）', 'smart default (Layer 2)'],
+      ['smart:analysis', '智能默认值（Layer 2）', 'smart default (Layer 2)'],
+      ['smart:ops', '智能默认值（Layer 2）', 'smart default (Layer 2)'],
+      ['smart:other', '智能默认值（Layer 2）', 'smart default (Layer 2)'],
+    ]
+    for (const [source, zh, en] of cases) {
+      const snapshot = makeSnapshot({ effective: { profile: 'balanced', localTemplate: 'off', temperature: 0.2, source } })
+      expect(formatStatus(snapshot, 'zh')).toContain(zh)
+      expect(formatStatus(snapshot, 'en')).toContain(en)
+    }
+    // An unknown token is echoed rather than invented — and must not be
+    // swallowed into one of the labels above.
+    const unknown = makeSnapshot({ effective: { profile: 'balanced', localTemplate: 'off', temperature: 0.2, source: 'exotic:source' } })
+    expect(formatStatus(unknown, 'zh')).toContain('exotic:source')
+    expect(formatStatus(unknown, 'en')).toContain('exotic:source')
+  })
+
+  it('switches the duration unit to minutes past one minute', () => {
+    const stats = { ...makeSnapshot().stats, avgCallMs: 90000, maxDurationMs: 125000 }
+    expect(formatStatus(makeSnapshot({ stats }), 'zh')).toContain('平均耗时 1.5 分钟（最长 2.1 分钟）')
+    expect(formatStatus(makeSnapshot({ stats }), 'en')).toContain('avg 1.5 min (max 2.1 min)')
+  })
+
+  it('handles a snapshot with no records and no events in English too', () => {
+    const text = formatStatus(makeSnapshot({
+      prefs: {
+        total: 0, taskTypeFreq: new Map(), subtypeFreq: new Map(), localAcceptanceRate: 0,
+        localUsageRate: 0, qualityTrend: [], avgQuality: 0, editRate: 0, avgOutputTokens: 0,
+        avgInputTokens: 0, avgDurationMs: 0, profileFreq: new Map(), feedbackCount: 0,
+      },
+      recentEvents: [],
+    }), 'en')
+    expect(text).toContain('No records yet')
+    expect(text).toContain('none.')
+  })
+
+  it('omits the dominant task line when no subtype dominates', () => {
+    const prefs = { ...makeSnapshot().prefs, dominantTaskType: undefined }
+    const zh = formatStatus(makeSnapshot({ prefs }), 'zh')
+    expect(zh).not.toContain('最常用:')
+    expect(formatStatus(makeSnapshot({ prefs }), 'en')).not.toContain('Dominant:')
+  })
+
+  it('renders every eval verdict label, and degrades to n/a fields', () => {
+    const base = { runs: 3, at: Date.UTC(2026, 0, 2, 3, 4, 5) }
+    const pairs: [string, string, string][] = [
+      ['pass', '通过', 'pass'],
+      ['regress', '回归', 'REGRESS'],
+      ['below-threshold', '未达阈值', 'below threshold'],
+      ['no-baseline', '无基线', 'no baseline'],
+      ['no-score', '无判分', 'nothing scored'],
+    ]
+    for (const [verdict, zh, en] of pairs) {
+      const snapshot = makeSnapshot({ evalSummary: { ...base, aggregate: 0.7, baseline: 0.6, verdict } })
+      expect(formatStatus(snapshot, 'zh')).toContain(`（基线 0.60，${zh}）`)
+      expect(formatStatus(snapshot, 'en')).toContain(`(baseline 0.60, ${en})`)
+    }
+    // An unknown verdict token is echoed, not replaced with a label it does not
+    // have — a new verdict must remain visible.
+    expect(formatStatus(makeSnapshot({ evalSummary: { ...base, verdict: 'inconclusive' } }), 'zh')).toContain('inconclusive')
+    // Absent aggregate / baseline / verdict → 0-1 as n/a, never a fabricated 0.
+    const bare = formatStatus(makeSnapshot({ evalSummary: { ...base } }), 'zh')
+    expect(bare).toContain('最近 n/a（基线 n/a，n/a）')
+    expect(bare).toContain('历史 3 次')
+    expect(formatStatus(makeSnapshot({ evalSummary: { ...base } }), 'en')).toContain('Eval: latest n/a')
+    // No summary at all → no eval line, so an unmeasured host is unchanged.
+    expect(formatStatus(makeSnapshot(), 'zh')).not.toContain('评测:')
+  })
+
+  it('renders a selection line with no runs and no score', () => {
+    const stats = {
+      ...makeSnapshot().stats,
+      selectRuns: 0, selectGains: 0, lastSelectCandidates: 2, lastSelectChosen: 1,
+      lastSelectScore: 0, lastSelectGate: 0,
+    }
+    const zh = formatStatus(makeSnapshot({ stats }), 'zh')
+    expect(zh).toContain('（n/a，结构门 0）')
+    expect(zh).toContain('累计 0 次择优')
+    expect(zh).toContain('（0%）')
+    expect(formatStatus(makeSnapshot({ stats }), 'en')).toContain('last 1/2 candidates (n/a, gate 0)')
+  })
+
+  it('counts a read session with no judgments without inventing a negative rate', () => {
+    const stats = {
+      ...makeSnapshot().stats,
+      feedbackSessions: 2, feedbackPositive: 0, feedbackNegative: 0, feedbackBiasApplied: 0,
+    }
+    const zh = formatStatus(makeSnapshot({ stats }), 'zh')
+    expect(zh).toContain('宿主反馈: 👍 0 / 👎 0（2 个会话）')
+    expect(zh).not.toContain('负面')
+    expect(formatStatus(makeSnapshot({ stats }), 'en')).toContain('2 session(s)')
+  })
+
+  it('renders events with and without the optional fields', () => {
+    const events = [
+      { ts: Date.now(), method: 'optimize', ok: true },
+      { ts: Date.now(), method: 'iterate', ok: true, local: true, durationMs: 65000 },
+      { ts: Date.now(), method: 'optimize', ok: false },
+    ]
+    const zh = formatStatus(makeSnapshot({ recentEvents: events }), 'zh')
+    expect(zh).toMatch(/✅ iterate\s+本地 · 1\.1 分钟/)
+    expect(zh).toContain('❌ optimize error')
+    expect(formatStatus(makeSnapshot({ recentEvents: events }), 'en')).toContain('✅ iterate ')
+    expect(formatStatus(makeSnapshot({ recentEvents: events }), 'en')).toContain(' local · 1.1 min')
+    expect(formatStatus(makeSnapshot({ recentEvents: events }), 'en')).toContain('❌ optimize error')
+  })
+
+  it('reports the settings panel and auto-adapt state as unavailable when off', () => {
+    const zh = formatStatus(makeSnapshot({ settingsPanel: false, autoAdapt: true, minAdaptEpisodes: 5 }), 'zh')
+    expect(zh).toContain('自迭代: 开（≥5 次生效）')
+    expect(zh).toContain('不可用（走 cordis.patch.yml）')
+    const en = formatStatus(makeSnapshot({ settingsPanel: false, autoAdapt: false }), 'en')
+    expect(en).toContain('Auto-adapt: off')
+    expect(en).toContain('unavailable (cordis.patch.yml)')
+  })
+})
+
+describe('formatStatus with no measured usage', () => {
+  const empty = () => makeSnapshot({
+    stats: {
+      ...makeSnapshot().stats,
+      runs: 0,
+      success: 0,
+      failed: 0,
+      cached: 0,
+      local: 0,
+      refined: 0,
+      totalDurationMs: 0,
+      maxDurationMs: 0,
+      lastOutputTokens: 0,
+      lastCallMs: 0,
+      avgCallMs: 0,
+      maxCallMs: 0,
+      totalCallMs: 0,
+      callCount: 0,
+      lastRunCalls: 0,
+      lastInputTokens: 0,
+      usageCalls: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      reasoningTokens: 0,
+      lastRunUsage: null,
+      lastRunRoute: null,
+      selectRuns: 0,
+      selectGains: 0,
+      lastSelectCandidates: 1,
+      lastSelectChosen: 0,
+      lastSelectScore: 0,
+      lastSelectGate: 0,
+      feedbackSessions: 0,
+      feedbackPositive: 0,
+      feedbackNegative: 0,
+    },
+    settingsPanel: false,
+  })
+
+  it('reports the unmeasured path when the adapter never reported usage', () => {
+    const zh = formatStatus(empty(), 'zh')
+    expect(zh).toContain('适配器未上报 usage')
+    const en = formatStatus(empty(), 'en')
+    expect(en).toContain('adapter reported no usage')
+    expect(en).toContain('unavailable (cordis.patch.yml)')
+  })
+
+  it('reports a 0% cache hit when usage was reported but nothing was billed', () => {
+    const base = empty()
+    const snapshot = makeSnapshot({
+      stats: { ...base.stats, usageCalls: 2, lastRunUsage: null, inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      settingsPanel: false,
+    })
+    const zh = formatStatus(snapshot, 'zh')
+    expect(zh).toContain('缓存命中 0%')
+    // No last-run usage -> the per-run clause is omitted, not printed as zeros.
+    expect(zh).not.toContain('上一次')
+    const en = formatStatus(snapshot, 'en')
+    expect(en).toContain('Cache hit 0%')
+    expect(en).not.toContain('Real usage: cumulative input 0 (cache read 0 / write 0 / uncached 0) ｜ output 0\n  undefined')
+  })
+
+  it('prints 0 calls per optimization when nothing ran', () => {
+    const zh = formatStatus(empty(), 'zh')
+    expect(zh).toContain('平均调用 0 次/次优化')
+    const en = formatStatus(empty(), 'en')
+    expect(en).toContain('Avg calls 0/run')
+  })
+})

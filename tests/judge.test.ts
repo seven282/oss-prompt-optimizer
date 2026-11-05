@@ -226,3 +226,75 @@ describe('aggregateJudge (1.11.0)', () => {
     expect(result.mean).toBe(3)
   })
 })
+
+describe('judge branch matrix', () => {
+  it('builds the English user message', () => {
+    const text = buildJudgeUser('write a report', '## Role\nwriter', 'en')
+    expect(text).toContain('Raw instruction:')
+    expect(text).toContain('Score the optimized prompt against the rubric')
+  })
+
+  it('rejects every malformed block shape, naming each one', () => {
+    const text = [
+      '维度: ',
+      '理由: 没有 id 的块',
+      '分数: 3',
+      '',
+      '维度: clarity',
+      '分数: 3',
+      '理由: 分数写在理由前面',
+      '',
+      '维度: clarity',
+      '理由: 短',
+      '分数: 3',
+      '',
+      '维度: clarity',
+      '理由: 理由充分且具体',
+      '分数: 3.5',
+      '',
+      '维度: clarity',
+      '理由: 理由充分且具体',
+      '分数: 9',
+    ].join('\n')
+    const report = parseJudgeReport(text, ['clarity'])
+    expect(report.complete).toBe(false)
+    expect(report.scores).toHaveLength(0)
+    expect(report.rejected.length).toBe(4)
+    expect(report.missing).toEqual(['clarity'])
+  })
+
+  it('records an unknown dimension as fabricated and keeps the first duplicate', () => {
+    const text = [
+      '维度: mystery',
+      '理由: 维度不存在',
+      '分数: 4',
+      '',
+      '维度: clarity',
+      '理由: 第一次出现，理由充分',
+      '分数: 4',
+      '',
+      '维度: clarity',
+      '理由: 第二次出现',
+      '分数: 2',
+    ].join('\n')
+    const report = parseJudgeReport(text, ['clarity'])
+    expect(report.fabricated).toEqual(['mystery'])
+    expect(report.scores).toHaveLength(1)
+    expect(report.scores[0]).toMatchObject({ id: 'clarity', score: 4 })
+    expect(report.rejected).toContain('clarity')
+  })
+
+  it('sorts scores into rubric order even when the answer arrives shuffled', () => {
+    const text = [
+      '维度: economy',
+      '理由: 精简到位，没有冗余',
+      '分数: 4',
+      '',
+      '维度: clarity',
+      '理由: 表达清楚，层次分明',
+      '分数: 5',
+    ].join('\n')
+    const report = parseJudgeReport(text, ['clarity', 'economy'])
+    expect(report.scores.map((score) => score.id)).toEqual(['clarity', 'economy'])
+  })
+})

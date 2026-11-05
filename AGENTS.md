@@ -13,6 +13,7 @@ DeepSeek Harness 插件 `oss-prompt-optimizer`：把原始指令优化为专业�
 pnpm install --store-dir .pnpm-store --cache-dir .pnpm-cache   # 沙箱内安装（publish 前勿用 --frozen-lockfile 装本地）
 pnpm run typecheck    # tsc --noEmit（src/tests）+ tsc -p tsconfig.client.json（客户端 client/*.js）
 pnpm test             # vitest run（mock llm，无需真实密钥；文件数与用例数见下方"单测单文件"一条）
+pnpm test:coverage    # vitest run --coverage：真门禁，statements/branches/functions/lines 四条都 ≥95% 才通过
 pnpm run build        # tsc -p tsconfig.build.json + node scripts/copy-client.mjs（client.js → lib/client.js）
 pnpm preflight        # 门禁 P1–P10；加 --browser-e2e 追加 P11（真浏览器，须在沙箱外跑）
 pnpm eval:grader      # 单独跑 P10：构建产物上的判官 + 金标集 + 择优/反馈反向控制自检（88 项）
@@ -28,8 +29,8 @@ pnpm check:docs       # 文档门禁：每个语言对的标题层级与互链�
   （会过期）——权威来源是 `docs/vault/50-Testing/测试覆盖清单.md`，由 `node scripts/check-testcounts.mjs`
   双向校验（漏列/多列都报错）。改测试后必须同步该表。
 - CI（`.github/workflows/ci.yml`）：`permissions: contents: read` + `concurrency` 取消旧 run。
-  主 job（ubuntu，15min）= install → typecheck → test → build → preflight（offline）；
-  `windows-test` job 只跑 typecheck + test（历史上两次真机事故都是 Windows 特有）；
+  主 job（ubuntu，15min）= install → typecheck → **test:coverage（覆盖率门禁，四维 ≥95%）** → build → preflight（offline）；
+  `windows-test` job 只跑 typecheck + test（覆盖率门禁只在 Linux 上跑一次：阈值是全局数字，两个平台重复测量只会制造抖动；历史上两次真机事故都是 Windows 特有）；
   `audit` job **advisory**（`continue-on-error`，不阻断）。node 22 / pnpm 12（`packageManager` 已钉）。
 - **项目没有 linter**：devDeps 无 biome/eslint，`scripts` 无 lint。编辑器里的 biome `organizeImports`
   提示是**已知且接受**的既有噪音——不要"顺手修复"，也不要引入 lint 工具。客户端 `client/*.js`

@@ -159,3 +159,69 @@ describe('formatting', () => {
     expect(feedbackToken(ledgers, 0.1)).toBe('FEEDBACK:SESSIONS:1|POSITIVE:1|NEGATIVE:1|BIAS:0.1')
   })
 })
+
+describe('feedback branch matrix', () => {
+  it('accepts the envelopes a Remote may return and rejects a definite miss', () => {
+    expect(feedbackItems([{ rating: 'positive' }])).toHaveLength(1)
+    expect(feedbackItems({ ok: true, value: { items: [{ rating: 'negative' }] } })).toHaveLength(1)
+    expect(feedbackItems({ ok: true, value: [{ rating: 'negative' }] })).toHaveLength(1)
+    expect(feedbackItems({ items: [{ rating: 'positive' }] })).toHaveLength(1)
+    expect(feedbackItems({ ok: false, value: [] })).toBeUndefined()
+    expect(feedbackItems(null)).toBeUndefined()
+    expect(feedbackItems('nope')).toBeUndefined()
+    expect(feedbackItems({ value: { items: 'nope' } })).toBeUndefined()
+  })
+
+  it('keeps a note flag and a valid timestamp, drops a corrupt one', () => {
+    expect(normalizeItem({ rating: 'positive', note: '  good  ', createdAt: 123 }))
+      .toEqual({ rating: 'positive', withNote: true, ts: 123 })
+    expect(normalizeItem({ rating: 'positive', note: '   ', createdAt: Number.NaN }))
+      .toEqual({ rating: 'positive', withNote: false })
+  })
+
+  it('renders a populated ledger with categories in both languages', () => {
+    const ledger = mergeItems('abcdef123456', [
+      { rating: 'positive', category: 'tone', note: '好' },
+      { rating: 'negative', category: 'tone' },
+      { rating: 'negative' },
+    ])
+    const zh = formatFeedback([ledger], 'zh')
+    expect(zh).toContain('会话 abcdef12…')
+    expect(zh).toContain('含备注 1')
+    expect(zh).toContain('分类: tone×2')
+    const en = formatFeedback([ledger], 'en')
+    expect(en).toContain('Session abcdef12…')
+    expect(en).toContain('1 with note')
+    expect(en).toContain('Categories: tone×2')
+  })
+
+  it('returns the empty and unavailable messages without inventing counts', () => {
+    expect(formatFeedback([], 'zh')).toContain('暂无宿主反馈记录')
+    expect(formatFeedback([], 'en')).toContain('No host feedback recorded')
+    expect(formatFeedback([], 'zh', false)).toContain('宿主未提供 messageFeedback')
+    expect(formatFeedback([], 'en', false)).toContain('Host exposes no messageFeedback')
+    // A ledger with only categories still counts as activity, but has no rate.
+    const categoriesOnly = { ...emptyLedger('s'), categories: { tone: 2 } }
+    expect(formatFeedback([categoriesOnly], 'zh')).not.toContain('负面')
+  })
+})
+
+describe('feedback rendering in English', () => {
+  it('keeps the rate, the note count and the category slugs', () => {
+    const ledger = mergeItems('session-abcdefgh', [
+      { rating: 'negative', category: 'correctness', note: 'hidden' },
+      { rating: 'positive' },
+    ], 9)
+    const en = formatFeedback([ledger], 'en')
+    expect(en).toContain('50% negative')
+    expect(en).toContain('1 with note')
+    expect(en).toContain('Categories: correctness×1')
+    expect(en).toContain('counts only')
+    expect(en).not.toContain('hidden')
+  })
+
+  it('ignores a primitive value envelope', () => {
+    // `{ ok: true, value: 'x' }` carries no item list: definitely nothing to read.
+    expect(feedbackItems({ ok: true, value: 'x' })).toBeUndefined()
+  })
+})

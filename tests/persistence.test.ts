@@ -4,7 +4,7 @@
  * atomic write, and adapter factory behavior.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -15,6 +15,7 @@ import {
   cropEpisodes,
   cropEvents,
   parseState,
+  resolveStateDir,
   serializeState,
 } from '../src/persistence.js'
 import { EpisodeLog, type CroppedEpisode, type Episode } from '../src/episode.js'
@@ -208,5 +209,76 @@ describe('createPersistence', () => {
     const data: PersistData = { version: PERSIST_VERSION, updatedAt: 0, stats: STATS, episodes: [], events: [], evalRuns: [], evalBaseline: null }
     expect(adapter.save(data)).toBe(true)
     expect(existsSync(path)).toBe(true)
+  })
+})
+
+describe('persistence branch matrix', () => {
+  it('rejects every malformed document shape', () => {
+    expect(parseState('null')).toBeNull()
+    expect(parseState('[]')).toBeNull()
+    expect(parseState(JSON.stringify({ version: PERSIST_VERSION }))).toBeNull()
+    expect(parseState(JSON.stringify({ version: PERSIST_VERSION, stats: {} }))).toBeNull()
+    expect(parseState(JSON.stringify({ version: PERSIST_VERSION, stats: {}, episodes: [] }))).toBeNull()
+    expect(parseState(JSON.stringify({ version: PERSIST_VERSION, stats: {}, episodes: [], events: [] })))
+      .toMatchObject({ updatedAt: 0, evalRuns: [], evalBaseline: null })
+  })
+
+  it('repairs additive evaluation fields instead of trusting them', () => {
+    const state = parseState(JSON.stringify({
+      version: PERSIST_VERSION,
+      stats: {},
+      episodes: [],
+      events: [],
+      evalRuns: [null, 'x', { ts: 1 }],
+      evalBaseline: 'nope',
+    }))
+    expect(state?.evalRuns).toHaveLength(1)
+    expect(state?.evalBaseline).toBeNull()
+    const legacy = parseState(JSON.stringify({ version: PERSIST_VERSION, stats: {}, episodes: [], events: [] }))
+    expect(legacy?.evalRuns).toEqual([])
+  })
+
+  it('reports a failed write instead of throwing', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'po-fail-'))
+    const blocked = join(dir, 'blocked')
+    writeFileSync(blocked, 'not a directory')
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const store = new FilePersistence(join(blocked, 'state.json'))
+      expect(store.save({} as PersistData)).toBe(false)
+      expect(warn).toHaveBeenCalled()
+    } finally {
+      warn.mockRestore()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('resolves the state directory from an explicit path, DSH_HOME, or the home default', () => {
+    const previous = process.env.DSH_HOME
+    try {
+      expect(resolveStateDir('  /tmp/explicit.json ')).toBe('/tmp/explicit.json')
+      process.env.DSH_HOME = '  /tmp/dsh-home  '
+      expect(resolveStateDir()).toBe(join('/tmp/dsh-home', 'oss-prompt-optimizer', 'state.json'))
+      process.env.DSH_HOME = '   '
+      expect(resolveStateDir()).toContain(join('.dsh', 'oss-prompt-optimizer', 'state.json'))
+    } finally {
+      if (previous === undefined) delete process.env.DSH_HOME
+      else process.env.DSH_HOME = previous
+    }
+  })
+})
+
+describe('state repair for the eval fields', () => {
+  it('drops a baseline that is not an object', () => {
+    const parsed = parseState(serializeState({
+      version: 1,
+      updatedAt: 1,
+      stats: {} as never,
+      episodes: [],
+      events: [],
+      evalRuns: [],
+      evalBaseline: 'nope' as never,
+    }))
+    expect(parsed?.evalBaseline).toBeNull()
   })
 })

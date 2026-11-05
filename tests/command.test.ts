@@ -3,8 +3,10 @@ import type { StreamChunk } from '@deepseek-ai/dsh-llm'
 import { TimeoutReason } from '@deepseek-ai/dsh-timeout'
 import { CommandId } from '@deepseek-ai/dsh-commands'
 import { PromptOptimizerService, PROMPT_OPTIMIZER_TIMEOUT_CODE } from '../src/optimizer.js'
-import type { OptimizeOptions } from '../src/optimizer.js'
+import type { OptimizeOptions, OptimizeStats } from '../src/optimizer.js'
 import type { Config } from '../src/config.js'
+import { OptimizeError, OptimizeErrorCode } from '../src/errors.js'
+import type { EvalComparison, EvalRun } from '../src/eval.js'
 
 const FOUR_SECTIONS = `## Role
 专家
@@ -410,5 +412,420 @@ describe('/template presentation scene (1.6.4)', () => {
     const r = (await tmpl.handler(invocation('演示'))) as { kind: string; text: string }
     expect(r.kind).toBe('success')
     expect(r.text).toContain('明确受众与目的')
+  })
+})
+
+/** A complete stats snapshot so `--stats` can be driven field by field. */
+function statsFixture(over: Partial<OptimizeStats> = {}): OptimizeStats {
+  return {
+    runs: 2, success: 2, failed: 0, cached: 0, local: 0, refined: 0,
+    totalDurationMs: 200, maxDurationMs: 150, lastOutputTokens: 42, lastCallMs: 100,
+    avgCallMs: 100, maxCallMs: 150, totalCallMs: 200, callCount: 2,
+    lastRunCalls: 1, lastInputTokens: 30, usageCalls: 2,
+    inputTokens: 20, outputTokens: 80, cacheReadTokens: 5, cacheWriteTokens: 0,
+    reasoningTokens: 3,
+    lastRunUsage: { calls: 2, inputTokens: 20, outputTokens: 80, cacheReadTokens: 5, cacheWriteTokens: 0, reasoningTokens: 3 },
+    lastRunRoute: { provider: 'deepseek-official', model: 'deepseek-v4-flash', reasoningEffort: 'high' },
+    selectRuns: 2, selectGains: 1, lastSelectCandidates: 3, lastSelectChosen: 2,
+    lastSelectScore: 0.9, lastSelectGate: 3,
+    feedbackSessions: 1, feedbackPositive: 3, feedbackNegative: 1, feedbackBiasApplied: -0.1,
+    ...over,
+  }
+}
+
+function evalRunFixture(over: Partial<EvalRun> = {}): EvalRun {
+  return {
+    ts: Date.UTC(2026, 0, 2, 3, 4, 5),
+    cases: 2, optimized: 2, deterministicPass: 2, scored: 2,
+    injectionCases: 0, leaked: 0, aggregate: 0.85, deterministicPassRate: 1,
+    perDimension: { clarity: 4.5 }, billedInputTokens: 120, outputTokens: 240,
+    mined: false, results: [],
+    ...over,
+  }
+}
+
+function comparisonFixture(over: Partial<EvalComparison> = {}): EvalComparison {
+  return { baseline: 0.8, current: 0.85, delta: 0.05, threshold: 0.6, verdict: 'pass', ...over }
+}
+
+describe('/optimize branch matrix', () => {
+  const optimize = (commands: CommandDef[]) => commands.find((c) => c.name === 'optimize')!.handler
+
+  it('treats a missing, non-deriving, empty or throwing session as "no context"', async () => {
+    const { commands, service } = makeService(() => textStream(FOUR_SECTIONS), { ...DEFAULT_CONFIG, contextAware: true })
+    const spy = vi.spyOn(service, 'optimize').mockResolvedValue({ prompt: FOUR_SECTIONS, optimized: true, retries: 0 })
+    const handler = optimize(commands)
+    const variants: unknown[] = [
+      undefined,
+      {},
+      { session: {} },
+      { session: { deriveMessages: () => [] } },
+      { session: { deriveMessages: () => [{ content: [{ type: 'text', text: 'only the command itself' }] }] } },
+      { session: { deriveMessages: () => { throw new Error('session boom') } } },
+    ]
+    for (const agent of variants) {
+      const result = await handler({ ...invocation('写周报'), agent }) as { kind: string }
+      expect(result.kind).toBe('success')
+    }
+    for (const call of spy.mock.calls) expect(call[1]?.context).toBeUndefined()
+
+    // A two-message session contributes the PRIOR message only: the last one is
+    // the command line being executed and must not be fed back as context.
+    await handler({
+      ...invocation('写周报'),
+      agent: {
+        session: {
+          deriveMessages: () => [
+            { content: [{ type: 'text', text: '第一轮：明确需求' }] },
+            { content: [{ type: 'text', text: '第二轮：/optimize 写周报' }] },
+          ],
+        },
+      },
+    })
+    const last = spy.mock.calls.at(-1)
+    expect(last?.[1]?.context).toContain('第一轮')
+    expect(last?.[1]?.context).not.toContain('/optimize 写周报')
+  })
+
+  it('passes an UNKNOWN OptimizeError message through but maps stable codes to text', async () => {
+    const { commands, service } = makeService(() => textStream(FOUR_SECTIONS))
+    const spy = vi.spyOn(service, 'optimize')
+    spy
+      .mockRejectedValueOnce(new OptimizeError(OptimizeErrorCode.UNKNOWN, 'provider said 429'))
+      .mockRejectedValueOnce(new OptimizeError(OptimizeErrorCode.TIMEOUT, 'deadline'))
+      .mockRejectedValueOnce('a bare string, not an Error')
+    const handler = optimize(commands)
+
+    expect(await handler(invocation('x'))).toMatchObject({ kind: 'error', text: 'provider said 429' })
+    expect(await handler(invocation('x'))).toMatchObject({ kind: 'error', text: expect.stringContaining('超时') })
+    expect(await handler(invocation('x'))).toMatchObject({ kind: 'error', text: expect.stringContaining('a bare string') })
+  })
+
+  it('reports the fallback default when a failed result carries no error text', async () => {
+    const { commands, service } = makeService(() => textStream(FOUR_SECTIONS))
+    vi.spyOn(service, 'optimize').mockResolvedValue({ prompt: '原文', optimized: false, retries: 1 })
+    const result = await optimize(commands)(invocation('x')) as { kind: string; text: string }
+    expect(result.kind).toBe('error')
+    expect(result.text).toBe('prompt-optimize: 优化失败')
+  })
+
+  it('reports provider usage, selection, feedback and the route in --stats', async () => {
+    const { commands, service } = makeService(() => textStream(FOUR_SECTIONS))
+    vi.spyOn(service, 'getStats').mockReturnValue(statsFixture())
+    const result = await optimize(commands)(invocation('--stats')) as { kind: string; text: string }
+    // REALIN = uncached 20 + cache read 5 + write 0
+    expect(result.text).toContain('REALIN:25|REALOUT:80|REALCALLS:2')
+    expect(result.text).toContain('SELRUNS:2|SELGAINS:1|SELCAND:3|SELCHOSEN:2|SELSCORE:0.9|SELGATE:3')
+    expect(result.text).toContain('FBSESSIONS:1|FBPOS:3|FBNEG:1|FBBIAS:-0.1')
+    expect(result.text).toContain('MODEL:deepseek-v4-flash|PROVIDER:deepseek-official|EFFORT:high')
+  })
+
+  it('renders --feedback in English and survives a failing scan', async () => {
+    const { commands, service } = makeService(() => textStream(FOUR_SECTIONS))
+    service.setMetaPromptLanguage('en')
+    vi.spyOn(service, 'scanFeedback').mockRejectedValue(new Error('host refused'))
+    const result = await optimize(commands)(invocation('--feedback')) as { kind: string; text: string }
+    expect(result.kind).toBe('success')
+    expect(result.text).toContain('FEEDBACK:SESSIONS:0')
+  })
+
+  it('explains --select both when a selection ran and when it produced no detail', async () => {
+    const { commands, service } = makeService(() => textStream(FOUR_SECTIONS))
+    vi.spyOn(service, 'getStats').mockReturnValue(statsFixture({ lastSelectScore: 0, lastSelectChosen: 1 }))
+    vi.spyOn(service, 'selectSummary').mockReturnValueOnce(undefined).mockReturnValue('  #1 won')
+    const handler = optimize(commands)
+
+    const zh = await handler(invocation('--select')) as { text: string }
+    expect(zh.text).toContain('上次择优 1/3')
+    expect(zh.text).toContain('n/a')
+    expect(zh.text).not.toContain('#1 won')
+
+    const en = await (async () => {
+      service.setMetaPromptLanguage('en')
+      return handler(invocation('--select')) as Promise<{ text: string }>
+    })()
+    expect(en.text).toContain('last selection 1/3')
+    expect(en.text).toContain('#1 won')
+  })
+
+  it('rejects unknown --auto and --language arguments and reports status', async () => {
+    const { commands } = makeService(() => textStream(FOUR_SECTIONS))
+    const handler = optimize(commands)
+    expect(await handler(invocation('--auto status'))).toMatchObject({ kind: 'success', text: 'AUTO_OPTIMIZE:OFF' })
+    expect(await handler(invocation('--auto maybe'))).toMatchObject({ kind: 'error', text: expect.stringContaining('on | off | toggle | status') })
+    expect(await handler(invocation('--language status'))).toMatchObject({ kind: 'success', text: 'META_LANGUAGE:AUTO' })
+    expect(await handler(invocation('--language klingon'))).toMatchObject({ kind: 'error', text: expect.stringContaining('--language') })
+  })
+
+  it('accepts and rejects every --set-* override', async () => {
+    const { commands, service } = makeService(() => textStream(FOUR_SECTIONS))
+    const handler = optimize(commands)
+    const text = async (raw: string) => (await handler(invocation(raw)) as { kind: string; text: string })
+
+    expect(await text('--set-profile fast')).toMatchObject({ kind: 'success', text: 'SET_PROFILE:FAST' })
+    expect(await text('--set-profile balanced')).toMatchObject({ kind: 'success', text: 'SET_PROFILE:BALANCED' })
+    expect(await text('--set-profile clear')).toMatchObject({ kind: 'success', text: 'SET_PROFILE:CLEAR' })
+    expect(await text('--set-profile turbo')).toMatchObject({ kind: 'error' })
+
+    expect(await text('--set-local on')).toMatchObject({ kind: 'success', text: 'SET_LOCAL:ON' })
+    expect(await text('--set-local hybrid')).toMatchObject({ kind: 'success', text: 'SET_LOCAL:HYBRID' })
+    expect(await text('--set-local clear')).toMatchObject({ kind: 'success', text: 'SET_LOCAL:CLEAR' })
+    expect(await text('--set-local always')).toMatchObject({ kind: 'error' })
+
+    expect(await text('--set-temperature 0.7')).toMatchObject({ kind: 'success', text: 'SET_TEMPERATURE:0.7' })
+    expect(await text('--set-temperature clear')).toMatchObject({ kind: 'success', text: 'SET_TEMPERATURE:CLEAR' })
+    expect(await text('--set-temperature 9')).toMatchObject({ kind: 'error', text: expect.stringContaining('0.0-2.0') })
+    expect(await text('--set-temperature warm')).toMatchObject({ kind: 'error' })
+
+    // The overrides are real state, not just echoed tokens.
+    expect(service.getUserOverrides()).toEqual({})
+  })
+
+  it('renders --insights and --status in both languages', async () => {
+    const { commands, service } = makeService(() => textStream(FOUR_SECTIONS))
+    const handler = optimize(commands)
+    const zh = await handler(invocation('--insights')) as { kind: string; text: string }
+    expect(zh.kind).toBe('success')
+    service.setMetaPromptLanguage('en')
+    const en = await handler(invocation('--insights')) as { text: string }
+    expect(en.text).not.toBe(zh.text)
+
+    const status = await handler(invocation('--status profile=fast')) as { kind: string; text: string }
+    expect(status.kind).toBe('success')
+    expect(status.text.startsWith('STATUS_OK\n')).toBe(true)
+    expect(status.text).toContain('prompt-optimizer status')
+  })
+})
+
+describe('/optimize-eval branch matrix', () => {
+  const evalCommand = (commands: CommandDef[]) => commands.find((c) => c.name === 'optimize-eval')!.handler
+
+  it('asks for a first run when nothing was measured yet', async () => {
+    const { commands } = makeService(() => textStream(FOUR_SECTIONS))
+    for (const raw of ['', 'show']) {
+      expect(await evalCommand(commands)(invocation(raw))).toMatchObject({
+        kind: 'success',
+        text: expect.stringContaining('还没有评测记录'),
+      })
+    }
+  })
+
+  it('reports an empty history and a populated one, with scores and labels', async () => {
+    const { commands, service } = makeService(() => textStream(FOUR_SECTIONS))
+    const handler = evalCommand(commands)
+    expect(await handler(invocation('list'))).toMatchObject({ kind: 'success', text: expect.stringContaining('还没有评测记录。') })
+
+    vi.spyOn(service, 'getEvalRuns').mockReturnValue([
+      evalRunFixture({ aggregate: undefined, label: 'nightly' }),
+      evalRunFixture({ aggregate: 0.9 }),
+    ])
+    const list = await handler(invocation('list')) as { text: string }
+    expect(list.text).toContain('最近 2 次评测')
+    expect(list.text).toContain('n/a')
+    expect(list.text).toContain('nightly')
+  })
+
+  it('shows the latest run with and without a baseline comparison', async () => {
+    const { commands, service } = makeService(() => textStream(FOUR_SECTIONS))
+    const handler = evalCommand(commands)
+    vi.spyOn(service, 'getEvalSummary')
+      .mockReturnValueOnce({ last: evalRunFixture(), baseline: undefined, comparison: undefined })
+      .mockReturnValueOnce({ last: evalRunFixture(), baseline: evalRunFixture(), comparison: comparisonFixture() })
+    const without = await handler(invocation('show')) as { text: string }
+    expect(without.text).toContain('🧪 评测')
+    expect(without.text).not.toContain('通过：')
+    service.setMetaPromptLanguage('en')
+    const withBase = await handler(invocation('show')) as { text: string }
+    expect(withBase.text).toContain('✅ Pass')
+  })
+
+  it('lists the rubric and the case ids in both languages', async () => {
+    const { commands, service } = makeService(() => textStream(FOUR_SECTIONS))
+    const handler = evalCommand(commands)
+    const zh = await handler(invocation('rubric')) as { text: string }
+    expect(zh.text).toContain('评测维度')
+    const all = await handler(invocation('cases --all')) as { text: string }
+    expect(all.text).toContain('全部用例')
+    expect(all.text).toContain('[core]')
+    service.setMetaPromptLanguage('en')
+    const en = await handler(invocation('cases')) as { text: string }
+    expect(en.text).toContain('用例')
+  })
+
+  it('records a baseline only when there is a run to record', async () => {
+    const { commands, service } = makeService(() => textStream(FOUR_SECTIONS))
+    const handler = evalCommand(commands)
+    vi.spyOn(service, 'setEvalBaseline').mockReturnValueOnce(undefined).mockReturnValueOnce(evalRunFixture({ aggregate: undefined }))
+    expect(await handler(invocation('baseline'))).toMatchObject({ kind: 'error', text: expect.stringContaining('没有可记录') })
+    expect(await handler(invocation('baseline nightly'))).toMatchObject({
+      kind: 'success',
+      text: 'EVAL_BASELINE:SET:n/a|CASES:2',
+    })
+  })
+
+  it('rejects an unknown sub-command with the usage line', async () => {
+    const { commands } = makeService(() => textStream(FOUR_SECTIONS))
+    expect(await evalCommand(commands)(invocation('frobnicate'))).toMatchObject({
+      kind: 'error',
+      text: expect.stringContaining('用法: /optimize-eval run'),
+    })
+  })
+
+  it('returns a success result for a passing run and an error result for a regression', async () => {
+    const { commands, service } = makeService(() => textStream(FOUR_SECTIONS))
+    const handler = evalCommand(commands)
+    const spy = vi.spyOn(service, 'runEval')
+    spy.mockResolvedValueOnce({ run: evalRunFixture(), comparison: comparisonFixture() })
+    const pass = await handler(invocation('run nightly --all --mine')) as { kind: string; text: string }
+    expect(pass.kind).toBe('success')
+    expect(pass.text).toContain('EVAL|')
+    expect(spy.mock.calls[0]?.[0]).toMatchObject({ all: true, mine: true, label: 'nightly' })
+
+    spy.mockResolvedValueOnce({
+      run: evalRunFixture({ aggregate: 0.4 }),
+      comparison: comparisonFixture({ current: 0.4, delta: -0.45, verdict: 'regress' }),
+    })
+    const regress = await handler(invocation('run')) as { kind: string; text: string }
+    expect(regress.kind).toBe('error')
+    expect(regress.text).toContain('VERDICT:REGRESS')
+  })
+
+  it('maps a run failure to the stable text and keeps UNKNOWN messages verbatim', async () => {
+    const { commands, service } = makeService(() => textStream(FOUR_SECTIONS))
+    const handler = evalCommand(commands)
+    const spy = vi.spyOn(service, 'runEval')
+    spy
+      .mockRejectedValueOnce(new OptimizeError(OptimizeErrorCode.UNKNOWN, 'judge exploded'))
+      .mockRejectedValueOnce(new OptimizeError(OptimizeErrorCode.NO_MODEL_ROUTE, 'no route'))
+      .mockRejectedValueOnce('kaboom')
+    expect(await handler(invocation('run'))).toMatchObject({ kind: 'error', text: 'judge exploded' })
+    expect(await handler(invocation('run'))).toMatchObject({ kind: 'error', text: expect.stringContaining('模型路由') })
+    expect(await handler(invocation('run'))).toMatchObject({ kind: 'error', text: expect.stringContaining('kaboom') })
+  })
+})
+
+describe('command surface in English mode', () => {
+  const command = (commands: CommandDef[], name: string) => commands.find((c) => c.name === name)!
+
+  it('explains that selection is off when only one candidate is drawn', async () => {
+    const { commands, service } = makeService(() => textStream(FOUR_SECTIONS))
+    service.setMetaPromptLanguage('en')
+    vi.spyOn(service, 'getStats').mockReturnValue({ ...service.getStats(), lastSelectCandidates: 1 })
+    const result = await command(commands, 'optimize').handler(invocation('--select'))
+    expect(result).toMatchObject({ kind: 'success', text: expect.stringContaining('selection off (selectCandidates=1)') })
+  })
+
+  it('renders the English selection summary with and without a score', async () => {
+    const { commands, service } = makeService(() => textStream(FOUR_SECTIONS))
+    service.setMetaPromptLanguage('en')
+    const stats = service.getStats()
+    const spy = vi.spyOn(service, 'getStats')
+    spy.mockReturnValueOnce({ ...stats, lastSelectCandidates: 3, lastSelectChosen: 2, lastSelectScore: 0.75, lastSelectGate: 3 })
+    const scored = await command(commands, 'optimize').handler(invocation('--select')) as { text: string }
+    expect(scored.text).toContain('last selection 2/3')
+    expect(scored.text).toContain('score 0.75')
+    spy.mockReturnValueOnce({ ...stats, lastSelectCandidates: 2, lastSelectChosen: 1, lastSelectScore: 0, lastSelectGate: 1 })
+    const unscored = await command(commands, 'optimize').handler(invocation('--select')) as { text: string }
+    // A zero score is "not measured", never "scored 0.00".
+    expect(unscored.text).toContain('score n/a')
+  })
+
+  it('reports the auto-optimize switch state and toggles it', async () => {
+    const { commands, service } = makeService(() => textStream(FOUR_SECTIONS))
+    const handler = command(commands, 'optimize').handler
+    service.setAutoOptimizeAll(false)
+    expect(await handler(invocation('--auto status'))).toMatchObject({ kind: 'success', text: 'AUTO_OPTIMIZE:OFF' })
+    expect(await handler(invocation('--auto on'))).toMatchObject({ kind: 'success', text: 'AUTO_OPTIMIZE:ON' })
+    expect(await handler(invocation('--auto status'))).toMatchObject({ kind: 'success', text: 'AUTO_OPTIMIZE:ON' })
+  })
+
+  it('answers --status with and without an explicit instruction in English', async () => {
+    const { commands, service } = makeService(() => textStream(FOUR_SECTIONS))
+    service.setMetaPromptLanguage('en')
+    const handler = command(commands, 'optimize').handler
+    const bare = await handler(invocation('--status')) as { text: string }
+    expect(bare.text).toContain('STATUS_OK')
+    expect(bare.text).toContain('Effective params')
+    const scoped = await handler(invocation('--status 写周报')) as { text: string }
+    expect(scoped.text).toContain('STATUS_OK')
+  })
+
+  it('lists eval runs and the rubric in English', async () => {
+    const { commands, service } = makeService(() => textStream(FOUR_SECTIONS))
+    service.setMetaPromptLanguage('en')
+    vi.spyOn(service, 'getEvalRuns').mockReturnValue([evalRunFixture({ aggregate: 0.812, label: 'nightly' })])
+    const handler = command(commands, 'optimize-eval').handler
+    const list = await handler(invocation('list')) as { text: string }
+    expect(list.text).toContain('最近 1 次评测')
+    expect(list.text).toContain('0.812')
+    const rubric = await handler(invocation('rubric')) as { text: string }
+    expect(rubric.text).toContain('评测维度')
+  })
+
+  it('builds an English scene template and rejects an unknown head token', async () => {
+    const { commands, service } = makeService(() => textStream(FOUR_SECTIONS))
+    service.setMetaPromptLanguage('en')
+    const handler = command(commands, 'template').handler
+    const built = await handler(invocation('周报 帮我写一份本周周报')) as { kind: string; text: string }
+    expect(built.kind).toBe('success')
+    // The English render, not the Chinese one and not the skeleton fallback.
+    expect(built.text).toContain('As a senior')
+    expect(built.text).not.toContain('场景骨架参考')
+    const unknown = await handler(invocation('未知场景 随便写点')) as { kind: string; text: string }
+    expect(unknown.kind).toBe('error')
+    expect(unknown.text).toContain('未识别场景')
+  })
+
+  it('renders a non-Error rejection from the optimizer by value', async () => {
+    const { commands, service } = makeService(() => textStream(FOUR_SECTIONS))
+    vi.spyOn(service, 'optimize').mockRejectedValue('plain boom')
+    const result = await command(commands, 'optimize').handler(invocation('帮我写周报'))
+    expect(result).toMatchObject({ kind: 'error', text: expect.stringContaining('plain boom') })
+  })
+
+  it('skips context when deriveMessages returns nothing', async () => {
+    const { commands, service } = makeService(() => textStream(FOUR_SECTIONS), { ...DEFAULT_CONFIG, contextAware: true })
+    const captured: (OptimizeOptions | undefined)[] = []
+    vi.spyOn(service, 'optimize').mockImplementation(async (_text: string, options?: OptimizeOptions) => {
+      captured.push(options)
+      return { prompt: FOUR_SECTIONS, optimized: true, retries: 0 }
+    })
+    const inv = invocation('帮我写周报')
+    inv.agent = { session: { deriveMessages: () => undefined } }
+    await command(commands, 'optimize').handler(inv)
+    expect(captured[0]?.context).toBeUndefined()
+  })
+})
+
+describe('command result formatting edge cases', () => {
+  it('renders an Error rejection by its message and a string by value', async () => {
+    const { commands, service } = makeService(() => textStream(FOUR_SECTIONS))
+    const handler = commands.find((c) => c.name === 'optimize')!.handler
+    vi.spyOn(service, 'optimize').mockRejectedValueOnce(new Error('real failure'))
+    expect(await handler(invocation('帮我写周报'))).toMatchObject({ kind: 'error', text: expect.stringContaining('real failure') })
+  })
+
+  it('prints a scored selection summary in Chinese', async () => {
+    const { commands, service } = makeService(() => textStream(FOUR_SECTIONS))
+    vi.spyOn(service, 'getStats').mockReturnValue({
+      ...service.getStats(), lastSelectCandidates: 3, lastSelectChosen: 1, lastSelectScore: 0.66, lastSelectGate: 3,
+    })
+    const result = await commands.find((c) => c.name === 'optimize')!.handler(invocation('--select')) as { text: string }
+    expect(result.text).toContain('0.66')
+  })
+
+  it('records a scored baseline with its aggregate', async () => {
+    const { commands, service } = makeService(() => textStream(FOUR_SECTIONS))
+    vi.spyOn(service, 'setEvalBaseline').mockReturnValue(evalRunFixture({ aggregate: 0.9 }))
+    const result = await commands.find((c) => c.name === 'optimize-eval')!.handler(invocation('baseline nightly'))
+    expect(result).toMatchObject({ kind: 'success', text: 'EVAL_BASELINE:SET:0.900|CASES:2' })
+  })
+
+  it('maps an Error thrown by the eval run to its message', async () => {
+    const { commands, service } = makeService(() => textStream(FOUR_SECTIONS))
+    vi.spyOn(service, 'runEval').mockRejectedValueOnce(new Error('grader crashed'))
+    const result = await commands.find((c) => c.name === 'optimize-eval')!.handler(invocation('run')) as { kind: string; text: string }
+    expect(result.kind).toBe('error')
+    expect(result.text).toContain('grader crashed')
   })
 })

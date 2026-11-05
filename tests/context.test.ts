@@ -114,3 +114,13 @@ describe('buildContextBlock', () => {
     expect(buildContextBlock('', 'zh', 'sections')).toBe('')
   })
 })
+
+describe('context gathering with nothing to say', () => {
+  it('returns an empty block when every message is blank', () => {
+    const messages = [
+      { content: [{ type: 'text', text: '   ' }] },
+      { content: [] },
+    ]
+    expect(gatherConversationContext(messages as never, { maxMessages: 4, maxTokens: 100 })).toBe('')
+  })
+})

@@ -136,3 +136,19 @@ describe('EpisodeLog', () => {
     expect(log.size).toBe(1)
   })
 })
+
+describe('updateFeedback partial updates', () => {
+  it('accepts one field at a time without inventing the other', () => {
+    const log = new EpisodeLog()
+    log.push({
+      ts: 1, input: 'x', taskType: 'writing', local: false, refined: false,
+      outputTokens: 1, inputTokens: 1, durationMs: 1, callCount: 1,
+      profile: 'balanced', localMode: 'auto',
+    })
+    log.updateFeedback(0, { quality: 0.4 })
+    expect(log.all()[0]?.quality).toBe(0.4)
+    expect(log.all()[0]?.accepted).toBeUndefined()
+    log.updateFeedback(0, { accepted: true })
+    expect(log.all()[0]?.accepted).toBe(true)
+  })
+})

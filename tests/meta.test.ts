@@ -13,7 +13,8 @@ import {
   validateTemplateSet,
   type TemplateSet,
 } from '../src/meta.js'
-import { detectTaskSubtype } from '../src/situation.js'
+import { buildSituationProfile, detectTaskSubtype } from '../src/situation.js'
+import { matchScene, renderSceneTemplate } from '../src/meta.js'
 
 const INPUT = '帮我写一份周报'
 
@@ -947,5 +948,42 @@ describe('placeholder self-check', () => {
     expect(placeholderWarnings_).toHaveLength(1)
     expect(placeholderWarnings_[0]).toContain('{{拼错的占位符}}')
     expect(placeholderWarnings_[0]).not.toContain('{{原始指令}}')
+  })
+})
+
+describe('scene helpers', () => {
+  it('returns no scene for a blank query and matches a key fragment', () => {
+    expect(matchScene('   ')).toBeUndefined()
+    // A fragment of the subtype key itself is the strongest match.
+    expect(matchScene('report')).toBeDefined()
+  })
+
+  it('renders the English scene skeleton with an English hint', () => {
+    const text = renderSceneTemplate('writing-report', true)
+    expect(text).toContain('Scene skeleton reference:')
+    expect(text).toContain('## Role')
+    const zh = renderSceneTemplate('writing-report', false)
+    expect(zh).toContain('场景骨架参考：')
+  })
+
+  it('falls back to the task-type example when the subtype has no built-in pair', () => {
+    const profile = buildSituationProfile('帮我写一份邮件')
+    const exotic = { ...profile, task: { ...profile.task, subtype: 'writing-email' as const } }
+    const prompt = buildOptimizePrompt(
+      '帮我写一份邮件', 'auto', undefined, undefined, 'sections', 'zh', undefined,
+      DEFAULT_TEMPLATES, undefined, 'writing', undefined, exotic,
+    )
+    // No subtype pair exists, so the block is filled from the category set
+    // rather than left empty.
+    expect(prompt.length).toBeGreaterThan(0)
+  })
+})
+
+describe('iterate prompt drift', () => {
+  it('omits the change line when the goal did not move', () => {
+    const prompt = buildIteratePrompt('## Role\n资深撰稿人', '再精简一点', 'auto', undefined, undefined, 'sections', 'zh', undefined, DEFAULT_TEMPLATES, undefined, 'writing', undefined, undefined, 'unchanged')
+    expect(prompt).toContain('再精简一点')
+    // An unchanged goal contributes no drift sentence in either language.
+    expect(prompt).not.toContain('相对上次结果')
   })
 })

@@ -214,3 +214,26 @@ describe('formatting', () => {
     expect(selectionToken(summary)).toContain('SELECTSCORES:na/0.500')
   })
 })
+
+describe('selection summaries without a winner', () => {
+  it('reports index 0 when no candidate is eligible', () => {
+    const summary = selectCandidatePure(candidates, [score(0, 0.9, fail), score(1, 0.8, fail)])
+    expect(summary.chosenIndex).toBe(0)
+    expect(summary.eligible).toBe(0)
+    expect(summary).not.toHaveProperty('score')
+  })
+
+  it('formats an unmeasured pick in both languages', () => {
+    // Baseline eligible but never scored, nothing beats it: the pick is the
+    // baseline itself and its score reads n/a rather than 0.00.
+    const summary = selectCandidatePure(candidates, [score(0, undefined), score(1, 0.5, fail)])
+    expect(summary.reason).toBe('baseline')
+    expect(summary).not.toHaveProperty('score')
+    const zh = formatSelection(summary, 'zh')
+    expect(zh).toContain('n/a')
+    expect(zh).toContain('保基线')
+    const en = formatSelection(summary, 'en')
+    expect(en).toContain('n/a')
+    expect(en).toContain('baseline')
+  })
+})

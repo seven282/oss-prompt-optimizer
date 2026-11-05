@@ -109,3 +109,11 @@ describe('timeoutOf', () => {
     budget[Symbol.dispose]()
   })
 })
+
+describe('timeoutOf shape guards', () => {
+  it('ignores a carrier whose name matches but whose fields are wrong', () => {
+    expect(timeoutOf({ reason: { name: 'TimeoutReason', code: 42, timeoutMs: '800' } })).toBeUndefined()
+    expect(timeoutOf({ reason: { name: 'TimeoutReason' } })).toBeUndefined()
+    expect(timeoutOf({ reason: 'nope' })).toBeUndefined()
+  })
+})

@@ -347,3 +347,142 @@ describe('mineSessionInstructions (best-effort by contract)', () => {
     expect(await mineSessionInstructions(engine, { signal: controller.signal, queries: ['a'] })).toEqual([])
   })
 })
+
+describe('eval branch matrix', () => {
+  it('marks below-threshold with and without a baseline', () => {
+    const withBase = compareToBaseline(0.5, 0.5, 0.02, 0.6)
+    expect(withBase.verdict).toBe('below-threshold')
+    expect(formatEvalComparison(withBase, 'zh')).toContain('基线 0.50')
+    const noBase = compareToBaseline(0.5, undefined, 0.02, 0.6)
+    expect(noBase.verdict).toBe('below-threshold')
+    expect(formatEvalComparison(noBase, 'zh')).toContain('尚无基线')
+    expect(formatEvalComparison(noBase, 'en')).toContain('no baseline yet')
+  })
+
+  it('renders every comparison verdict in both languages', () => {
+    const verdicts = ['no-baseline', 'no-score', 'regress', 'below-threshold', 'pass'] as const
+    for (const verdict of verdicts) {
+      const comparison = { baseline: 0.7, current: 0.8, delta: 0.1, threshold: 0.6, verdict }
+      expect(formatEvalComparison(comparison, 'zh').length).toBeGreaterThan(0)
+      expect(formatEvalComparison(comparison, 'en').length).toBeGreaterThan(0)
+    }
+    expect(formatEvalComparison({ baseline: 0.7, current: 0.8, delta: undefined, threshold: 0.6, verdict: 'pass' }, 'zh'))
+      .toContain('n/a')
+  })
+
+  it('averages each judged dimension over the cases that scored it', () => {
+    const judge = (mean: number, clarity: number) => ({
+      complete: true, mean, normalized: mean / 5, missing: [], rejected: [], rejectedCount: 0, fabricated: [],
+      scores: [{ id: 'clarity', reason: '结构完整', score: clarity }],
+    })
+    const run = buildRun(
+      [result({ id: 'a', judge: judge(4, 4) }), result({ id: 'b', judge: judge(2, 2) })],
+      [{ id: 'a', instruction: 'x' }, { id: 'b', instruction: 'y' }],
+      { label: 'nightly', judgeModel: 'j/m', optimizerModel: 'o/m', mined: true, ts: 1 },
+    )
+    expect(run.perDimension.clarity).toBe(3)
+    expect(run.label).toBe('nightly')
+    expect(run.judgeModel).toBe('j/m')
+    expect(run.optimizerModel).toBe('o/m')
+    expect(run.mined).toBe(true)
+    expect(run.ts).toBe(1)
+  })
+
+  it('reports a zero gate rate for an empty case set and counts optimized/leaked cases', () => {
+    const empty = buildRun([], [], {})
+    expect(empty.deterministicPassRate).toBe(0)
+    expect(empty.aggregate).toBeUndefined()
+
+    const leaked = result({
+      id: 'probe',
+      deterministic: {
+        structural: true, expectations: false, missingRequired: ['x'], leaked: ['CANARY'],
+        outputChars: 10, outputTokens: 5,
+      },
+      score: 0,
+      error: 'deterministic-failed',
+    })
+    const failed = result({ id: 'broken', score: 0, error: 'optimize-failed' })
+    const run = buildRun([leaked, failed], [
+      { id: 'probe', instruction: 'p', injection: true },
+      { id: 'broken', instruction: 'b' },
+    ], {})
+    expect(run.injectionCases).toBe(1)
+    expect(run.leaked).toBe(1)
+    expect(run.scored).toBe(2)
+    // A case the optimizer never returned is not "optimized".
+    expect(run.optimized).toBe(1)
+  })
+
+  it('assigns stable ids to configured cases that omit one', () => {
+    const cases = fromConfig([
+      { instruction: '一', dimensions: ['safety'], mustInclude: ['a'], mustNotInclude: ['b'], injection: true },
+      { id: '  ', instruction: '二' },
+      { id: 'named', instruction: '三' },
+    ])
+    expect(cases.map((item) => item.id)).toEqual(['user-1', 'user-2', 'named'])
+    expect(cases[0]?.dimensions).toEqual(['safety'])
+    expect(cases[0]?.mustInclude).toEqual(['a'])
+    expect(cases[0]?.mustNotInclude).toEqual(['b'])
+    expect(cases[0]?.injection).toBe(true)
+    expect(cases[1]?.dimensions).toBeUndefined()
+  })
+
+  it('renders injection probes, mined samples, dimension means and every case line', () => {
+    const run = {
+      ts: 0, cases: 3, optimized: 2, deterministicPass: 1, scored: 2, injectionCases: 1, leaked: 1,
+      aggregate: 0.5, deterministicPassRate: 1 / 3, perDimension: { clarity: 4.25 },
+      billedInputTokens: 10, outputTokens: 20, mined: true,
+      results: [
+        result({ id: 'plain', judge: undefined, error: undefined }),
+        result({ id: 'judged', judge: {
+          complete: true, mean: 4.2, normalized: 0.84, missing: [], rejected: [], rejectedCount: 0, fabricated: [],
+          scores: [{ id: 'clarity', reason: '结构完整，目标明确', score: 4.2 }],
+        } }),
+        result({ id: 'incomplete', judge: {
+          complete: false, mean: undefined, normalized: undefined, missing: ['impact'], rejected: [], rejectedCount: 0, fabricated: [],
+          scores: [],
+        }, deterministic: {
+          structural: false, expectations: true, missingRequired: ['要求'], leaked: ['CANARY'],
+          outputChars: 4, outputTokens: 2,
+        }, error: 'judge-incomplete' }),
+      ],
+    }
+    const zh = formatEvalRun(run, 'zh')
+    expect(zh).toContain('注入探针 1 例')
+    expect(zh).toContain('含会话挖掘样本')
+    expect(zh).toContain('维度均分（1-5）：clarity 4.3')
+    expect(zh).toContain('未判分')
+    expect(zh).toContain('（1-5 均分 4.2）')
+    expect(zh).toContain('不完整（缺 impact）')
+    expect(zh).toContain('泄漏 CANARY')
+    expect(zh).toContain('缺 要求')
+
+    const en = formatEvalRun(run, 'en')
+    expect(en).toContain('Injection probes 1')
+    expect(en).toContain('includes mined samples')
+    expect(en).toContain('Dimension means (1-5): clarity 4.3')
+  })
+})
+
+describe('unmeasured eval runs', () => {
+  it('renders n/a when nothing was scored and names the failure', () => {
+    const run = {
+      ts: 0, cases: 1, optimized: 1, deterministicPass: 0, scored: 0, injectionCases: 0, leaked: 0,
+      aggregate: undefined, deterministicPassRate: 0, perDimension: {},
+      billedInputTokens: 0, outputTokens: 0, mined: false,
+      results: [result({ id: 'broken', judge: undefined, error: 'optimize-error' })],
+    }
+    const zh = formatEvalRun(run, 'zh')
+    expect(zh).toContain('综合分 n/a')
+    // A failed case says why instead of pretending it was never judged.
+    expect(zh).toContain('optimize-error')
+    expect(formatEvalRun(run, 'en')).toContain('Score n/a')
+  })
+
+  it('skips a mined hit without a snippet instead of reading undefined', async () => {
+    const engine = { searchSessions: async () => ({ items: [{}, { bestMatch: { snippet: '帮我写一份周报，面向团队' } }] }) }
+    const mined = await mineSessionInstructions(engine, { limit: 1, queries: ['q1'] })
+    expect(mined).toEqual(['帮我写一份周报，面向团队'])
+  })
+})

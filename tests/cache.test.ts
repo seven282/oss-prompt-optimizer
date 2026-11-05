@@ -96,3 +96,29 @@ describe('createOptimizeCache', () => {
     expect(cache.get('a')).toBeUndefined()
   })
 })
+
+describe('cache expiry boundary', () => {
+  it('drops a stale entry on read and skips it when listing', async () => {
+    const { vi } = await import('vitest')
+    vi.useFakeTimers()
+    try {
+      const cache = createOptimizeCache<string>({ maxEntries: 10, ttlMs: 1000 })
+      cache.set('a', '1')
+      vi.advanceTimersByTime(1500)
+      expect(cache.get('a')).toBeUndefined()
+      expect(cache.size).toBe(0)
+
+      cache.set('b', '2')
+      vi.advanceTimersByTime(1500)
+      // The listing path expires on its own instead of returning a dead row.
+      expect(cache.entries()).toEqual([])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('treats a one-character input as its own gram', () => {
+    expect(bigramJaccard('a', 'a')).toBe(1)
+    expect(bigramJaccard('a', 'b')).toBe(0)
+  })
+})

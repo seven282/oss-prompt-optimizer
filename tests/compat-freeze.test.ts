@@ -61,3 +61,12 @@ describe('deepFreeze', () => {
     }).toThrow()
   })
 })
+
+describe('isFrozen', () => {
+  it('answers only for objects and never for primitives', () => {
+    expect(isFrozen({})).toBe(false)
+    expect(isFrozen(Object.freeze({}))).toBe(true)
+    expect(isFrozen(null)).toBe(false)
+    expect(isFrozen('frozen')).toBe(false)
+  })
+})
