@@ -245,8 +245,8 @@ Declared per release in the manifest (`engines` + `dsh.compatibility`):
 | Item | Value |
 |---|---|
 | Node.js | `>=22` |
-| DSH range | `^0.2.0-rc.2` |
-| Verified releases | `0.2.0-rc.2` (the CLI/web and desktop runtimes share the tuple) |
+| DSH range | `^0.2.0-rc.2 \|\| ^0.2.1-rc.3 \|\| ^0.2.2-rc.1` |
+| Verified releases | `0.2.0-rc.2`, `0.2.1-rc.3`, `0.2.2-rc.1` (desktop runtime is also proven by P9) |
 
 The range must enumerate tuples with `||`; writing `>=0.1.5-rc.1 <0.2.0` matches **no**
 `0.2.0-rc.*`. By the semver prerelease rule a prerelease version only satisfies a range when some

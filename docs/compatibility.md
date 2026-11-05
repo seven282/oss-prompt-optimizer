@@ -105,6 +105,19 @@ prompt-optimizer: host compat ok (defineTool=ok createUserMessage=ok BlockAssemb
 prompt-optimizer: host compat DEGRADED (defineTool=MISSING …) — defineTool: the `prompt_optimize` tool is not registered; the /optimize command and the input-box button still work | …
 ```
 
+### 兼容矩阵
+
+`0.x` 的预发布版本跨不过 caret（`^0.2.0-rc.2` 匹配不到 `0.2.1-rc.3`），所以清单用 `||`
+**逐元组枚举**，并为每个版本记一条 `dshReleases` 判决——那一条才是 DSH STORE 认的安装证据。
+
+| 面 | 已声明版本 | 证据 |
+|---|---|---|
+| web（`dsh` CLI / `dsh web`） | `0.2.0-rc.2`、`0.2.1-rc.3`、`0.2.2-rc.1` | E3 一次性 Profile 安装→启动→卸载（CI `compat-matrix` 三档各跑一遍） |
+| desktop（`app.asar` 内置 runtime） | `0.2.1-rc.3`（当前装机版）、`0.2.2-rc.1` | P9 读本机 `app.asar` 的元组与 inject 包版本；桌面端日常使用 |
+| 不再声明 | `< 0.2.0-rc.2` | 无 `configForms`，设置面只能只读 |
+
+新增/退役一档的判据：**E3 真的装上并起得来**才算 `compatible`，只跑通 typecheck 不算。
+
 ## 六、升级 dsh 后怎么验证
 
 ```sh
@@ -129,8 +142,9 @@ dsh web              # 真机：正常启动 + 日志出现一行 compat report
 | P10 | 评测判官标定（内置参考对 + "无法造分的判官必须被拒"的反向控制） |
 | P11 | 真浏览器设置面（`--browser-e2e`，默认关闭） |
 
-`pnpm e3` / `pnpm e4` / `pnpm preflight --browser-e2e` **都不进 CI**：它们需要真实宿主启动或真浏览器，
-跑进 CI 会破坏离线可重复性。三者都支持 `--json <path>` 输出机器可读证据。
+`pnpm e4` / `pnpm preflight --browser-e2e` **不进 CI**：它们要真浏览器，跑进 CI 会破坏离线可重复性。
+`pnpm e3` 是唯一进 CI 的真机步骤（`compat-matrix` job，仅在推 main 与手动触发时跑三档），
+因为它不需要浏览器、不需要模型，只需要一个能启动的 dsh。三者都支持 `--json <path>` 输出机器可读证据。
 
 ## 七、事故档案
 

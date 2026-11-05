@@ -19,4 +19,4 @@
 ## 支持的版本
 
 只支持最新发布版本。本插件与宿主 `dsh` 的兼容范围见 `package.json` 的
-`engines.dsh`（当前 `^0.2.0-rc.2`）与 [docs/compatibility.md](docs/compatibility.md)。
+`engines.dsh`（当前 `^0.2.0-rc.2 || ^0.2.1-rc.3 || ^0.2.2-rc.1`）与 [docs/compatibility.md](docs/compatibility.md)。

@@ -185,9 +185,10 @@ P1–P11 各自证明什么、每步的反向控制，见 `docs/compatibility.md
 
 - **上架契约字段**：`engines.node >=22`、`engines.dsh` 与 `dsh.compatibility.dsh` 同值、
   `dsh.compatibility.dshReleases` 逐精确版本记录。范围**必须逐 tuple 用 `||` 枚举**——`>=0.1.5-rc.1 <0.2.0`
-  按 semver 预发布规则**匹配不到 `0.1.6-alpha.2`**。当前只声明 **`^0.2.0-rc.2`**（CLI/web 与桌面
-  `dsh-desktop-runtime` 同 tuple，P9 实测），它是设置面契约 `ctx.configForms` + volatile 表单落地的第一版。
-  由 `tests/manifest-contract.test.ts` + P8/P9 守着。
+  按 semver 预发布规则**匹配不到 `0.1.6-alpha.2`**。当前声明 **`^0.2.0-rc.2 || ^0.2.1-rc.3 || ^0.2.2-rc.1`**
+  （CLI/web 与桌面 `dsh-desktop-runtime` 各占一个 tuple，P9 实测桌面那档；三档都由 CI `compat-matrix`
+  跑 E3 真机）。`0.2.0-rc.2` 是设置面契约 `ctx.configForms` + volatile 表单落地的第一版，更早的不声明。
+  由 `tests/manifest-contract.test.ts` + P8/P9 + `compat-matrix` 守着。
 - **`lib/` 是入库的发布产物**（1.8.5 起）。DSH STORE 只读**固定 Commit**、**不跑 install / prepare / build**，
   而 `main`/`types`/`exports` 全指向 `lib/` —— 只带 `src/` 的提交就是不可安装的包（1.8.4 被「更新暂缓」正是如此，
   而 `npm publish` 一切正常）。**改 `src/` 必须重建并同笔提交 `lib/`**，由 P8 守着。

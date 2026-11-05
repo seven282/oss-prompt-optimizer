@@ -59,30 +59,65 @@ function openAsar(asarPath) {
     }
     return node.files ? null : { entry: node, relPath }
   }
-  function read(hit) {
+  function read(hit, extraBytes = 0) {
     if (!hit) return null
     if (hit.entry.unpacked) {
       const unpackedRoot = asarPath.replace(/app\.asar$/, 'app.asar.unpacked')
       return fs.readFileSync(path.join(unpackedRoot, hit.relPath), 'utf8')
     }
-    const buf = Buffer.alloc(hit.entry.size)
-    fs.readSync(fd, buf, 0, hit.entry.size, baseOffset + Number(hit.entry.offset))
-    return buf.toString('utf8')
+    const size = hit.entry.size + extraBytes
+    const buf = Buffer.alloc(size)
+    const got = fs.readSync(fd, buf, 0, size, baseOffset + Number(hit.entry.offset))
+    return buf.toString('utf8', 0, got)
   }
-  return { find, read, close: () => fs.closeSync(fd) }
+  const suffixCache = new Map()
+  /**
+   * Last-resort lookup: find any `…/node_modules/<name>/package.json` in the
+   * header. pnpm layouts nest the real directory under
+   * `.pnpm/<id>/node_modules/`, so trusting one hard-coded prefix turns a layout
+   * change into a false "package absent". Built once per suffix, then cached.
+   */
+  function searchSuffix(suffix) {
+    if (suffixCache.has(suffix)) return suffixCache.get(suffix)
+    let best = null
+    const walk = (node, prefixPath) => {
+      for (const [key, child] of Object.entries(node.files ?? {})) {
+        const rel = prefixPath ? `${prefixPath}/${key}` : key
+        if (child.files) walk(child, rel)
+        else if (rel.endsWith(suffix) && (!best || rel.length < best.relPath.length)) best = { entry: child, relPath: rel }
+      }
+    }
+    walk(header, '')
+    suffixCache.set(suffix, best)
+    return best
+  }
+  return { find, searchSuffix, read, close: () => fs.closeSync(fd) }
 }
 
+/**
+ * Version of `name` inside the bundle, or `null` when it is genuinely absent.
+ *
+ * Desktop builds from 0.2.1 on record an entry `size` one byte short of the real
+ * payload: an exact-size read drops the closing brace, `JSON.parse` throws, and
+ * the old `catch → null` reported "package is absent" for a package that is
+ * right there — three phantom failures in the P9 output of 1.13.1. Retry with
+ * one extra byte before believing the absence, and only treat a *missing entry*
+ * as absent.
+ */
 function pkgVersion(asar, name) {
-  for (const prefix of ['dsh/node_modules/', 'node_modules/']) {
-    const hit = asar.find(`${prefix}${name}/package.json`)
-    if (!hit) continue
+  const hit =
+    asar.find(`dsh/node_modules/${name}/package.json`) ??
+    asar.find(`node_modules/${name}/package.json`) ??
+    asar.searchSuffix(`node_modules/${name}/package.json`)
+  if (!hit) return null
+  for (const extraBytes of [0, 1]) {
     try {
-      return JSON.parse(asar.read(hit)).version ?? null
+      return JSON.parse(asar.read(hit, extraBytes)).version ?? null
     } catch {
-      return null
+      /* truncated payload — retry one byte wider */
     }
   }
-  return null
+  return 'unreadable'
 }
 
 /** Same coverage rule as tests/manifest-contract.test.ts. */
@@ -128,7 +163,11 @@ try {
     problems.push(`no exact dshReleases verdict for "${runtime.version}"`)
   }
   for (const name of manifest.dsh?.client?.inject ?? []) {
-    if (pkgVersion(asar, name) === null) problems.push(`dsh.client.inject "${name}" is absent from the desktop runtime`)
+    const version = pkgVersion(asar, name)
+    if (version === null) problems.push(`dsh.client.inject "${name}" is absent from the desktop runtime`)
+    // Present but unparseable is not "fine": silently accepting it is how the
+    // three phantom `absent` reports of 1.13.1 went unnoticed for a release.
+    else if (version === 'unreadable') problems.push(`dsh.client.inject "${name}" is present but its package.json cannot be parsed`)
   }
 
   const hostVersions = ['@deepseek-ai/dsh-llm', '@deepseek-ai/dsh-timeout', '@deepseek-ai/cordis']

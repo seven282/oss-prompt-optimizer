@@ -119,6 +119,21 @@ prompt-optimizer: host compat ok (defineTool=ok createUserMessage=ok BlockAssemb
 prompt-optimizer: host compat DEGRADED (defineTool=MISSING …) — defineTool: the `prompt_optimize` tool is not registered; the /optimize command and the input-box button still work | …
 ```
 
+### Compatibility matrix
+
+A caret never spans `0.x` prereleases (`^0.2.0-rc.2` does not match `0.2.1-rc.3`), so the manifest
+**enumerates tuples** with `||` and records one `dshReleases` verdict per version — that record is
+what DSH STORE treats as installable evidence.
+
+| Surface | Declared releases | Evidence |
+|---|---|---|
+| web (`dsh` CLI / `dsh web`) | `0.2.0-rc.2`, `0.2.1-rc.3`, `0.2.2-rc.1` | E3 throwaway profile: install → start → uninstall (CI `compat-matrix`, one leg per release) |
+| desktop (runtime inside `app.asar`) | `0.2.1-rc.3` (currently installed), `0.2.2-rc.1` | P9 reads the tuple and inject package versions from the local `app.asar`; daily desktop use |
+| No longer declared | `< 0.2.0-rc.2` | No `configForms`; the settings surface can only be read-only |
+
+To add or retire a release the bar is: **E3 really installs and boots it**.
+A green typecheck is not evidence.
+
 ## 6. How to verify after upgrading dsh
 
 ```sh
@@ -143,9 +158,11 @@ dsh web              # real machine: starts normally, one compat report line in 
 | P10 | Evaluation-judge calibration (built-in reference pairs + a reverse control that a judge which cannot fabricate a score must be rejected) |
 | P11 | Real-browser settings surface (`--browser-e2e`, off by default) |
 
-`pnpm e3` / `pnpm e4` / `pnpm preflight --browser-e2e` **are all excluded from CI**: they need a
-real host to start or a real browser, which would break offline reproducibility. All three support
-`--json <path>` for machine-readable evidence.
+`pnpm e4` / `pnpm preflight --browser-e2e` **are excluded from CI**: they need a real browser, which
+would break offline reproducibility. `pnpm e3` is the one real-host step that does run in CI (the
+`compat-matrix` job, three releases, only on pushes to main and manual dispatch) because it needs no
+browser and no model — just a dsh that boots. All three support `--json <path>` for machine-readable
+evidence.
 
 ## 7. Incident archive
 

@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -51,6 +52,51 @@ jobs:
       # consuming it instead of forwarding it to the script.
       - name: Preflight
         run: node scripts/preflight.mjs --offline --skip-tests
+
+  # The only real-host step in CI: E3 installs the built plugin into a throwaway
+  # profile, boots `dsh web`, and proves the entry is listed and the client
+  # module is served — the one thing a fake host cannot prove. One leg per
+  # release the manifest claims in `dshReleases`: a verdict is only honest if
+  # something actually boots that host.
+  #
+  # Main pushes and manual dispatch only, never PRs: three boots per review
+  # would tax the fast path the build-test job exists to keep. Skipped legs are
+  # visible in the Actions UI rather than silently green.
+  compat-matrix:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        dsh: ['0.2.0-rc.2', '0.2.1-rc.3', '0.2.2-rc.1']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build
+        run: pnpm build
+      - name: Install dsh ${{ matrix.dsh }}
+        # A prefix install, not `-g`: the runner's global tree stays untouched so
+        # legs cannot see each other's host.
+        run: npm install --no-audit --no-fund --prefix "$RUNNER_TEMP/host" "@deepseek-ai/dsh@${{ matrix.dsh }}"
+      - name: E3 acceptance
+        run: >-
+          node scripts/e3-acceptance.mjs
+          --dsh-bin "$RUNNER_TEMP/host/node_modules/@deepseek-ai/dsh/lib/bin.js"
+          --json "e3-${{ matrix.dsh }}.json"
+      - name: Keep the evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e3-${{ matrix.dsh }}
+          path: e3-${{ matrix.dsh }}.json
+          if-no-files-found: warn
 
   # Advisory only: a fresh upstream advisory must not red-light an unrelated,
   # correct PR (the vitest 3→4 forced upgrade started exactly this way).
