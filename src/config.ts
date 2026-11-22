@@ -400,6 +400,21 @@ export interface Config {
   feedbackAdapt: boolean
   /** Sessions whose feedback is read for `/optimize --feedback`/`--status`. */
   feedbackScanLimit: number
+  /**
+   * Contextual-bandit learning switch (2026-11-22 algorithm adoption).
+   * `off` (default) is byte-for-byte the old behaviour — no decision is made
+   * and nothing extra is recorded. `shadow` computes a strategy suggestion
+   * and logs it in the episode/event but never applies it, so the policy can
+   * be evaluated offline with propensity weighting. `active` applies the
+   * suggestion to a deterministic 10% slice of runs (see `optimizer.ts`).
+   * Only numeric/enumerated metadata is ever consumed — no instruction text,
+   * no reason, no judge rationale is stored, and no model call is added.
+   */
+  learning: 'off' | 'shadow' | 'active'
+  /** Uniform-exploration probability once a bucket leaves warmup (0–1). */
+  learningExploreFloor: number
+  /** Observations per bucket before Thompson sampling replaces the hash warmup. */
+  learningWarmupObservations: number
 }
 
 /**
@@ -547,4 +562,7 @@ export const Config: z<Config> = z.object({
   selectJudge: z.boolean().default(true),
   feedbackAdapt: z.boolean().default(true),
   feedbackScanLimit: z.number().step(1).min(1).max(32).default(8),
+  learning: z.union(['off', 'shadow', 'active']).default('off'),
+  learningExploreFloor: z.number().min(0).max(1).default(0.1),
+  learningWarmupObservations: z.number().step(1).min(1).max(1000).default(50),
 }) as unknown as z<Config>

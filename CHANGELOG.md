@@ -8,6 +8,45 @@
 - 版本号遵循十进制进位：末尾 +1，满 10 向前进位（`1.3.9` + 1 = `1.4.0`），**不会出现尾位 ≥ 10**。
 - 已发布的历史条目**不再改写**；本条约定适用于新条目。
 
+## [1.13.4] - 2026-11-22
+
+**把「学习」从形容词变成默认关闭、可灰度、可回退的真策略层。**
+
+这是一个 opt-in 能力，不是一个承诺：`learning` 默认 `off` 时热路径与旧版逐字一致——不采样、
+不记 bucket、不发事件、不多一次模型调用。打开后只有「行为元数据」（任务标签、长度分桶、
+token、耗时、采纳与否）参与决策；指令原文、反馈备注、判官理由一律不进状态文件。
+
+- **P0 可观测**：新增纯函数内核 `src/learning.ts`——`bucketOf`（taskType|subtype|lengthBucket）、
+  `rewardOf`（质量 −0.3·token −0.2·延迟，缺失质量记「无观测」而非 0）、Beta(1,1) 后验、
+  确定性 PRNG 的 Thompson 采样、Monte-Carlo propensity（64 次重放，供 IPS 离线评估）、
+  30 天半衰期与 128 bucket 上限。start/outcome 事件加可选的 `learning` 字段。
+- **P1 shadow**：`learning:'shadow'` 只记录建议不采纳；episode 加 bucket/arm/propensity 等
+  数值字段；`persistence.ts` 平槽加 `banditState`（schema v1 不升版，旧档读不出来就是新先验）。
+- **P2 active 小流量**：`learning:'active'` 仅对确定性哈希选中的 10% 流量生效，用户覆盖层
+  仍最高优先级，0-token 路径有护栏（bandit 不得把已有本地路径关掉）。
+- **P3 路由复用**：同一后验复用到候选温度（±0.05 加性偏置，远小于 0.35 的候选间隔）与
+  `/template` 的建议（learning off 时输出逐字不变）。
+- **P4 离线元优化**：`/optimize-eval advise` 用数值维度分给出「需加强/关注/保持」结构化建议，
+  **不产出提示词原文或 diff**——diff 必然引用原文，与隐私立场冲突。
+- **P5 语义缓存骨架**：`semanticMatch` 是可注入 scorer 接口，默认阈值 0.95、多轮上下文隔离；
+  宿主无 embedding 能力时不启用，bigram Jaccard 始终是第一层。
+
+背景与业界对标（OrcaRouter 的离线全信息 warmup、Statsig 的 propensity 纪律、
+AWS/Redis 的语义缓存阈值与上下文漂移）写在被 gitignore 的
+`docs/oss-prompt-optimizer-algorithm-adoption-2026-11-22.md`。
+
+### Added
+
+- `learning: 'off' | 'shadow' | 'active'`（默认 `off`）、`learningExploreFloor=0.1`、
+  `learningWarmupObservations=50` 三个配置项。
+- 公开面新增 `learning.ts` / `metaopt.ts` 的纯函数与类型，以及 `toLearningSignal`。
+- 新增 `/optimize-eval advise` 离线建议子命令。
+
+### Changed
+
+- 单测从 1081 增至 1132 例（41 个文件）；覆盖率四维保持 ≥95（实测 branches 95.33%）。
+- 事件 payload 与 episode 状态新增可选学习字段；旧消费方忽略即可。
+
 ## [1.13.3] - 2026-11-06
 
 **覆盖率变成真门禁：四个维度都要 ≥95%，CI 直接卡。**

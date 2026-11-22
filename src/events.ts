@@ -14,6 +14,39 @@
 
 import type { ModelRoute, OptimizeResult } from './optimizer.js'
 import type { SituationProfile } from './situation.js'
+import type { BanditDecision } from './learning.js'
+
+/**
+ * The strategy decision attached to a run when `learning` is not `off`
+ * (2026-11-22). Pure metadata: an arm id, a bucket id and a propensity —
+ * never an instruction, a reason or a judge rationale. A listener that was
+ * written before this field existed simply ignores it, which is why it is
+ * additive on both payloads.
+ */
+export interface LearningSignal {
+  /** Stable context key: `taskType|subtype|lengthBucket`. */
+  bucket: string
+  /** Stable strategy key: `profile:local`. */
+  arm: string
+  /** Probability the policy chose this arm (for inverse-propensity evaluation). */
+  propensity: number
+  exploration: boolean
+  warmup: boolean
+  /** `shadow` records a suggestion without applying it; `active` applies it. */
+  mode: 'shadow' | 'active'
+}
+
+/** Convert a kernel decision into the event-safe signal. */
+export function toLearningSignal(decision: BanditDecision, mode: 'shadow' | 'active', bucket: string): LearningSignal {
+  return {
+    bucket,
+    arm: decision.armKey,
+    propensity: decision.propensity,
+    exploration: decision.exploration,
+    warmup: decision.warmup,
+    mode,
+  }
+}
 
 /** Which public entry point produced the event. */
 export type OptimizeMethod = 'optimize' | 'iterate'
@@ -25,6 +58,8 @@ export interface OptimizeStartPayload {
   input: string
   /** Optional situation profile (P2) — present when the pipeline computed one. */
   profile?: SituationProfile
+  /** Strategy decision, when the learning layer is enabled. */
+  learning?: LearningSignal
 }
 
 /**
@@ -80,6 +115,8 @@ export interface OptimizeOutcomePayload {
   route?: ModelRoute
   /** The same facts under the OpenTelemetry GenAI names (1.13.0, item 7). */
   genAi?: GenAiSignal
+  /** Strategy decision, when the learning layer is enabled. */
+  learning?: LearningSignal
 }
 
 /** The event names, exported for reference and to avoid retyping the literals. */

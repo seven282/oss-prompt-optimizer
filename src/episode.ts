@@ -43,6 +43,25 @@ export interface Episode {
   profile: string
   /** The local template mode used ('on' | 'off' | 'hybrid'). */
   localMode: string
+  // --- Learning metadata (2026-11-22) -------------------------------------
+  // All four fields are numeric/enumerated. No instruction, note or judge
+  // rationale is ever copied here — the privacy crop in persistence.ts strips
+  // `input` and leaves these intact, because they carry no user content.
+
+  /** Stable context bucket `taskType|subtype|lengthBucket`, when learning is on. */
+  bucketKey?: string
+  /** Strategy arm key `profile:local` that was applied (or merely suggested). */
+  arm?: string
+  /** Numeric reward in [0,1], available once quality feedback arrives. */
+  reward?: number
+  /** Probability the policy chose this arm (inverse-propensity evaluation). */
+  propensity?: number
+  /** True when the arm came from uniform exploration. */
+  exploration?: boolean
+  /** True when the bucket was still in deterministic warmup. */
+  warmup?: boolean
+  /** `shadow` = suggested but not applied; `active` = applied. */
+  learningMode?: 'shadow' | 'active'
 }
 
 /**
@@ -103,12 +122,13 @@ export class EpisodeLog {
     return this.episodes.filter(predicate)
   }
 
-  /** Update an episode's quality/accepted fields by index. */
-  updateFeedback(index: number, feedback: { quality?: number; accepted?: boolean }): void {
+  /** Update an episode's feedback fields by index (quality/accepted/reward). */
+  updateFeedback(index: number, feedback: { quality?: number; accepted?: boolean; reward?: number }): void {
     const ep = this.episodes[index]
     if (ep === undefined) return
     if (feedback.quality !== undefined) ep.quality = feedback.quality
     if (feedback.accepted !== undefined) ep.accepted = feedback.accepted
+    if (feedback.reward !== undefined) ep.reward = feedback.reward
   }
 }
 

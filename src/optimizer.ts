@@ -19,7 +19,7 @@ import { configureSettingsPage, type SettingsPage } from './settings.js'
 import { adoptLiveConfig, followVolatileUpdates, plainConfig } from './live-config.js'
 import { OptimizeError, OptimizeErrorCode, INCOMPLETE_SECTIONS_MESSAGE, metaContentMessage, plainHeadingsMessage, thinOutputMessage, thinSectionsMessage, type OptimizeErrorCode as OptimizeErrorCodeType } from './errors.js'
 import { MaxTokensErrorWithPartial } from './llm.js'
-import { PROMPT_OPTIMIZER_EVENTS, type GenAiSignal, type OptimizeMethod } from './events.js'
+import { PROMPT_OPTIMIZER_EVENTS, toLearningSignal, type GenAiSignal, type LearningSignal, type OptimizeMethod } from './events.js'
 import { STATUS_MAX_EVENTS, type StatusEvent, type StatusSnapshot } from './status.js'
 import { detectLanguage, detectTaskType, isCompactInstruction, type MetaLanguage } from './meta.js'
 import {
@@ -105,7 +105,13 @@ import {
   type MessageFeedbackLike,
 } from './feedback.js'
 import { computePreferences, formatPreferences, type PreferenceModel } from './preference.js'
+import { adviseFromRuns, formatMetaAdvice, type MetaAdviceReport } from './metaopt.js'
 import { computeAdaptation, formatAdaptationHints, DEFAULT_ADAPT_CONFIG, resolveParams, type AdaptationHints, type UserOverrides } from './adapt.js'
+import {
+  ACTIVE_SLICE_PERCENT,
+  armKey, armTemperatureBias, bucketOf, clampTemperature, createLearningState, decide, hash32,
+  loadLearningState, observe, parseArm, rewardOf, type LearningState,
+} from './learning.js'
 import { emptyUsage, normalizeLoadedUsage, normalizeRoute, toModelRoute, usageCount, type ModelRoute, type OptimizeStats, type ResolvedRoute, type RunUsage, type UsageLedger } from './optimizer/usage.js'
 import { assertConfigKeys, cloneEvalRun, cloneOptimizeResult, resolveTemplates, senseNeedsBlock, type OptimizeOptions, type OptimizeResult } from './optimizer/results.js'
 export type { ModelRoute, OptimizeStats, RunUsage } from './optimizer/usage.js'
@@ -194,6 +200,15 @@ export class PromptOptimizerService extends Service {
   private readonly cache: OptimizeCache<CachedOptimize>
   /** Episode log for auto-iteration (behavior collection). */
   private readonly episodes: EpisodeLog
+  /**
+   * Contextual-bandit posteriors (2026-11-22). Holds only numeric Beta counts
+   * keyed by `bucket|arm`; no instruction text ever reaches it. Rebuilt from a
+   * persisted snapshot at construction (with half-life decay) and folded back
+   * on user feedback.
+   */
+  private readonly learningState: LearningState
+  /** The learning decision for the current run, attached to events/episodes. */
+  private currentLearning: LearningSignal | undefined
   /** Layer 3: User overrides (runtime, set via commands). */
   private userOverrides: UserOverrides = {}
   /** Lightweight run statistics (观测, roadmap 要优化的功能 #2). */
@@ -310,6 +325,7 @@ export class PromptOptimizerService extends Service {
       ttlMs: config.cacheTtlMs,
     })
     this.episodes = new EpisodeLog(200)
+    this.learningState = createLearningState()
     // 1.8.1: state persistence — load once at construction (sync read of a
     // small JSON file), debounced saves on activity, sync flush at disposal.
     this.persistence = createPersistence(config.persistState, config.stateFile)
@@ -328,6 +344,11 @@ export class PromptOptimizerService extends Service {
         this.episodes.push({ input: '', ...ep } as Episode)
       }
       this.recentEvents.push(...loaded.events)
+      // Additive slot: older state files have no banditState, so a fresh prior
+      // is correct. Half-life decay is applied for free by the loader.
+      if (loaded.banditState !== undefined) {
+        Object.assign(this.learningState, loadLearningState(loaded.banditState))
+      }
     }
     // Disposal fallback: flush any pending debounced state before teardown
     // (guarded — some hosts/mocks expose no `ctx.effect`).
@@ -415,6 +436,7 @@ export class PromptOptimizerService extends Service {
       events: cropEvents(this.recentEvents),
       evalRuns: this.evalRuns.slice(-PERSIST_MAX_EVAL_RUNS),
       evalBaseline: this.evalBaseline,
+      banditState: this.learningState,
     }
   }
 
@@ -643,7 +665,12 @@ export class PromptOptimizerService extends Service {
   /** Fire `optimize:start`; a throwing listener must never break the pipeline. */
   private emitStart(method: OptimizeMethod, input: string, profile?: SituationProfile): void {
     try {
-      this.ctx.emit(PROMPT_OPTIMIZER_EVENTS.start, { method, input, ...(profile !== undefined ? { profile } : {}) })
+      this.ctx.emit(PROMPT_OPTIMIZER_EVENTS.start, {
+        method,
+        input,
+        ...(profile !== undefined ? { profile } : {}),
+        ...(this.currentLearning !== undefined ? { learning: this.currentLearning } : {}),
+      })
     } catch (error) {
       // Log but don't break the pipeline
       this.ctx.logger?.warn?.('Observer failed on optimize:start event', {
@@ -713,7 +740,14 @@ export class PromptOptimizerService extends Service {
     try {
       this.ctx.emit(
         result.optimized ? PROMPT_OPTIMIZER_EVENTS.success : PROMPT_OPTIMIZER_EVENTS.failure,
-        { method, input, result, durationMs, ...(signal ?? {}) },
+        {
+          method,
+          input,
+          result,
+          durationMs,
+          ...(signal ?? {}),
+          ...(this.currentLearning !== undefined ? { learning: this.currentLearning } : {}),
+        },
       )
     } catch (error) {
       // Log but don't break the pipeline
@@ -755,6 +789,16 @@ export class PromptOptimizerService extends Service {
           callCount: this.runCallCount,
           profile: this.config.optimizationProfile,
           localMode: this.config.localTemplate,
+          ...(this.currentLearning !== undefined
+            ? {
+                bucketKey: this.currentLearning.bucket,
+                arm: this.currentLearning.arm,
+                propensity: this.currentLearning.propensity,
+                exploration: this.currentLearning.exploration,
+                warmup: this.currentLearning.warmup,
+                learningMode: this.currentLearning.mode,
+              }
+            : {}),
         }
         this.episodes.push(ep)
       } catch {
@@ -842,6 +886,15 @@ export class PromptOptimizerService extends Service {
   }
 
   /** Last run + baseline + their comparison, for status rendering. */
+  /**
+   * P4 offline meta-optimization advice (opt-in, never on the hot path):
+   * structured, text-free suggestions derived from past eval runs' numeric
+   * dimension scores. Returns structured data; rendering is in `command.ts`.
+   */
+  getMetaAdvice(): MetaAdviceReport {
+    return adviseFromRuns(this.evalRuns)
+  }
+
   getEvalSummary(): { last: EvalRun | undefined; baseline: EvalRun | undefined; comparison: EvalComparison | undefined } {
     const last = this.evalRuns.length > 0 ? this.evalRuns[this.evalRuns.length - 1] : undefined
     const baseline = this.evalBaseline ?? undefined
@@ -1320,6 +1373,21 @@ export class PromptOptimizerService extends Service {
     const actualIndex = index < 0 ? this.episodes.size + index : index
     const quality = accepted ? 1.0 : 0.0
     this.episodes.updateFeedback(actualIndex, { accepted, quality })
+
+    // Bandit reward (P1): only episodes that were actually recorded with a
+    // bucket/arm participate. The reward is a number derived from signals we
+    // already had — no new text, no new model call — and quality is always
+    // present here (accepted → 1, rejected → 0).
+    if (this.config.learning === 'off') return
+    const ep = this.episodes.all()[actualIndex]
+    if (ep === undefined || ep.bucketKey === undefined || ep.arm === undefined) return
+    const arm = parseArm(ep.arm)
+    if (arm === undefined) return
+    const reward = rewardOf(quality, ep.outputTokens, ep.durationMs)
+    if (reward === undefined) return
+    this.episodes.updateFeedback(actualIndex, { reward })
+    observe(this.learningState, ep.bucketKey, arm, reward)
+    this.schedulePersist()
   }
 
   /**
@@ -1336,6 +1404,30 @@ export class PromptOptimizerService extends Service {
       this.config.temperature,
       { ...DEFAULT_ADAPT_CONFIG, minEpisodes: this.config.minAdaptEpisodes },
     )
+  }
+
+  /**
+   * P3 reuse #2 — a read-only routing suggestion for `/template` (2026-11-22).
+   * Uses the same bucket convention and the same posterior state as the main
+   * policy, but never changes params and never emits an event. Returns the
+   * `local` dimension the bandit currently favours for this scene, or
+   * `undefined` when learning is off (the default) — so the command stays
+   * byte-for-byte unchanged unless the operator opts in.
+   *
+   * `prefill` favours the zero-token prefilled template; `skeleton` favours the
+   * fill-in skeleton. The caller keeps its rule-based gate as the final word.
+   */
+  templateRouteSuggestion(scene: string): 'prefill' | 'skeleton' | undefined {
+    if (this.config.learning === 'off') return undefined
+    const taskType = detectTaskType(scene)
+    const subtype = detectTaskSubtype(scene, taskType)
+    const bucket = bucketOf(taskType, subtype, scene.length)
+    const decision = decide(this.learningState, bucket, {
+      exploreFloor: this.config.learningExploreFloor,
+      warmupObservations: this.config.learningWarmupObservations,
+      seed: `template:${scene}`,
+    })
+    return decision.arm.local === 'off' ? 'skeleton' : 'prefill'
   }
 
   /** Layer 3: Set a user override for profile/localTemplate/temperature. */
@@ -1394,12 +1486,60 @@ export class PromptOptimizerService extends Service {
   }
 
   /**
+   * Contextual-bandit decision for one run (P0–P2, 2026-11-22).
+   *
+   * Returns `undefined` when `learning: 'off'` (the default) — in that mode
+   * not even a hash is computed, so the old hot path is byte-for-byte intact.
+   * Otherwise the bucket is built from enumerated labels + a length bucket
+   * (never from the wording), a decision is sampled, and the resulting signal
+   * is stored for the episode/event. `shadow` records but does not apply;
+   * `active` applies to a deterministic 10% slice only.
+   */
+  private banditFor(rawInput: string): { hints: AdaptationHints; signal: LearningSignal } | undefined {
+    const mode = this.config.learning
+    if (mode === 'off') return undefined
+    const taskType = detectTaskType(rawInput)
+    const subtype = detectTaskSubtype(rawInput, taskType)
+    const bucket = bucketOf(taskType, subtype, rawInput.length)
+    const decision = decide(this.learningState, bucket, {
+      exploreFloor: this.config.learningExploreFloor,
+      warmupObservations: this.config.learningWarmupObservations,
+      seed: rawInput,
+    })
+    const signal = toLearningSignal(decision, mode, bucket)
+    this.currentLearning = signal
+
+    // Shadow never changes behaviour. Active only applies to the deterministic
+    // 10% slice; a stable hash keeps the same input in/out of the slice so an
+    // A/B comparison is not scrambled between retries of the same instruction.
+    const inSlice = hash32(`slice|${bucket}|${rawInput}`) % 100 < ACTIVE_SLICE_PERCENT
+    if (mode === 'shadow' || !inSlice) return { hints: { reasons: [] }, signal }
+
+    const hints: AdaptationHints = { reasons: [`bandit:${decision.armKey} (p=${decision.propensity.toFixed(2)})`] }
+    hints.profile = decision.arm.profile
+    // 0-token guardrail: the bandit may never turn an existing local path off —
+    // that would lower the zero-token share, one of the product's hard promises.
+    if (decision.arm.local !== 'off' || this.config.localTemplate === 'off') {
+      hints.localTemplate = decision.arm.local
+    }
+    // P3 reuse: the arm's profile nudges the base temperature for the whole run
+    // (and therefore the candidate ladder). Additive and tiny — never replaces
+    // the configured value, so a wrong arm cannot flatten the spread.
+    hints.temperature = clampTemperature(this.config.temperature + armTemperatureBias(decision.arm))
+    return { hints, signal }
+  }
+
+  /**
    * Resolve effective parameters using 3-layer architecture.
    * Called at the start of optimize() to determine which profile/local/temperature to use.
    *
-   * Priority: Layer 3 (user override) > Layer 1 (session learning) > Layer 2 (smart defaults) > base config.
+   * Priority: Layer 3 (user override) > bandit (active slice) > Layer 1 (session
+   * learning) > Layer 2 (smart defaults) > base config.
    */
-  private resolveEffectiveParams(rawInput: string): {
+  private resolveEffectiveParams(
+    rawInput: string,
+    banditHints: AdaptationHints = { reasons: [] },
+  ): {
     profile: 'balanced' | 'fast'
     localTemplate: 'on' | 'off' | 'hybrid'
     temperature: number
@@ -1417,8 +1557,21 @@ export class PromptOptimizerService extends Service {
       ? this.computeAdaptationHints()
       : { reasons: [] as string[] }
 
-    // Layer 2+3 resolution
-    return resolveParams(taskType, sessionHints, this.userOverrides, baseConfig)
+    // Bandit layer: shadow records only; active suggests for the 10% slice.
+    // resolveParams keeps user overrides at the top, so an explicit /set still
+    // wins over any learned suggestion — the escape hatch stays intact.
+    const merged: AdaptationHints = {
+      profile: banditHints.profile ?? sessionHints.profile,
+      localTemplate: banditHints.localTemplate ?? sessionHints.localTemplate,
+      temperature: banditHints.temperature ?? sessionHints.temperature,
+      reasons: [...sessionHints.reasons, ...banditHints.reasons],
+    }
+    const resolved = resolveParams(taskType, merged, this.userOverrides, baseConfig)
+    if (banditHints.reasons.length > 0 && this.userOverrides.profile === undefined
+      && this.userOverrides.localTemplate === undefined) {
+      return { ...resolved, source: 'bandit' }
+    }
+    return resolved
   }
 
   /**
@@ -1434,6 +1587,7 @@ export class PromptOptimizerService extends Service {
     // Same reasoning for the run's model identity (1.13.0): a run that never
     // reaches the model must not inherit the previous run's route.
     this.runRoute = undefined
+    this.currentLearning = undefined
     try {
       assertInput(rawInput)
     } catch {
@@ -1448,8 +1602,11 @@ export class PromptOptimizerService extends Service {
     // (senseNeeds) also bypasses the pass-through (the user wants fresh sensing).
     const hasContext = options.context !== undefined && options.context.trim().length > 0
     const senseNeeds = options.senseNeeds ?? this.config.senseNeeds
-    // 3-layer parameter resolution: user override > session learning > smart defaults > config
-    const effective = this.resolveEffectiveParams(rawInput)
+    // Bandit decision for THIS run (P0–P2). Computed once here so a status read
+    // never samples the policy, and passed into resolution as a pure hint.
+    const bandit = this.banditFor(rawInput)
+    // 3-layer parameter resolution: user override > bandit > session learning > config
+    const effective = this.resolveEffectiveParams(rawInput, bandit?.hints)
     if (
       this.config.skipIfAlreadyOptimized &&
       this.config.outputStyle === 'sections' &&
@@ -1761,6 +1918,7 @@ export class PromptOptimizerService extends Service {
   async iterate(lastOptimized: string, instruction: string, options: OptimizeOptions = {}): Promise<OptimizeResult> {
     // A run starts here too: clear the previous run's model identity (1.13.0).
     this.runRoute = undefined
+    this.currentLearning = undefined
     try {
       assertInput(lastOptimized)
     } catch {
@@ -1779,8 +1937,9 @@ export class PromptOptimizerService extends Service {
     const outputLanguage = options.outputLanguage ?? this.config.outputLanguage
     const startedAt = Date.now()
     const senseNeeds = options.senseNeeds ?? this.config.senseNeeds
-    // 3-layer parameter resolution for iterate
-    const effectiveIter = this.resolveEffectiveParams(instruction)
+    // 3-layer parameter resolution for iterate (bandit samples once per run)
+    const banditIter = this.banditFor(instruction)
+    const effectiveIter = this.resolveEffectiveParams(instruction, banditIter?.hints)
     // P-A：迭代指令同样分档。
     const compactTier = isCompactInstruction(instruction)
     // 情境感知: the next instruction's profile (with conversation role cues,

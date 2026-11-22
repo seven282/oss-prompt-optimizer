@@ -23,8 +23,22 @@ export const OptimizeErrorCode = OptimizeErrorCodeValue
 export type OptimizeErrorCode = (typeof OptimizeErrorCodeValue)[keyof typeof OptimizeErrorCodeValue]
 export { MaxTokensError, PromptOptimizerService, PROMPT_OPTIMIZER_TIMEOUT_CODE } from './optimizer.js'
 export type { OptimizeOptions, OptimizeResult } from './optimizer.js'
-export { PROMPT_OPTIMIZER_EVENTS } from './events.js'
-export type { OptimizeMethod, OptimizeOutcomePayload, OptimizeStartPayload } from './events.js'
+export { PROMPT_OPTIMIZER_EVENTS, toLearningSignal } from './events.js'
+export type { LearningSignal, OptimizeMethod, OptimizeOutcomePayload, OptimizeStartPayload } from './events.js'
+export {
+  ACTIVE_SLICE_PERCENT, ARMS, LEARNING_MAX_BUCKETS,
+  armKey, armTemperatureBias, bucketOf, clampTemperature, createLearningState, decide,
+  lengthBucketOf, loadLearningState, observe, parseArm, parseLearningState, posteriorMean,
+  rewardOf, warmupFromScores,
+} from './learning.js'
+export type {
+  Arm, BanditDecision, BetaStat, DecideOptions, LearningMode, LearningProfile,
+  LearningLocal, LearningState, LengthBucket,
+} from './learning.js'
+export { SEMANTIC_DEFAULT_THRESHOLD, semanticMatch } from './cache.js'
+export type { SemanticScorer } from './cache.js'
+export { adviseFromRuns, formatMetaAdvice } from './metaopt.js'
+export type { MetaAdvice, MetaAdviceReport } from './metaopt.js'
 export { renderOptimizeResult } from './tool.js'
 export { AUTO_OPTIMIZE_NOTE, isTriggered, messageText, optimizedMessage, registerAutoOptimizeHook } from './hook.js'
 // 1.8.2 (方案 D) 兼容层：能力探测结果可供宿主状态页/命令展示，也让发布前的

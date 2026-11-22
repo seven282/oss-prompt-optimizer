@@ -213,6 +213,14 @@
 | `feedbackAdapt` | boolean | `true` | 是否读取宿主 `messageFeedback` 并把反馈折算成采样温度偏置（负面 ≥50% → +0.1；≤20% → −0.1；样本 <3 不生效）。**只记 rating/分类/是否含备注，备注原文永不复制** |
 | `feedbackScanLimit` | number 1–32 | `8` | `/optimize --feedback` 与 `--status` 最多读取多少个会话的反馈 |
 
+**学习策略（1.13.4，全部默认关闭）**：下表三个字段控制一个 contextual bandit。只消费行为元数据（任务标签/长度分桶/token/耗时/采纳），**不读指令原文、不记判官理由、不加模型调用**。`off` 时热路径与旧版逐字一致。
+
+| 字段 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `learning` | `'off' \| 'shadow' \| 'active'` | `off` | `off` 不采样；`shadow` 只记录建议（供 propensity 离线评估）不采纳；`active` 仅对确定性哈希选中的 10% 流量生效，用户 `/set-*` 覆盖仍最高优先级，且 bandit 不得关闭已有本地零 token 路径 |
+| `learningExploreFloor` | number 0–1 | `0.1` | 离开 warmup 后的均匀探索概率上限 |
+| `learningWarmupObservations` | number 1–1000 | `50` | 每个 bucket 观测数门槛，之前走确定性 hash warmup |
+
 **择优的三条规则**（改这里之前先读懂）：① 结构门决定**资格**、分数只决定**排序**——门控失败（含注入金丝雀泄漏）的候选永远不能胜出；② 换人需要赢过基线 `selectMinGain`；③ 判官漏评维度 → 该候选**不计分**，不是部分均值。候选并发生成，**只有胜者进缓存**。
 
 ⚠️ **与本地模板路径互斥**：`localTemplate: on|hybrid` 在 LLM 管线之前就返回，因此不会产生候选。要吃择优收益需让指令走完整管线（即默认的 `off`）。

@@ -85,6 +85,9 @@ const DEFAULT_CONFIG: Config = {
   selectJudge: true,
   feedbackAdapt: true,
   feedbackScanLimit: 8,
+  learning: 'off',
+  learningExploreFloor: 0.1,
+  learningWarmupObservations: 50,
 }
 
 function makeHost() {

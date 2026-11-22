@@ -5,6 +5,17 @@
 The plugin line in `cordis.patch.yml` accepts the fields below; the defaults are built into the
 schema.
 
+**Learning policy (1.13.4, all off by default)**: the three fields below drive a contextual
+bandit. It consumes behavioral metadata only (task label / length bucket / tokens / latency /
+acceptance) — **no instruction text, no judge rationale, no extra model calls**. With `off`
+the hot path is byte-identical to before.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `learning` | `'off' \| 'shadow' \| 'active'` | `off` | `off` samples nothing; `shadow` records the suggestion only (for propensity-based offline evaluation) without applying it; `active` applies to the deterministic 10% hash slice, explicit `/set-*` overrides still win, and the bandit may never switch off an existing zero-token local path |
+| `learningExploreFloor` | number 0–1 | `0.1` | Uniform-exploration cap after warmup |
+| `learningWarmupObservations` | number 1–1000 | `50` | Observations per bucket before deterministic-hash warmup gives way to Thompson sampling |
+
 ## Core
 
 | Field | Type | Default | Notes |

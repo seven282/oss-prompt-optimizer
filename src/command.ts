@@ -6,6 +6,7 @@ import { matchScene, renderSceneTemplate } from './meta.js'
 import type { TaskSubtype } from './situation.js'
 import { buildLocalTemplate, localTemplateGate } from './local.js'
 import { formatEvalComparison, formatEvalRun, evalVerdictToken } from './eval.js'
+import { formatMetaAdvice } from './metaopt.js'
 import { formatStatus } from './status.js'
 import type { PromptOptimizerService } from './optimizer.js'
 
@@ -306,6 +307,12 @@ export function registerOptimizeCommand(ctx: Context, service: PromptOptimizerSe
         return { kind: 'success', text: `prompt-optimize: ${all ? '全部' : '默认（core）'}用例 ${cases.length} 条\n${lines.join('\n')}` }
       }
 
+      // --- advise: P4 offline meta-optimization advice (opt-in, text-free) ---
+      if (head === 'advise') {
+        const report = service.getMetaAdvice()
+        return { kind: 'success', text: formatMetaAdvice(report, lang) }
+      }
+
       // --- baseline: record a run as the comparison point ---
       if (head === 'baseline') {
         const label = rest.find((token) => !token.startsWith('--'))
@@ -318,7 +325,7 @@ export function registerOptimizeCommand(ctx: Context, service: PromptOptimizerSe
       }
 
       if (head !== 'run') {
-        return { kind: 'error', text: '用法: /optimize-eval run [label] [--all] [--mine] | baseline [label] | show | list | rubric | cases' }
+        return { kind: 'error', text: '用法: /optimize-eval run [label] [--all] [--mine] | baseline [label] | show | list | rubric | cases | advise' }
       }
 
       // --- run ---
@@ -389,9 +396,17 @@ export function registerOptimizeCommand(ctx: Context, service: PromptOptimizerSe
           return { kind: 'success', text: buildLocalTemplate(instruction, subtype, en ? 'en' : 'zh') }
         }
         // 门控拒绝：回退骨架，附提示。
+        // P3（learning≠off 才启用）：bandit 若更偏好预填，附一行建议，让用户
+        // 知道可以更具体地补充可抽取信号。learning off 时这段输出与旧版逐字一致。
+        const route = service.templateRouteSuggestion(arg)
+        const routeHint = route === 'prefill'
+          ? (en
+            ? '\n\n（路由建议：补充具体目标/受众后可走零 token 预填）'
+            : '\n\n（路由建议：补充具体目标/受众后可走零 token 预填）')
+          : ''
         return {
           kind: 'success',
-          text: `${renderSceneTemplate(subtype, en)}\n\n（未识别可本地填充的信号——个性化需求请用 /optimize 走完整优化）`,
+          text: `${renderSceneTemplate(subtype, en)}\n\n（未识别可本地填充的信号——个性化需求请用 /optimize 走完整优化）${routeHint}`,
         }
       }
       return { kind: 'success', text: renderSceneTemplate(subtype, en) }

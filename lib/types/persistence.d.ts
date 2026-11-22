@@ -17,6 +17,7 @@ import type { CroppedEpisode, Episode } from './episode.js';
 import type { StatusEvent } from './status.js';
 import type { OptimizeStats } from './optimizer.js';
 import type { EvalRun } from './eval.js';
+import { type LearningState } from './learning.js';
 /** Schema version — bump when the on-disk shape changes (old files ignored). */
 export declare const PERSIST_VERSION = 1;
 /** Upper bound on persisted episodes. */
@@ -42,6 +43,12 @@ export interface PersistData {
     evalRuns: EvalRun[];
     /** The recorded baseline run, or `null` (1.11.0). */
     evalBaseline: EvalRun | null;
+    /**
+     * Contextual-bandit posteriors (2026-11-22). Additive: a state file written
+     * before learning shipped simply lacks it and starts from a fresh prior.
+     * The value is a plain JSON object of numeric Beta parameters — no text.
+     */
+    banditState?: LearningState;
 }
 /** Serialize a state document to the on-disk JSON string. */
 export declare function serializeState(data: PersistData): string;

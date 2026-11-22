@@ -7,6 +7,7 @@ import { type RubricDimension } from './judge.js';
 import { type EvalComparison, type EvalRun } from './eval.js';
 import { type SelectionSummary } from './select.js';
 import { type FeedbackLedger } from './feedback.js';
+import { type MetaAdviceReport } from './metaopt.js';
 import { type AdaptationHints, type UserOverrides } from './adapt.js';
 import { type OptimizeStats } from './optimizer/usage.js';
 import { type OptimizeOptions, type OptimizeResult } from './optimizer/results.js';
@@ -63,6 +64,15 @@ export declare class PromptOptimizerService extends Service {
     private readonly cache;
     /** Episode log for auto-iteration (behavior collection). */
     private readonly episodes;
+    /**
+     * Contextual-bandit posteriors (2026-11-22). Holds only numeric Beta counts
+     * keyed by `bucket|arm`; no instruction text ever reaches it. Rebuilt from a
+     * persisted snapshot at construction (with half-life decay) and folded back
+     * on user feedback.
+     */
+    private readonly learningState;
+    /** The learning decision for the current run, attached to events/episodes. */
+    private currentLearning;
     /** Layer 3: User overrides (runtime, set via commands). */
     private userOverrides;
     /** Lightweight run statistics (观测, roadmap 要优化的功能 #2). */
@@ -256,6 +266,12 @@ export declare class PromptOptimizerService extends Service {
      */
     setEvalBaseline(label?: string): EvalRun | undefined;
     /** Last run + baseline + their comparison, for status rendering. */
+    /**
+     * P4 offline meta-optimization advice (opt-in, never on the hot path):
+     * structured, text-free suggestions derived from past eval runs' numeric
+     * dimension scores. Returns structured data; rendering is in `command.ts`.
+     */
+    getMetaAdvice(): MetaAdviceReport;
     getEvalSummary(): {
         last: EvalRun | undefined;
         baseline: EvalRun | undefined;
@@ -396,6 +412,18 @@ export declare class PromptOptimizerService extends Service {
      * Only active when `autoAdapt: true` and enough episodes exist.
      */
     computeAdaptationHints(): AdaptationHints;
+    /**
+     * P3 reuse #2 — a read-only routing suggestion for `/template` (2026-11-22).
+     * Uses the same bucket convention and the same posterior state as the main
+     * policy, but never changes params and never emits an event. Returns the
+     * `local` dimension the bandit currently favours for this scene, or
+     * `undefined` when learning is off (the default) — so the command stays
+     * byte-for-byte unchanged unless the operator opts in.
+     *
+     * `prefill` favours the zero-token prefilled template; `skeleton` favours the
+     * fill-in skeleton. The caller keeps its rule-based gate as the final word.
+     */
+    templateRouteSuggestion(scene: string): 'prefill' | 'skeleton' | undefined;
     /** Layer 3: Set a user override for profile/localTemplate/temperature. */
     setUserOverride(key: 'profile' | 'local' | 'temperature', value: string): void;
     /** Layer 3: Clear a user override (revert to config/smart defaults). */
@@ -409,10 +437,22 @@ export declare class PromptOptimizerService extends Service {
     /** Parse the four sections out of a successful optimized prompt. */
     private sectionsOf;
     /**
+     * Contextual-bandit decision for one run (P0–P2, 2026-11-22).
+     *
+     * Returns `undefined` when `learning: 'off'` (the default) — in that mode
+     * not even a hash is computed, so the old hot path is byte-for-byte intact.
+     * Otherwise the bucket is built from enumerated labels + a length bucket
+     * (never from the wording), a decision is sampled, and the resulting signal
+     * is stored for the episode/event. `shadow` records but does not apply;
+     * `active` applies to a deterministic 10% slice only.
+     */
+    private banditFor;
+    /**
      * Resolve effective parameters using 3-layer architecture.
      * Called at the start of optimize() to determine which profile/local/temperature to use.
      *
-     * Priority: Layer 3 (user override) > Layer 1 (session learning) > Layer 2 (smart defaults) > base config.
+     * Priority: Layer 3 (user override) > bandit (active slice) > Layer 1 (session
+     * learning) > Layer 2 (smart defaults) > base config.
      */
     private resolveEffectiveParams;
     /**

@@ -125,3 +125,51 @@ export function createOptimizeCache<T>(options: OptimizeCacheOptions): OptimizeC
     },
   }
 }
+
+/**
+ * P5 — semantic similarity layer (2026-11-22), deliberately opt-in.
+ *
+ * This plugin has no embedding capability of its own (compat probes only
+ * defineTool/createUserMessage/BlockAssembler), and the product promises zero
+ * extra model calls on the hot path. So instead of baking in an embedder we
+ * expose a *scorer interface*: a host/deployment that already has embeddings
+ * may inject one, and only then does a second similarity layer run — on top
+ * of `bigramJaccard`, which always remains the first, dependency-free layer.
+ *
+ * Default off: with no scorer, or below the 0.95 threshold, behaviour is
+ * identical to the bigram-only path. Multi-turn context is isolated: a cache
+ * hit is refused whenever the two entries carry different context scopes,
+ * because semantically-similar prompts in different turns can demand
+ * different answers (the failure AWS/Redis both call out).
+ */
+
+/** A host-supplied similarity function, 0..1. Never called unless injected. */
+export type SemanticScorer = (a: string, b: string) => number
+
+/** Default threshold — high on purpose; lower only after measuring false hits. */
+export const SEMANTIC_DEFAULT_THRESHOLD = 0.95
+
+/**
+ * Decide whether two cached requests are semantically equivalent.
+ * Returns `false` unless a scorer was injected, both scopes match, and the
+ * score clears the threshold. `undefined` scope on both sides counts as the
+ * same (global) namespace.
+ */
+export function semanticMatch(
+  aText: string,
+  bText: string,
+  scorer: SemanticScorer | undefined,
+  options: {
+    threshold?: number
+    aScope?: string
+    bScope?: string
+  } = {},
+): boolean {
+  if (scorer === undefined) return false
+  const aScope = options.aScope ?? ''
+  const bScope = options.bScope ?? ''
+  if (aScope !== bScope) return false
+  const threshold = options.threshold ?? SEMANTIC_DEFAULT_THRESHOLD
+  const score = scorer(aText, bText)
+  return Number.isFinite(score) && score >= threshold
+}

@@ -41,6 +41,20 @@ export interface Episode {
     profile: string;
     /** The local template mode used ('on' | 'off' | 'hybrid'). */
     localMode: string;
+    /** Stable context bucket `taskType|subtype|lengthBucket`, when learning is on. */
+    bucketKey?: string;
+    /** Strategy arm key `profile:local` that was applied (or merely suggested). */
+    arm?: string;
+    /** Numeric reward in [0,1], available once quality feedback arrives. */
+    reward?: number;
+    /** Probability the policy chose this arm (inverse-propensity evaluation). */
+    propensity?: number;
+    /** True when the arm came from uniform exploration. */
+    exploration?: boolean;
+    /** True when the bucket was still in deterministic warmup. */
+    warmup?: boolean;
+    /** `shadow` = suggested but not applied; `active` = applied. */
+    learningMode?: 'shadow' | 'active';
 }
 /**
  * Privacy-cropped episode for persistence (1.8.1): the raw instruction text
@@ -67,10 +81,11 @@ export declare class EpisodeLog {
     clear(): void;
     /** Find episodes matching a predicate. */
     filter(predicate: (ep: Episode) => boolean): readonly Episode[];
-    /** Update an episode's quality/accepted fields by index. */
+    /** Update an episode's feedback fields by index (quality/accepted/reward). */
     updateFeedback(index: number, feedback: {
         quality?: number;
         accepted?: boolean;
+        reward?: number;
     }): void;
 }
 /** Maximum input characters stored per episode (to avoid unbounded memory). */

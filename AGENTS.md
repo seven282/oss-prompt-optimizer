@@ -78,6 +78,7 @@ P1–P11 各自证明什么、每步的反向控制，见 `docs/compatibility.md
 | `src/tool.ts` / `hook.ts` / `command.ts` | `prompt_optimize` 工具 / `agent/pre-step` 自动优化钩子 / 三个命令（`/optimize`、`/optimize-eval`、`/template`） | 命令改名需同步 `client.js`、README、钩子前缀默认值，一次原子变更 |
 | `src/settings.ts` + `src/live-config.ts` | 设置面：前者只剩「告诉 dsh-settings 不要为本 entry 自动生成第二个编辑器」（`configure({ auto: false })`）；后者是无宿主依赖的纯函数层（`plainConfig` / `adoptLiveConfig` / `followVolatileUpdates`） | **`this.config` 必须是普通值快照**，`this.rawConfig` 才是 loader 传进来的带引用对象 |
 | `src/persistence.ts` / `episode.ts` / `preference.ts` / `adapt.ts` / `status.ts` | 状态持久化（原子写 + 去抖）/ episode 日志与裁剪 / 偏好模型 / 自迭代适配 / 状态渲染 | 持久化只存**行为元数据**，不存指令原文 |
+| `src/learning.ts` / `src/metaopt.ts` / `src/cache.ts`（semanticMatch） | contextual Thompson Sampling 内核（bucket/reward/Beta/propensity）/ 离线元优化建议 / 可注入语义相似度骨架 | **`learning` 默认 `off` 时热路径逐字不变**；只吃数值元数据，指令原文/判官理由永不入状态；P4 不出 diff、P5 宿主无 embedding 不启用 |
 | `client/client.js` | **手写 ModuleLoader 客户端（无打包器）**，build 复制到 `lib/client.js`；✨ 按钮经 `slots.inject('conversation.input.left')`，设置页经 `slots.inject('settings.section')` | 见下「客户端 i18n」与规则 R2 / R2b |
 | `client/globals.d.ts` + `tsconfig.client.json` | 客户端半边的静态检查：`checkJs`（非 strict）+ DOM lib + 宿主 `__ModuleLoader__` 环境声明 | 检查必须保持**能报错**（注入未定义标识符须失败）；改 `client.js` 后跑 `pnpm check:client` |
 

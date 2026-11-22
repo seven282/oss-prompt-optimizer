@@ -81,6 +81,9 @@ const DEFAULT_CONFIG: Config = {
   selectJudge: true,
   feedbackAdapt: true,
   feedbackScanLimit: 8,
+  learning: 'off',
+  learningExploreFloor: 0.1,
+  learningWarmupObservations: 50,
 }
 
 function textStream(text: string): AsyncIterable<StreamChunk> {
@@ -827,5 +830,23 @@ describe('command result formatting edge cases', () => {
     const result = await commands.find((c) => c.name === 'optimize-eval')!.handler(invocation('run')) as { kind: string; text: string }
     expect(result.kind).toBe('error')
     expect(result.text).toContain('grader crashed')
+  })
+})
+
+describe('optimize-eval advise (P4 offline advice)', () => {
+  it('returns structured advice without any eval runs', async () => {
+    const { commands } = makeService(() => textStream(FOUR_SECTIONS))
+    const handler = commands.find((c) => c.name === 'optimize-eval')!.handler
+    const result = await handler(invocation('advise')) as { kind: string; text: string }
+    expect(result.kind).toBe('success')
+    expect(result.text).toContain('暂无维度评分')
+  })
+
+  it('lists advise in the usage hint', async () => {
+    const { commands } = makeService(() => textStream(FOUR_SECTIONS))
+    const handler = commands.find((c) => c.name === 'optimize-eval')!.handler
+    const result = await handler(invocation('unknown-subcommand')) as { kind: string; text: string }
+    expect(result.kind).toBe('error')
+    expect(result.text).toContain('advise')
   })
 })
