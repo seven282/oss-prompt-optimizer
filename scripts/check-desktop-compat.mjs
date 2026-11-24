@@ -95,14 +95,57 @@ function openAsar(asarPath) {
 }
 
 /**
+ * Parse a package.json that may carry stray bytes from the neighbouring files
+ * glued to either end. Some desktop bundles record an offset a few bytes short
+ * of the real payload, so a read starts with the tail of the previous file
+ * (`\n}\n`, `};\n`) and ends with the head of the next (`impor`, `/** P`). The
+ * JSON object itself is intact — locate its first `{` and read to the matching
+ * `}` (string-aware) instead of feeding the whole buffer to `JSON.parse`.
+ * A clean payload still takes the fast path unchanged.
+ */
+function parsePackageJson(text) {
+  if (!text) return null
+  try {
+    return JSON.parse(text)
+  } catch {
+    /* fall through to the offset-tolerant path */
+  }
+  const start = text.indexOf('{')
+  if (start < 0) return null
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i]
+    if (inString) {
+      if (escaped) escaped = false
+      else if (ch === '\\') escaped = true
+      else if (ch === '"') inString = false
+      continue
+    }
+    if (ch === '"') inString = true
+    else if (ch === '{') depth++
+    else if (ch === '}') {
+      depth--
+      if (depth === 0) {
+        try {
+          return JSON.parse(text.slice(start, i + 1))
+        } catch {
+          return null
+        }
+      }
+    }
+  }
+  return null
+}
+
+/**
  * Version of `name` inside the bundle, or `null` when it is genuinely absent.
  *
- * Desktop builds from 0.2.1 on record an entry `size` one byte short of the real
- * payload: an exact-size read drops the closing brace, `JSON.parse` throws, and
- * the old `catch → null` reported "package is absent" for a package that is
- * right there — three phantom failures in the P9 output of 1.13.1. Retry with
- * one extra byte before believing the absence, and only treat a *missing entry*
- * as absent.
+ * Desktop builds from 0.2.1 on record an entry `size` a few bytes short of the
+ * real payload: an exact-size read can drop the closing brace, and `JSON.parse`
+ * throws on the glued prefix/suffix. Only a *missing entry* means absent; an
+ * entry we cannot read at any width is reported as 'unreadable' instead.
  */
 function pkgVersion(asar, name) {
   const hit =
@@ -110,12 +153,9 @@ function pkgVersion(asar, name) {
     asar.find(`node_modules/${name}/package.json`) ??
     asar.searchSuffix(`node_modules/${name}/package.json`)
   if (!hit) return null
-  for (const extraBytes of [0, 1]) {
-    try {
-      return JSON.parse(asar.read(hit, extraBytes)).version ?? null
-    } catch {
-      /* truncated payload — retry one byte wider */
-    }
+  for (const extraBytes of [0, 1, 2, 8]) {
+    const parsed = parsePackageJson(asar.read(hit, extraBytes))
+    if (parsed?.version) return parsed.version
   }
   return 'unreadable'
 }
@@ -149,7 +189,15 @@ try {
     console.log(`P9 desktop compatibility: SKIP — ${asarPath} carries no dsh/ runtime`)
     process.exit(0)
   }
-  const runtime = JSON.parse(asar.read(runtimeEntry))
+  let runtime = null
+  for (const extraBytes of [0, 1, 2, 8]) {
+    runtime = parsePackageJson(asar.read(runtimeEntry, extraBytes))
+    if (runtime?.version) break
+  }
+  if (!runtime?.version) {
+    console.error(`P9 desktop compatibility: FAIL — dsh/package.json in ${asarPath} cannot be parsed`)
+    process.exit(1)
+  }
   const range = manifest.dsh?.compatibility?.dsh ?? ''
   const releases = manifest.dsh?.compatibility?.dshReleases ?? {}
   const problems = []

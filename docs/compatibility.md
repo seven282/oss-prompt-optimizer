@@ -112,8 +112,8 @@ prompt-optimizer: host compat DEGRADED (defineTool=MISSING …) — defineTool: 
 
 | 面 | 已声明版本 | 证据 |
 |---|---|---|
-| web（`dsh` CLI / `dsh web`） | `0.2.0-rc.2`、`0.2.1-rc.3`、`0.2.2-rc.1` | E3 一次性 Profile 安装→启动→卸载（CI `compat-matrix` 三档各跑一遍） |
-| desktop（`app.asar` 内置 runtime） | `0.2.1-rc.3`（当前装机版）、`0.2.2-rc.1` | P9 读本机 `app.asar` 的元组与 inject 包版本；桌面端日常使用 |
+| web（`dsh` CLI / `dsh web`） | `0.2.0-rc.2`、`0.2.1-rc.3`、`0.2.2-rc.1`、`0.2.2-rc.5` | E3 一次性 Profile 安装→启动→卸载（CI `compat-matrix` 每档各跑一遍） |
+| desktop（`app.asar` 内置 runtime） | `0.2.1-rc.3`、`0.2.2-rc.1`、`0.2.2-rc.5`（当前装机版） | P9 读本机 `app.asar` 的元组与 inject 包版本；桌面端日常使用 |
 | 不再声明 | `< 0.2.0-rc.2` | 无 `configForms`，设置面只能只读 |
 
 新增/退役一档的判据：**E3 真的装上并起得来**才算 `compatible`，只跑通 typecheck 不算。

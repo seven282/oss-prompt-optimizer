@@ -98,11 +98,12 @@ const TERMINALS = new Set(['compatible', 'incompatible', 'unknown'])
  * never spans 0.x prereleases. `0.2.0-rc.2` is the first release with the
  * settings contract this plugin is built on (`ctx.configForms` + volatile-backed
  * forms), so nothing older is claimed. `0.2.1-rc.3` is the desktop runtime the
- * app shipped while `0.2.2-rc.1` is the current release on both surfaces; both
- * are proven by E3 (`scripts/e3-acceptance.mjs`), and the desktop tuple is
- * additionally re-proven by P9 against an actually installed `app.asar`.
+ * app shipped while `0.2.2-rc.1` / `0.2.2-rc.5` are later releases; all are
+ * proven by E3 (`scripts/e3-acceptance.mjs`), and the desktop tuple is
+ * additionally re-proven by P9 against an actually installed `app.asar`
+ * (rc.5 host packages and exports probed on 2026-11-24).
  */
-const SERVED_DSH_RELEASES = ['0.2.0-rc.2', '0.2.1-rc.3', '0.2.2-rc.1']
+const SERVED_DSH_RELEASES = ['0.2.0-rc.2', '0.2.1-rc.3', '0.2.2-rc.1', '0.2.2-rc.5']
 
 describe('manifest contract — runtime artifacts survive into a fixed commit', () => {
   it('declares at least one runtime path', () => {

@@ -46,6 +46,19 @@ AWS/Redis 的语义缓存阈值与上下文漂移）写在被 gitignore 的
 
 - 单测从 1081 增至 1132 例（41 个文件）；覆盖率四维保持 ≥95（实测 branches 95.33%）。
 - 事件 payload 与 episode 状态新增可选学习字段；旧消费方忽略即可。
+- 兼容矩阵新增 `0.2.2-rc.5`（npm latest）：实测本机 `app.asar` 内 7 个宿主包
+  （dsh-llm / dsh-tools / dsh-timeout / cordis 4.1.0 + 3 个 client inject）版本一致，
+  `createUserMessage` / `BlockAssembler` / `defineTool` / `Service` / `Context` /
+  `deadline` / `timeoutOf` 七个关键导出齐全，tuple `0.2.2` 已被 `^0.2.2-rc.1` 覆盖。
+  `dshReleases` 补该确判决、CI `compat-matrix` 加一档、E3 真机验证由 CI 补跑。
+
+### Fixed
+
+- **P9 桌面兼容门把「解析失败」误报成「包不存在」**：部分桌面 bundle 的 asar 条目 `offset`
+  比真实载荷短几个字节，读出的 `package.json` 开头粘了上一个文件的尾部（`\n}\n`/`};\n`）、
+  结尾粘了下个文件的头部。`check-desktop-compat.mjs` 现在先试直接 `JSON.parse`，失败后
+  从第一个 `{` 扫到配平的 `}`（字符串感知）再解析；干净的 bundle 仍走原路径。
+  这只修解析误报；放行 `0.2.2-rc.5` 的实测证据见上方 Changed。
 
 ## [1.13.3] - 2026-11-06
 

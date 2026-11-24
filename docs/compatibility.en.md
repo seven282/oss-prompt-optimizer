@@ -127,8 +127,8 @@ what DSH STORE treats as installable evidence.
 
 | Surface | Declared releases | Evidence |
 |---|---|---|
-| web (`dsh` CLI / `dsh web`) | `0.2.0-rc.2`, `0.2.1-rc.3`, `0.2.2-rc.1` | E3 throwaway profile: install → start → uninstall (CI `compat-matrix`, one leg per release) |
-| desktop (runtime inside `app.asar`) | `0.2.1-rc.3` (currently installed), `0.2.2-rc.1` | P9 reads the tuple and inject package versions from the local `app.asar`; daily desktop use |
+| web (`dsh` CLI / `dsh web`) | `0.2.0-rc.2`, `0.2.1-rc.3`, `0.2.2-rc.1`, `0.2.2-rc.5` | E3 throwaway profile: install → start → uninstall (CI `compat-matrix`, one leg per release) |
+| desktop (runtime inside `app.asar`) | `0.2.1-rc.3`, `0.2.2-rc.1`, `0.2.2-rc.5` (currently installed) | P9 reads the tuple and inject package versions from the local `app.asar`; daily desktop use |
 | No longer declared | `< 0.2.0-rc.2` | No `configForms`; the settings surface can only be read-only |
 
 To add or retire a release the bar is: **E3 really installs and boots it**.
